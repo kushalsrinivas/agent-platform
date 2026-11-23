@@ -71,6 +71,10 @@ type Client struct {
 	drainOnce sync.Once
 	stopCh    chan struct{}
 	stopOnce  sync.Once
+
+	cancelMu   sync.Mutex
+	cancelWait map[string]chan struct{}
+	cancelMark map[string]struct{}
 }
 
 // New builds a worker control client.
@@ -102,6 +106,7 @@ func New(cfg Config, log *zap.Logger) *Client {
 	return &Client{
 		cfg: cfg, log: log, sampler: resources.New(), active: map[string]activeAttempt{},
 		drainCh: make(chan struct{}), stopCh: make(chan struct{}),
+		cancelWait: map[string]chan struct{}{}, cancelMark: map[string]struct{}{},
 	}
 }
 
@@ -244,7 +249,10 @@ func (c *Client) read(stream workerv1.WorkerControl_ConnectClient) error {
 				zap.String("task_id", body.CancelTask.GetTaskId()),
 				zap.String("attempt_id", body.CancelTask.GetAttemptId()),
 				zap.String("reason", body.CancelTask.GetReason()),
+				zap.Int32("cancel_epoch", body.CancelTask.GetCancelEpoch()),
 			)
+			c.signalCancel(body.CancelTask.GetTaskId(), body.CancelTask.GetAttemptId(),
+				body.CancelTask.GetLeaseId())
 		case *workerv1.OrchestratorMessage_Drain:
 			c.log.Warn("worker drain requested",
 				zap.String("reason", body.Drain.GetReason()),
@@ -328,11 +336,59 @@ func (c *Client) Rejected(_ context.Context, taskID, attemptID, leaseID string,
 	}})
 }
 
-// Done removes an attempt from the heartbeat set.
+// Done removes an attempt from the heartbeat set and forgets a cancellation for it.
 func (c *Client) Done(taskID string) {
 	c.mu.Lock()
+	active, ok := c.active[taskID]
 	delete(c.active, taskID)
 	c.mu.Unlock()
+	if ok {
+		c.ClearCancellation(taskID, active.attemptID, active.leaseID)
+	}
+}
+
+func cancelKey(taskID, attemptID, leaseID string) string {
+	return taskID + "|" + attemptID + "|" + leaseID
+}
+
+func (c *Client) signalCancel(taskID, attemptID, leaseID string) {
+	key := cancelKey(taskID, attemptID, leaseID)
+	c.cancelMu.Lock()
+	if _, exists := c.cancelMark[key]; exists {
+		c.cancelMu.Unlock()
+		return
+	}
+	c.cancelMark[key] = struct{}{}
+	waiter := c.cancelWait[key]
+	delete(c.cancelWait, key)
+	c.cancelMu.Unlock()
+	if waiter != nil {
+		close(waiter)
+	}
+}
+
+// Cancellation returns a channel closed when the orchestrator cancels this exact attempt. Registering before the
+// execution starts also catches a cancellation that arrived with the dispatch.
+func (c *Client) Cancellation(taskID, attemptID, leaseID string) (<-chan struct{}, func()) {
+	key := cancelKey(taskID, attemptID, leaseID)
+	ch := make(chan struct{})
+	c.cancelMu.Lock()
+	if _, cancelled := c.cancelMark[key]; cancelled {
+		close(ch)
+	} else {
+		c.cancelWait[key] = ch
+	}
+	c.cancelMu.Unlock()
+	return ch, func() { c.ClearCancellation(taskID, attemptID, leaseID) }
+}
+
+// ClearCancellation forgets the attempt's marker and waiter.
+func (c *Client) ClearCancellation(taskID, attemptID, leaseID string) {
+	key := cancelKey(taskID, attemptID, leaseID)
+	c.cancelMu.Lock()
+	delete(c.cancelMark, key)
+	delete(c.cancelWait, key)
+	c.cancelMu.Unlock()
 }
 
 // ActiveCount is the number of attempts this process still owns.
@@ -427,7 +483,9 @@ func (c *Client) dial() (*grpc.ClientConn, error) {
 	} else {
 		creds = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
 	}
-	conn, err := grpc.NewClient(c.cfg.Address, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(c.cfg.Address,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(36<<20), grpc.MaxCallSendMsgSize(36<<20)))
 	if err != nil {
 		return nil, fmt.Errorf("dial orchestrator %s: %w", c.cfg.Address, err)
 	}
@@ -488,6 +546,19 @@ func (c *Client) GetTaskCredentials(ctx context.Context, taskID, attemptID, leas
 	return client.GetTaskCredentials(ctx, &workerv1.GetTaskCredentialsRequest{
 		TaskId: taskID, AttemptId: attemptID, LeaseId: leaseID, Names: names,
 	})
+}
+
+// PutCheckpoint uploads one checkpoint produced by the runtime.
+func (c *Client) PutCheckpoint(ctx context.Context,
+	req *workerv1.PutCheckpointRequest) (*workerv1.PutCheckpointResponse, error) {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil {
+		return nil, errors.New("orchestrator client is not connected")
+	}
+	ctx = metadata.AppendToOutgoingContext(ctx, WorkerIDMetadataKey, c.cfg.WorkerID)
+	return client.PutCheckpoint(ctx, req)
 }
 
 // Progress reports advisory attempt telemetry. It never transitions state and failures are ignored by the

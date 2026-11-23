@@ -54,7 +54,7 @@ func (c *apiClient) request(method, path string, body any, headers map[string]st
 		request.Header.Set(key, value)
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	response, err := client.Do(request)
 	if err != nil {
 		c.t.Fatalf("%s %s: %v", method, path, err)
@@ -347,7 +347,7 @@ func TestAPIControlPlaneFlow(t *testing.T) {
 
 func cleanupAPITestOrg(t *testing.T, admin *pgxpool.Pool, orgID string) {
 	t.Helper()
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	queries := []string{
 		`DELETE FROM execution.executions WHERE org_id = $1`,

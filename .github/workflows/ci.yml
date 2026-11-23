@@ -98,6 +98,7 @@ jobs:
       ORCHESTRATOR_GRPC_ADDR: localhost:19090
       ORCHESTRATOR_NATS_URL: nats://localhost:4222
       API_URL: http://localhost:8080
+      API_RATE_LIMIT_PER_MINUTE: 1000
       API_DATABASE_URL: postgres://app_api:dev_api_password@localhost:55432/agent_platform?sslmode=disable
       ORCHESTRATOR_DATABASE_URL: postgres://app_orchestrator:dev_orchestrator_password@localhost:55432/agent_platform?sslmode=disable
       POSTGRES_DATABASE_URL: postgres://postgres:postgres@localhost:55432/agent_platform?sslmode=disable

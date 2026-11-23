@@ -14,22 +14,24 @@ import (
 // TaskContext is everything a worker needs to execute one accepted attempt. The orchestrator is the only reader
 // of control-plane rows on this path; the worker never queries PostgreSQL.
 type TaskContext struct {
-	OrgID           string
-	ProjectID       string
-	ExecutionID     string
-	TaskID          string
-	AttemptID       string
-	NodeID          string
-	NodeType        string
-	AgentVersionID  string
-	ToolVersionID   string
-	VersionSpec     map[string]any
-	ExecutionInput  map[string]any
-	NodeParams      map[string]any
-	UpstreamOutputs map[string]map[string]any
-	OutputSchema    map[string]any
-	Deadline        time.Time
-	Traceparent     string
+	OrgID            string
+	ProjectID        string
+	ExecutionID      string
+	TaskID           string
+	AttemptID        string
+	NodeID           string
+	NodeType         string
+	AgentVersionID   string
+	ToolVersionID    string
+	VersionSpec      map[string]any
+	ExecutionInput   map[string]any
+	NodeParams       map[string]any
+	UpstreamOutputs  map[string]map[string]any
+	OutputSchema     map[string]any
+	Deadline         time.Time
+	Traceparent      string
+	ResumeCheckpoint *ResumeCheckpoint
+	IdempotencyKey   string
 }
 
 // GetTaskContext returns the pinned, immutable execution context for a live attempt. The fence is the same one
@@ -122,6 +124,11 @@ func (s *Service) GetTaskContext(ctx context.Context, workerID, taskID, attemptI
 			if node.OutputSchema != nil {
 				result.OutputSchema = *node.OutputSchema
 			}
+			// The workflow node can override the agent-version checkpoint settings. "inherit" keeps the agent
+			// default; "none" disables checkpoints for this node.
+			if result.VersionSpec != nil {
+				applyCheckpointOverride(result.VersionSpec, node.CheckpointMode, node.RequireCheckpoint)
+			}
 			break
 		}
 
@@ -131,6 +138,19 @@ func (s *Service) GetTaskContext(ctx context.Context, workerID, taskID, attemptI
 			return err
 		}
 		result.ExecutionInput = input
+
+		// A tool node gets a logical key that survives retries. External tools must deduplicate on it because a
+		// worker crash can happen after the side effect and before the result is committed.
+		result.IdempotencyKey = t.ID
+		if t.IdempotencyKey != nil && *t.IdempotencyKey != "" {
+			result.IdempotencyKey = e.ID + ":" + t.ID + ":" + *t.IdempotencyKey
+		}
+
+		resume, err := s.latestCheckpoint(ctx, tx, t, e, a.ID)
+		if err != nil {
+			return err
+		}
+		result.ResumeCheckpoint = resume
 
 		rows, err := tx.Query(ctx, `
 			SELECT upstream.node_id, attempt.result_inline
@@ -159,6 +179,23 @@ func (s *Service) GetTaskContext(ctx context.Context, workerID, taskID, attemptI
 		return nil, err
 	}
 	return result, nil
+}
+
+func applyCheckpointOverride(spec map[string]any, mode *string, require *bool) {
+	if mode == nil && require == nil {
+		return
+	}
+	checkpoint, ok := spec["checkpoint"].(map[string]any)
+	if !ok {
+		checkpoint = map[string]any{}
+		spec["checkpoint"] = checkpoint
+	}
+	if mode != nil && *mode != "inherit" {
+		checkpoint["mode"] = *mode
+	}
+	if require != nil {
+		checkpoint["require_checkpoint"] = *require
+	}
 }
 
 // TraceparentFor returns the propagated trace context for an attempt, if one was recorded.

@@ -90,6 +90,7 @@ func Mount(r chi.Router, deps Deps) {
 				r.Post("/projects/{project_id}/executions", executionHandlers.Create)
 				r.Get("/projects/{project_id}/executions", executionHandlers.List)
 				r.Get("/projects/{project_id}/executions/{execution_id}", executionHandlers.Get)
+				r.Post("/projects/{project_id}/executions/{execution_id}:cancel", executionHandlers.Cancel)
 				r.Get("/projects/{project_id}/executions/{execution_id}/tasks", executionHandlers.ListTasks)
 				r.Get("/projects/{project_id}/executions/{execution_id}/tasks/{task_id}", executionHandlers.GetTask)
 				r.Get("/projects/{project_id}/executions/{execution_id}/events", executionHandlers.ListEvents)

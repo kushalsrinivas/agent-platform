@@ -124,15 +124,17 @@ If a task is skipped because a dependency failed, condition 2 is already false, 
 
 - `POST .../executions/{id}:cancel` is idempotent. If already `cancel_requested` or `cancelled`, return the current
   representation with `202`. If `succeeded`, `failed` or `failing`, return `409 execution_terminal_or_failing`.
-- Entering `cancel_requested` increments `cancel_epoch` once. Duplicate requests do not increment it. The epoch is
-  passed to workers with the cancel command and included in the control stream message so stale cancels can be
-  ignored.
+- Entering `cancel_requested` increments `cancel_epoch` once and records `cancel_requested_at` and
+  `cancel_requested_by`. Duplicate requests do not increment it. The epoch is passed to workers with the cancel
+  command and included in the control stream message so stale cancels can be ignored.
 - The scheduler stops assigning tasks immediately (`cancel_requested` and `failing` are not schedulable states).
 - Lease renewals also stop: heartbeats no longer extend attempts in a cancelling or failing execution. The cancel
   command is the fast path; lease expiry is the bounded backstop. Cancellation therefore cannot be held open by a
   worker that keeps heartbeating but never stops.
-- Pending tasks become `cancelled` with no attempt. Assigned/running attempts get a cancel command; the worker
-  kills the sandbox (`SIGTERM`, grace, `SIGKILL`) and reports `CANCELLED` if it can.
+- Pending tasks become `cancelled` with no attempt. Assigned/running attempts get a `CancelTask` over the live
+  worker stream after the transaction commits; the worker kills the sandbox (`SIGTERM`, grace, `SIGKILL`) and
+  reports `CANCELLED` if it can. A success that races the request is recorded as cancelled: the execution never
+  ends `succeeded`.
 - If a worker is unreachable, the reaper waits for lease expiry, records the attempt as `lease_expired` with
   `outcome_unknown = true`, marks the task `cancelled`, and sets `effect_uncertain` when the attempt had started.
   The execution can then finalise. Cancellation never waits forever on a dead worker.
@@ -147,9 +149,9 @@ If a task is skipped because a dependency failed, condition 2 is already false, 
 
 | Timer | Owner | Effect |
 |---|---|---|
-| `executions.deadline_at` | Reaper | Auto-cancel with `deadline`; terminal `failed`/`EXECUTION_TIMEOUT`. |
+| `executions.deadline_at` | Recovery manager | Auto-cancel with `deadline`; terminal `failed`/`EXECUTION_TIMEOUT`. |
 | Node `timeout_seconds` | Orchestrator, enforced by worker | Attempt killed at deadline; result `TASK_TIMEOUT`; retry policy applies. The reaper also expires the lease if the worker never reports, so a dead worker cannot extend a task. |
-| Lease TTL (30s) | Reaper | Attempt `lease_expired`; task retried or failed per policy. |
+| Lease TTL (30s) | Recovery manager | Attempt `lease_expired`; task retried from the newest checkpoint or failed per policy. |
 | Worker heartbeat (5s) | Worker-manager | No new assignments after 15s of silence; leases still expire individually. |
 
 Deadlines are stored as absolute `timestamptz` values computed with the database clock. The worker receives the

@@ -12,6 +12,7 @@ ADR wins and the document is a bug. Code written in later phases must cite and f
 | [phase-05-messaging.md](phase-05-messaging.md) | Phase 05 streams, outbox publisher, scheduler, durable delivery, duplicates, DLQ and redrive. |
 | [phase-06-worker-manager.md](phase-06-worker-manager.md) | Phase 06 worker registry, heartbeat statuses, priority/fair scheduling, leases, fencing and graceful drain. |
 | [phase-07-agent-runtime.md](phase-07-agent-runtime.md) | Phase 07 Python runtime ABI, LangGraph adapter, providers, structured results, cancellation and observability. |
+| [phase-08-durable-execution.md](phase-08-durable-execution.md) | Phase 08 checkpoint schema and boundaries, resume protocol, recovery manager, retry engine, idempotency, durable cancellation and crash tests. |
 | [architecture.md](architecture.md) | What the system is, its boundaries, its invariants, and how the pieces cooperate. |
 | [service-responsibilities.md](service-responsibilities.md) | What each deployable does, reads, writes, and when it may become a separate service. |
 | [communication.md](communication.md) | External and internal protocols, envelope, subjects, delivery guarantees, versioning. |

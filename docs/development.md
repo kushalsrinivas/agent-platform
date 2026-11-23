@@ -132,6 +132,25 @@ cd runtimes/python && uv sync --frozen
 runtime emits JSON events on stdout and the worker forwards them; provider API keys are not wired yet, so only the
 echo provider executes without a future credentials slice.
 
+### Durable execution and recovery
+
+Each attempt gets `AGENT_RUNTIME_CHECKPOINT_DIR`, a private directory inside the worker's temporary workspace. The
+runtime writes atomic `ckpt-<sequence>-<sha>.json.gz` files after each recoverable tool call and at node completion.
+The worker uploads them with the fenced `PutCheckpoint` RPC; the orchestrator stores states up to 256 KiB inline
+and offloads larger states to `ORCHESTRATOR_ARTIFACT_DIR` (Compose mounts the `checkpoint-artifacts` volume at
+`/var/lib/agent-platform/artifacts`). `GetTaskContext` returns the newest readable checkpoint on the next attempt.
+
+The recovery manager runs on `ORCHESTRATOR_REAPER_INTERVAL_MS` and performs leases, terminated-worker reaping,
+deadline enforcement, interrupted-execution repair and outbox lag reporting. The frozen retry policy is stored on
+each task; `retry_on`, `backoff_base_ms` and `backoff_max_ms` can be set per node or under workflow `policy.retry`.
+Cancellation is available at `POST /v1/orgs/{org}/projects/{project}/executions/{execution}:cancel`.
+
+The Phase 08 tests restart the orchestrator and NATS and briefly pause PostgreSQL through the Docker CLI; they are
+part of `make integration-test` and require the Compose stack. The runtime also recognises test-only environment
+variables (`AGENT_RUNTIME_TEST_PAUSE_SECONDS`, `AGENT_RUNTIME_TEST_PAUSE_AFTER_TOOL_SECONDS`,
+`AGENT_RUNTIME_TEST_MODEL_DELAY_SECONDS`, `AGENT_RUNTIME_RESUME_MARKER`,
+`AGENT_RUNTIME_TOOL_COUNTER_FILE`); never set them in production.
+
 ### Worker registration and shutdown
 
 A worker advertises `WORKER_RUNTIME`, `WORKER_RUNTIME_VERSION`, `WORKER_CAPABILITIES`, `WORKER_CPU_CORES`,

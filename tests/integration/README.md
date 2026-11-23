@@ -1,6 +1,6 @@
 # Integration tests
 
-Four suites run against the Compose stack after migrations:
+Five suites run against the Compose stack after migrations:
 
 ```bash
 make integration-test
@@ -34,8 +34,26 @@ make integration-test
     schema-validated report, runtime version, token usage and attempt event.
   - `TestRuntimeOutputSchemaRejectsInvalidOutput` proves invalid runtime output is reported as
     `RESULT_SCHEMA_INVALID` and never committed as a success.
+- `recovery_flow_test.go` — the Phase 08 durable-execution suite:
+  - `TestRecoveryWorkerDiesBeforeReceiving` and `TestRecoveryWorkerDiesAfterReceiving` reclaim an assigned or
+    running attempt, retry it on a live worker and finish the execution.
+  - `TestRecoveryWorkerDiesDuringModelGeneration` kills the runtime before any checkpoint; the next attempt starts
+    fresh and succeeds.
+  - `TestRecoveryResumesCompletedCheckpoint` kills the worker after the completed checkpoint, then proves the retry
+    returns the stored output without another model call and writes no duplicate checkpoint.
+  - `TestRecoveryDoesNotRepeatCheckpointedToolEffect` crashes after the tool boundary, resumes after the tool and
+    proves the side effect ran exactly once.
+  - `TestRecoveryOrchestratorRestart` queues work, cancels another execution, restarts the orchestrator and proves
+    the queued work still runs and the cancelled execution stays cancelled with no attempts.
+  - `TestRecoveryNATSReconnect` restarts NATS during an attempt and proves the execution completes.
+  - `TestRecoveryDatabaseUnavailable` pauses PostgreSQL briefly and proves committed work still completes.
+  - `TestRecoveryExecutionDeadline` proves a deadline with no worker finalises `failed` with
+    `EXECUTION_TIMEOUT`, not a permanent pending state.
+  - The remaining mandatory scenarios are covered by `TestMessagingRedeliveryAndDuplicateSuppression`,
+    `TestWorkerManagerStaleWorkerCannotCommit` and the checkpoint tests above.
 
-The runtime tests use the host venv at `runtimes/python/.venv`; `make integration-test` runs `uv sync --frozen`
+The recovery suite restarts/pauses Compose services through the Docker CLI; it skips only when the Docker daemon is
+unavailable. The runtime tests use the host venv at `runtimes/python/.venv`; `make integration-test` runs `uv sync --frozen`
 first. Set `RUNTIME_PYTHON` to override the interpreter path.
 
 `make integration-test` builds and starts `api`, `orchestrator` and `worker` as well as the data stores, waits for

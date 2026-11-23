@@ -92,6 +92,23 @@ async def test_execute_node_runs_the_tool_loop_over_uds() -> None:
     assert response.metrics.steps == 2
 
 
+async def test_execute_node_rejects_a_corrupt_resume_checkpoint() -> None:
+    socket_path, server = await _serve()
+    channel = grpc.aio.insecure_channel(f"unix:{socket_path}")
+    stub = runtime_pb2_grpc.AgentRuntimeStub(channel)
+    try:
+        response = await stub.ExecuteNode(_request(_spec(), resume=b"not a checkpoint"), timeout=30)
+    finally:
+        await channel.close()
+        server.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await server
+
+    assert response.outcome == runtime_pb2.RUNTIME_OUTCOME_FAILED
+    assert response.failure.code == "CHECKPOINT_INVALID"
+    assert response.failure.classification == runtime_pb2.RUNTIME_FAILURE_CLASSIFICATION_PERMANENT
+
+
 async def test_execute_node_maps_unknown_provider_to_permanent_failure() -> None:
     spec = _spec()
     spec["model"] = {"provider": "no_such_provider", "name": "x", "credential_ref": "default"}

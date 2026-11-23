@@ -142,11 +142,16 @@ func (s *Service) reapTask(ctx context.Context, taskID string, force bool) (bool
 			neverPublished = unpublished > 0
 		}
 
+		policy := taskRetryPolicy(t)
 		outcome := "lease_expired"
 		errorCode := "LEASE_EXPIRED"
 		if neverPublished {
 			outcome = "incomplete"
 			errorCode = "DISPATCH_NOT_PUBLISHED"
+		}
+		if e.State == "cancel_requested" {
+			outcome = "cancelled"
+			errorCode = "CANCELLED"
 		}
 		if a != nil {
 			effectUncertain := a.StartedAt != nil
@@ -164,13 +169,13 @@ func (s *Service) reapTask(ctx context.Context, taskID string, force bool) (bool
 			return err
 		}
 
-		retry := (neverPublished || t.AttemptCount < t.MaxAttempts) &&
+		retry := (neverPublished || (t.AttemptCount < policy.MaxAttempts && retryableWorkerLoss(policy, t, a != nil && a.StartedAt != nil))) &&
 			e.State != "failing" && e.State != "cancel_requested"
 		var nextAttempt *time.Time
 		to := "failed"
 		if retry {
 			to = "pending"
-			next := time.Now().UTC().Add(retryBackoff(t.AttemptCount))
+			next := time.Now().UTC().Add(retryDelay(policy, t.AttemptCount))
 			nextAttempt = &next
 		} else if e.State == "cancel_requested" {
 			to = "cancelled"
@@ -198,8 +203,11 @@ func (s *Service) reapTask(ctx context.Context, taskID string, force bool) (bool
 			if _, err := tx.Exec(ctx, `
 				UPDATE execution.execution_tasks
 				SET state = $2, state_version = state_version + 1, ended_at = now(),
-				    owner_worker_id = NULL, lease_id = NULL, lease_expires_at = NULL, updated_at = now()
-				WHERE id = $1`, t.ID, to); err != nil {
+				    owner_worker_id = NULL, lease_id = NULL, lease_expires_at = NULL,
+				    last_failure_code = $3,
+				    dead_lettered_at = CASE WHEN $2 = 'failed' THEN COALESCE(dead_lettered_at, now()) ELSE dead_lettered_at END,
+				    updated_at = now()
+				WHERE id = $1`, t.ID, to, errorCode); err != nil {
 				return err
 			}
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
@@ -56,7 +57,13 @@ func (s *WorkerServer) Connect(stream workerv1.WorkerControl_ConnectServer) erro
 		}
 	}()
 
-	if err := stream.Send(&workerv1.OrchestratorMessage{
+	var sendMu sync.Mutex
+	send := func(message *workerv1.OrchestratorMessage) error {
+		sendMu.Lock()
+		defer sendMu.Unlock()
+		return stream.Send(message)
+	}
+	if err := send(&workerv1.OrchestratorMessage{
 		Body: &workerv1.OrchestratorMessage_HelloAck{HelloAck: &workerv1.HelloAck{
 			SessionId:           registration.SessionID,
 			HeartbeatIntervalMs: 5000,
@@ -66,6 +73,8 @@ func (s *WorkerServer) Connect(stream workerv1.WorkerControl_ConnectServer) erro
 	}); err != nil {
 		return err
 	}
+	unregister := s.service.sessions.Register(workerID, send)
+	defer unregister()
 
 	for {
 		message, err := stream.Recv()
@@ -190,6 +199,13 @@ func (s *WorkerServer) GetTaskContext(ctx context.Context,
 		ToolVersionId:  task.ToolVersionID,
 		Deadline:       timestamppb.New(task.Deadline),
 		Traceparent:    s.service.TraceparentFor(ctx, task.ExecutionID),
+		IdempotencyKey: task.IdempotencyKey,
+	}
+	if task.ResumeCheckpoint != nil {
+		response.ResumeCheckpointBytes = task.ResumeCheckpoint.Bytes
+		response.ResumeCheckpointId = task.ResumeCheckpoint.ID
+		response.ResumeCheckpointSchemaVersion = int32(task.ResumeCheckpoint.SchemaVersion) //nolint:gosec // bounded by schema validation.
+		response.ResumeCheckpointSequence = int32(task.ResumeCheckpoint.Sequence)           //nolint:gosec // bounded by the runtime.
 	}
 	response.VersionSpec, _ = structpb.NewStruct(task.VersionSpec)
 	response.ExecutionInput, _ = structpb.NewStruct(task.ExecutionInput)
@@ -227,6 +243,46 @@ func (s *WorkerServer) GetTaskCredentials(ctx context.Context,
 	return &workerv1.GetTaskCredentialsResponse{
 		Values:    map[string]string{},
 		ExpiresAt: timestamppb.New(time.Now().UTC().Add(15 * time.Minute)),
+	}, nil
+}
+
+// PutCheckpoint stores one checkpoint uploaded by an in-flight attempt.
+func (s *WorkerServer) PutCheckpoint(ctx context.Context,
+	req *workerv1.PutCheckpointRequest) (*workerv1.PutCheckpointResponse, error) {
+	workerID := workerIDFromContext(ctx)
+	if workerID == "" {
+		return nil, status.Error(codes.Unauthenticated, "worker identity is required")
+	}
+	if active, err := s.service.IsActiveWorker(ctx, workerID); err != nil {
+		return nil, status.Error(codes.Internal, "worker lookup failed")
+	} else if !active {
+		return nil, status.Error(codes.PermissionDenied, "worker is not registered or is offline")
+	}
+	result, err := s.service.PutCheckpoint(ctx, workerID, req)
+	if err != nil {
+		var checkpointErr *CheckpointError
+		if errors.As(err, &checkpointErr) {
+			code := codes.InvalidArgument
+			switch checkpointErr.Code {
+			case "CHECKPOINT_STALE_LEASE":
+				code = codes.FailedPrecondition
+			case "CHECKPOINT_STORE_FAILED":
+				code = codes.Unavailable
+			}
+			return nil, status.Error(code, checkpointErr.Message)
+		}
+		s.log.Error("checkpoint commit failed",
+			zap.String("worker_id", workerID),
+			zap.String("task_id", req.GetTaskId()),
+			zap.String("attempt_id", req.GetAttemptId()),
+			zap.Error(err),
+		)
+		return nil, status.Error(codes.Internal, "checkpoint could not be committed")
+	}
+	return &workerv1.PutCheckpointResponse{
+		CheckpointId: result.ID,
+		Duplicate:    result.Duplicate,
+		SizeBytes:    result.SizeBytes,
 	}, nil
 }
 

@@ -77,6 +77,8 @@ message ToolTaskContext {
   google.protobuf.Timestamp deadline = 11;
   string traceparent = 12;
   map<string, string> credentials = 13;
+  // Stable across attempts of the same execution node. External side effects must deduplicate on it.
+  string idempotency_key = 14;
 }
 
 message ExecuteToolRequest {

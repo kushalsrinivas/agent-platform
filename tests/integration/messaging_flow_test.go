@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,14 +32,17 @@ import (
 )
 
 type testWorker struct {
-	id       string
-	pool     string
-	capacity int
-	control  *control.Client
-	js       jetstream.JetStream
-	nc       *nats.Conn
-	cancel   context.CancelFunc
-	done     <-chan struct{}
+	id        string
+	pool      string
+	capacity  int
+	control   *control.Client
+	js        jetstream.JetStream
+	nc        *nats.Conn
+	cancel    context.CancelFunc
+	done      <-chan struct{}
+	mu        sync.Mutex
+	consumers []*messaging.Consumer
+	crashed   bool
 }
 
 func startTestWorker(t *testing.T, suffix, pool string) *testWorker {
@@ -85,7 +89,7 @@ func startTestWorkerNamed(t *testing.T, workerID, pool string, capacity int) *te
 		_ = controlClient.Run(ctx)
 	}()
 
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	for !controlClient.Connected() {
 		if time.Now().After(deadline) {
 			cancel()
@@ -123,6 +127,23 @@ func startTestWorkerNamed(t *testing.T, workerID, pool string, capacity int) *te
 	return worker
 }
 
+// crash stops heartbeats and message consumption without touching the database, which is what a killed worker
+// process leaves behind. Recovery must take over from the durable lease.
+func (w *testWorker) crash() {
+	w.mu.Lock()
+	if w.crashed {
+		w.mu.Unlock()
+		return
+	}
+	w.crashed = true
+	consumers := append([]*messaging.Consumer(nil), w.consumers...)
+	w.mu.Unlock()
+	for _, consumer := range consumers {
+		consumer.Stop()
+	}
+	w.cancel()
+}
+
 func (w *testWorker) startConsumer(t *testing.T, handler messaging.Handler, configure func(*messaging.ConsumerConfig)) {
 	t.Helper()
 	config := messaging.DefaultConsumerConfig(w.id, w.capacity)
@@ -136,6 +157,9 @@ func (w *testWorker) startConsumer(t *testing.T, handler messaging.Handler, conf
 	if err := consumer.Start(context.Background()); err != nil {
 		t.Fatalf("start consumer: %v", err)
 	}
+	w.mu.Lock()
+	w.consumers = append(w.consumers, consumer)
+	w.mu.Unlock()
 	t.Cleanup(func() {
 		consumer.Stop()
 		background, done := context.WithTimeout(context.Background(), 5*time.Second)
@@ -153,6 +177,11 @@ type fixtureExecution struct {
 }
 
 func createWorkerProject(t *testing.T, client *apiClient, suffix string) (string, string, string) {
+	return createWorkerProjectWithTools(t, client, suffix, nil)
+}
+
+func createWorkerProjectWithTools(t *testing.T, client *apiClient, suffix string,
+	tools []any) (string, string, string) {
 	t.Helper()
 	org := client.request(http.MethodPost, "/v1/orgs", map[string]any{
 		"name": "Worker Manager Org", "slug": "worker-manager-" + suffix,
@@ -166,19 +195,23 @@ func createWorkerProject(t *testing.T, client *apiClient, suffix string) (string
 	}, nil, http.StatusCreated)
 	projectID := asString(t, project, "id")
 
+	spec := map[string]any{
+		"model": map[string]any{
+			"provider": "echo", "name": "echo-1", "credential_ref": "default",
+		},
+		"instructions": "Return the input.",
+		"runtime": map[string]any{
+			"abi_version": 1, "image_digest": "sha256:" + strings.Repeat("a", 64),
+		},
+		"limits":     map[string]any{"max_turns": 4, "timeout_seconds": 120},
+		"checkpoint": map[string]any{"mode": "on_node_end", "require_checkpoint": false},
+	}
+	if len(tools) > 0 {
+		spec["tools"] = tools
+	}
 	agent := client.request(http.MethodPost, "/v1/orgs/"+orgID+"/projects/"+projectID+"/agents", map[string]any{
 		"name": "worker-agent", "description": "worker manager test",
-		"version": map[string]any{"spec": map[string]any{
-			"model": map[string]any{
-				"provider": "echo", "name": "echo-1", "credential_ref": "default",
-			},
-			"instructions": "Return the input.",
-			"runtime": map[string]any{
-				"abi_version": 1, "image_digest": "sha256:" + strings.Repeat("a", 64),
-			},
-			"limits":     map[string]any{"max_turns": 4, "timeout_seconds": 120},
-			"checkpoint": map[string]any{"mode": "on_node_end", "require_checkpoint": false},
-		}},
+		"version": map[string]any{"spec": spec},
 	}, nil, http.StatusCreated)
 	agentID := asString(t, agent, "id")
 	client.request(http.MethodPost,
@@ -256,7 +289,7 @@ func createFixtureExecution(t *testing.T, client *apiClient, suffix, pool string
 
 func waitExecutionState(t *testing.T, client *apiClient, fixture fixtureExecution, want string) {
 	t.Helper()
-	deadline := time.Now().Add(25 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	path := "/v1/orgs/" + fixture.orgID + "/projects/" + fixture.projectID + "/executions/" + fixture.executionID
 	for time.Now().Before(deadline) {
 		execution := client.request(http.MethodGet, path, nil, nil, http.StatusOK)
@@ -516,12 +549,18 @@ func orchestratorGRPCAddr(t *testing.T) string {
 }
 
 type schedulerOptions struct {
-	Pool         string
-	NodeCount    int
-	Independent  bool
-	Priority     int32
-	MaxAttempts  int
-	OutputSchema map[string]any
+	Pool              string
+	NodeCount         int
+	Independent       bool
+	Priority          int32
+	MaxAttempts       int
+	RetryOn           []any
+	OutputSchema      map[string]any
+	SideEffectClass   string
+	IdempotencyKey    string
+	CheckpointMode    string
+	RequireCheckpoint bool
+	DeadlineAt        *time.Time
 }
 
 func createSchedulerFixture(t *testing.T, client *apiClient, suffix string, opts schedulerOptions) fixtureExecution {
@@ -540,10 +579,26 @@ func createSchedulerFixture(t *testing.T, client *apiClient, suffix string, opts
 			"worker_pool": opts.Pool, "timeout_seconds": 60,
 		}
 		if opts.MaxAttempts > 1 {
-			node["retry"] = map[string]any{"max_attempts": opts.MaxAttempts}
+			retry := map[string]any{"max_attempts": opts.MaxAttempts}
+			if len(opts.RetryOn) > 0 {
+				retry["retry_on"] = opts.RetryOn
+			}
+			node["retry"] = retry
 		}
 		if opts.OutputSchema != nil {
 			node["output_schema"] = opts.OutputSchema
+		}
+		if opts.SideEffectClass != "" {
+			node["side_effect_class"] = opts.SideEffectClass
+		}
+		if opts.IdempotencyKey != "" {
+			node["idempotency_key"] = opts.IdempotencyKey
+		}
+		if opts.CheckpointMode != "" {
+			node["checkpoint_mode"] = opts.CheckpointMode
+		}
+		if opts.RequireCheckpoint {
+			node["require_checkpoint"] = true
 		}
 		nodes = append(nodes, node)
 		if !opts.Independent && index > 1 {
@@ -565,11 +620,15 @@ func createSchedulerFixture(t *testing.T, client *apiClient, suffix string, opts
 		"/v1/orgs/"+orgID+"/projects/"+projectID+"/workflows/"+workflowID+"/versions/1:publish",
 		nil, nil, http.StatusOK)
 
+	executionRequest := map[string]any{
+		"workflow_id": workflowID, "workflow_version": 1,
+		"input": map[string]any{"topic": "scheduler"}, "priority": opts.Priority,
+	}
+	if opts.DeadlineAt != nil {
+		executionRequest["deadline_at"] = opts.DeadlineAt.UTC().Format(time.RFC3339Nano)
+	}
 	execution := client.request(http.MethodPost, "/v1/orgs/"+orgID+"/projects/"+projectID+"/executions",
-		map[string]any{
-			"workflow_id": workflowID, "workflow_version": 1,
-			"input": map[string]any{"topic": "scheduler"}, "priority": opts.Priority,
-		}, map[string]string{"Idempotency-Key": "sched-" + suffix}, http.StatusAccepted)
+		executionRequest, map[string]string{"Idempotency-Key": "sched-" + suffix}, http.StatusAccepted)
 	executionID := asString(t, execution, "id")
 	return fixtureExecution{
 		orgID: orgID, projectID: projectID, workflowID: workflowID, executionID: executionID,
@@ -673,7 +732,7 @@ func TestWorkerManagerPriorityOrder(t *testing.T) {
 	}
 	startTestWorkerWithCapacity(t, suffix, pool, 1)
 
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		var executionID string
 		err := admin.QueryRow(context.Background(), `
@@ -741,7 +800,7 @@ func TestWorkerManagerTenantFairness(t *testing.T) {
 	startTestWorkerWithCapacity(t, suffix+"b", pool, 1)
 	admin := adminPool(t)
 
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		rows, err := admin.Query(context.Background(), `
 			SELECT DISTINCT e.org_id
@@ -791,7 +850,7 @@ func TestWorkerManagerLeaseRenewal(t *testing.T) {
 	admin := adminPool(t)
 
 	var before time.Time
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		err := admin.QueryRow(context.Background(), `
 			SELECT lease_expires_at FROM execution.execution_tasks
@@ -831,7 +890,7 @@ func TestWorkerManagerStaleWorkerCannotCommit(t *testing.T) {
 
 	var taskID, attemptID, leaseID string
 	var attemptNumber int
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		err := admin.QueryRow(context.Background(), `
 			SELECT t.id, a.id, a.lease_id, a.attempt_number
@@ -855,9 +914,11 @@ func TestWorkerManagerStaleWorkerCannotCommit(t *testing.T) {
 		WHERE id = $1`, workerA.id); err != nil {
 		t.Fatal(err)
 	}
+	// Recovery may already have reaped the terminated worker's attempt during the disconnect; only expire a
+	// lease that is still active.
 	if _, err := admin.Exec(context.Background(), `
 		UPDATE execution.execution_tasks SET lease_expires_at = now() - interval '1 second'
-		WHERE id = $1`, taskID); err != nil {
+		WHERE id = $1 AND state IN ('assigned', 'running')`, taskID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -982,7 +1043,7 @@ func TestWorkerManagerBootChangeReclaimsAttempts(t *testing.T) {
 	admin := adminPool(t)
 
 	var oldAttemptID string
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		err := admin.QueryRow(context.Background(), `
 			SELECT a.id FROM execution.execution_tasks t

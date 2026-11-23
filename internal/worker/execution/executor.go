@@ -42,6 +42,8 @@ type Config struct {
 	RuntimeVersion  string
 	StartupTimeout  time.Duration
 	KillGrace       time.Duration
+	// Env is appended to the runtime process environment (tests and operator overrides).
+	Env []string
 }
 
 // Executor runs attempts through the Python runtime.
@@ -81,6 +83,10 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
 	socketPath := filepath.Join(workDir, "runtime.sock")
+	checkpointDir := filepath.Join(workDir, "checkpoints")
+	if err := os.MkdirAll(checkpointDir, 0o700); err != nil {
+		return delivery.ExecutionOutcome{}, fmt.Errorf("create checkpoint directory: %w", err)
+	}
 
 	command := strings.ReplaceAll(e.cfg.CommandTemplate, "{socket}", socketPath)
 	parts, err := splitCommand(command)
@@ -91,7 +97,8 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 		return delivery.ExecutionOutcome{}, errors.New("runtime command template is empty")
 	}
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...) //nolint:gosec // runtime command is operator configuration.
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), e.cfg.Env...)
+	cmd.Env = append(cmd.Env, "AGENT_RUNTIME_CHECKPOINT_DIR="+checkpointDir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	tail := &tailBuffer{}
 	// Python emits one JSON event per line (task_started, model_request_started, ...); forward it to the worker
@@ -123,7 +130,9 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 			err, strings.TrimSpace(tail.String()))
 	}
 
-	conn, err := grpc.NewClient("unix:"+socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient("unix:"+socketPath,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(36<<20), grpc.MaxCallSendMsgSize(36<<20)))
 	if err != nil {
 		return delivery.ExecutionOutcome{}, fmt.Errorf("dial runtime socket: %w", err)
 	}
@@ -164,17 +173,18 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 		}
 		response, err := runtimev1.NewToolRuntimeClient(conn).ExecuteTool(ctx, &runtimev1.ExecuteToolRequest{
 			Context: &runtimev1.ToolTaskContext{
-				OrgId:       dispatch.OrgID,
-				ProjectId:   dispatch.ProjectID,
-				ExecutionId: dispatch.ExecutionID,
-				TaskId:      dispatch.TaskID,
-				AttemptId:   dispatch.AttemptID,
-				NodeId:      dispatch.NodeID,
-				ToolId:      toolID,
-				ToolVersion: toolVersion,
-				Arguments:   mustStruct(arguments),
-				Deadline:    taskCtx.GetDeadline(),
-				Traceparent: taskCtx.GetTraceparent(),
+				OrgId:          dispatch.OrgID,
+				ProjectId:      dispatch.ProjectID,
+				ExecutionId:    dispatch.ExecutionID,
+				TaskId:         dispatch.TaskID,
+				AttemptId:      dispatch.AttemptID,
+				NodeId:         dispatch.NodeID,
+				ToolId:         toolID,
+				ToolVersion:    toolVersion,
+				Arguments:      mustStruct(arguments),
+				Deadline:       taskCtx.GetDeadline(),
+				Traceparent:    taskCtx.GetTraceparent(),
+				IdempotencyKey: taskCtx.GetIdempotencyKey(),
 			},
 		})
 		if err != nil {
@@ -187,10 +197,15 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 		return e.mapToolResponse(taskCtx, response)
 	}
 
+	uploader := startCheckpointUploader(ctx, e.client, dispatch, checkpointDir,
+		e.cfg.RuntimeABI, e.cfg.RuntimeVersion, e.log)
 	response, err := runtimev1.NewAgentRuntimeClient(conn).ExecuteNode(ctx, &runtimev1.ExecuteNodeRequest{
-		Context:    agentContext,
-		RuntimeAbi: e.cfg.RuntimeABI,
+		Context:                 agentContext,
+		ResumeCheckpoint:        taskCtx.GetResumeCheckpointBytes(),
+		CheckpointSchemaVersion: taskCtx.GetResumeCheckpointSchemaVersion(),
+		RuntimeAbi:              e.cfg.RuntimeABI,
 	})
+	drainErr := uploader.StopAndDrain(ctx)
 	if err != nil {
 		// A cancelled context is the worker stopping or the task deadline; either way the lease owns recovery.
 		if ctx.Err() != nil {
@@ -199,8 +214,15 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 		return delivery.ExecutionOutcome{}, fmt.Errorf("runtime call failed: %w: %s",
 			err, strings.TrimSpace(tail.String()))
 	}
-
-	return e.mapResponse(taskCtx, response)
+	outcome, mappingErr := e.mapResponse(taskCtx, response)
+	if mappingErr != nil {
+		return outcome, mappingErr
+	}
+	if drainErr != nil && outcome.Failure == nil {
+		// Never report a success whose checkpoint was not durably recorded.
+		return delivery.ExecutionOutcome{}, fmt.Errorf("checkpoint upload failed: %w", drainErr)
+	}
+	return outcome, nil
 }
 
 func (e *Executor) mapToolResponse(taskCtx *workerv1.GetTaskContextResponse,
@@ -221,7 +243,7 @@ func (e *Executor) mapToolResponse(taskCtx *workerv1.GetTaskContextResponse,
 			outcome.Output = nil
 			outcome.Failure = &workerv1.TaskFailure{
 				Code: "RESULT_SCHEMA_INVALID", Message: truncate(err.Error(), 512),
-				Classification: workerv1.FailureClassification_FAILURE_CLASSIFICATION_PERMANENT,
+				Classification: workerv1.FailureClassification_FAILURE_CLASSIFICATION_RESULT_INVALID,
 			}
 		}
 	case runtimev1.RuntimeOutcome_RUNTIME_OUTCOME_CANCELLED:
@@ -290,14 +312,12 @@ func (e *Executor) mapResponse(taskCtx *workerv1.GetTaskContextResponse,
 			outcome.Output = nil
 			outcome.Failure = &workerv1.TaskFailure{
 				Code: "RESULT_SCHEMA_INVALID", Message: truncate(err.Error(), 512),
-				Classification: workerv1.FailureClassification_FAILURE_CLASSIFICATION_PERMANENT,
+				Classification: workerv1.FailureClassification_FAILURE_CLASSIFICATION_RESULT_INVALID,
 			}
 		}
 		return outcome, nil
 	case runtimev1.RuntimeOutcome_RUNTIME_OUTCOME_CANCELLED:
-		// Execution-level cancellation is not wired yet, so a runtime cancellation is recorded as a worker
-		// cancellation failure rather than a task cancellation.
-		outcome.Failure = failureFromRuntime(response.GetFailure(), "RUNTIME_CANCELLED",
+		outcome.Failure = failureFromRuntime(response.GetFailure(), "CANCELLED",
 			workerv1.FailureClassification_FAILURE_CLASSIFICATION_CANCELLED)
 		return outcome, nil
 	default:

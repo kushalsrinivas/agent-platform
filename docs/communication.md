@@ -103,9 +103,10 @@ Contract: [`proto/worker/v1/worker.proto`](../proto/worker/v1/worker.proto). Pac
 |---|---|---|
 | `Connect(stream WorkerMessage) returns (stream OrchestratorMessage)` | bidi | One session per worker. Registration, heartbeat, task acceptance, cancellation, drain. |
 | `ReportTaskResult` | unary | Fenced result for one attempt. Idempotent. |
-| `CreateArtifactUpload` | unary | Presigned PUT for checkpoint/artifact/log produced by an attempt. |
-| `CreateArtifactDownload` | unary | Presigned GET for a checkpoint the worker must resume from. |
-| `GetTaskContext` | unary | Pinned task/node/agent/tool specs, execution input and upstream outputs for an accepted attempt. Fenced by `(attempt_id, lease_id)`. |
+| `PutCheckpoint` | unary | Fenced upload of one checkpoint at a safe boundary. Idempotent by `(attempt_id, sequence)` and checksum. |
+| `GetTaskContext` | unary | Pinned task/node/agent/tool specs, execution input, upstream outputs and the latest resume checkpoint for an accepted attempt. Fenced by `(attempt_id, lease_id)`. |
+| `CreateArtifactUpload` | unary | Reserved for large outputs/logs; checkpoints currently use `PutCheckpoint`. |
+| `CreateArtifactDownload` | unary | Reserved for large output downloads; checkpoints are returned by `GetTaskContext`. |
 | `GetTaskCredentials` | unary | Short-lived, task-scoped credentials at attempt start. Never cached on disk. |
 
 ### Session rules
@@ -139,9 +140,9 @@ Contract: [`proto/worker/v1/worker.proto`](../proto/worker/v1/worker.proto). Pac
 
 - Request fields: `task_id`, `attempt_id`, `lease_id`, `attempt_number` (monotonic generation; rejected if it does
   not match), `outcome ∈ {SUCCEEDED, FAILED, CANCELLED}`, inline `output` object (required for success, may be
-  empty, ≤64 KiB), optional `output_artifact` for bulk data (never a substitute for the inline output), optional
-  `checkpoint` reference, `failure{code, message, classification, effect_uncertain}`, `metrics`, timestamps,
-  runtime version.
+  empty, ≤64 KiB), optional `output_artifact` for bulk data (never a substitute for the inline output),
+  `failure{code, message, classification, effect_uncertain}`, `metrics`, timestamps and runtime version. Checkpoints
+  are uploaded separately with `PutCheckpoint` so a result is never blocked on a large state payload.
 - Response `status ∈ {ACCEPTED, ALREADY_FINISHED, STALE_LEASE, VALIDATION_FAILED, RETRY_LATER}`. `ACCEPTED` means
   the transition committed. `STALE_LEASE`/`ALREADY_FINISHED` mean stop and discard. `RETRY_LATER` is only for
   transient orchestrator/database unavailability and must be retried within the current lease; the worker must not
@@ -161,9 +162,9 @@ directory, random path, per-process token in `metadata`).
 - `ToolRuntime.ExecuteTool(ExecuteToolRequest) → ExecuteToolResponse`
 
 Requests carry `execution_id`, `task_id`, `attempt_id`, `node_id`, tenant/project, the pinned agent/tool version
-spec, resolved inputs/params, optional checkpoint reference (as bytes fetched by the worker), deadline,
-`traceparent`, and short-lived credentials. Responses carry output JSON, optional checkpoint bytes, metrics, and a
-classified failure. Details and limits are in ADR 0008.
+spec, resolved inputs/params, optional resume checkpoint bytes and schema version, deadline, `traceparent`,
+`idempotency_key` for tool nodes, and short-lived credentials. Responses carry output JSON, optional checkpoint
+bytes, metrics, and a classified failure. Details and limits are in ADR 0008.
 
 The worker owns the process lifecycle: deadline → `SIGTERM`, 5s grace, `SIGKILL`, then reap. gRPC context
 cancellation alone is not trusted to stop tenant code. The runtime has no network listener beyond the UDS and no
@@ -173,8 +174,14 @@ Phase 07 implements the runtime side: `agent_runtime serve --socket`, the LangGr
 registry. The runtime emits one structured JSON event per line (`task_started`, `agent_initialized`,
 `model_request_started`, `model_response_received`, `tool_invocation_started`, `tool_invocation_completed`,
 `agent_completed`, `task_failed`); the worker forwards them to its stdout. Output is validated against the pinned
-node schema by the worker before reporting. Checkpoint bytes are produced at node end, but durable upload is not
-wired yet; live token streaming requires a streaming runtime RPC and is deferred.
+node schema by the worker before reporting.
+
+Phase 08 adds durable checkpoints. The runtime writes an atomic gzip JSON file after each recoverable tool call and
+at node completion into `AGENT_RUNTIME_CHECKPOINT_DIR`. The worker uploads each file with `PutCheckpoint`; the
+orchestrator validates the gzip/JSON/checksum envelope, records lineage and stores small states inline or offloads
+large states to its artifact volume. On retry, `GetTaskContext` returns the newest readable checkpoint for the
+task, and the runtime restores the message history or returns the recorded completed output without another model
+call. Live token streaming still requires a streaming runtime RPC and is deferred.
 
 ## 6. NATS JetStream
 
@@ -361,8 +368,8 @@ transitions on a single task/execution row, which PostgreSQL provides.
   lease TTL (30s). Unhealthy workers receive no new assignments; existing leases continue until expiry.
 - Lease: 30s TTL, renewed implicitly by a heartbeat that lists the attempt. Maximum clock skew between orchestrator
   replicas is expected to be <1s because leases are computed in the database; worker clock skew is irrelevant.
-- Retry policy: exponential backoff with full jitter, base 1s, cap 60s, unless the node overrides. The scheduler,
-  not the worker, decides whether and when to retry.
+- Retry policy: exponential backoff with 0.5–1.0 jitter, base 1s, cap 60s unless the node or workflow policy
+  overrides. The scheduler, not the worker, decides whether and when to retry and freezes the policy on the task.
 - gRPC retries: only idempotent calls. `ReportTaskResult` is idempotent by fence; `Connect` starts a new session;
   artifact URL creation is idempotent per `(attempt_id, kind)`.
 
@@ -375,8 +382,8 @@ transitions on a single task/execution row, which PostgreSQL provides.
   `EVENTS` read. Phase 1 may run a single NATS account in development only.
 - Object storage: presigned URLs are scoped to one object key, one method, 15-minute expiry, and issued only after
   verifying the attempt's lease. Keys are unguessable and tenant-prefixed. No long-lived S3 credentials on workers.
-- Payload limits: JSON messages ≤256 KiB, dispatch ≤64 KiB, inline results ≤64 KiB, checkpoints ≤32 MiB via object
-  storage, a single output artifact or log ≤64 MiB, task context response ≤4 MiB, gRPC max message 4 MiB for the
-  worker control plane. The local runtime UDS allows 40 MiB so a 32 MiB checkpoint plus overhead fits in one
-  response; checkpoint bytes never cross the worker↔orchestrator gRPC boundary (they go through object storage).
-  The worker rejects oversized artifacts and fails the attempt with `ARTIFACT_TOO_LARGE`.
+- Payload limits: JSON messages ≤256 KiB, dispatch ≤64 KiB, inline results ≤64 KiB, checkpoints ≤32 MiB, a single
+  output artifact or log ≤64 MiB. `PutCheckpoint` and the runtime UDS use a 36 MiB gRPC message limit so a 32 MiB
+  checkpoint plus envelope overhead fits in one unary message. States above 256 KiB are offloaded by the
+  orchestrator to its artifact volume; workers never hold object-store credentials. The worker rejects oversized
+  artifacts and fails the attempt with `ARTIFACT_TOO_LARGE`.

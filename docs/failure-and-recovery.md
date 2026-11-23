@@ -24,7 +24,7 @@ change the logical outcome, and which cannot"**.
 |---|---|---|---|---|
 | API instance dies | health check | None; it owns no execution state | Request retried; load balancer reroutes; SSE reconnects with `Last-Event-ID` | A mutation that committed but whose response was lost looks failed to the caller; idempotency key resolves it |
 | API loses database read access | readiness fails | Queries/SSE fail; command forwarding may still work | Retry; read replica not used in Phase 1 | Dashboard degradation only |
-| Orchestrator instance dies | health check, missed gRPC streams | No committed state lost | Another replica serves; workers reconnect; reaper resumes; outbox publisher resumes | In-flight gRPC calls fail and are retried by clients idempotently |
+| Orchestrator instance dies | health check, missed gRPC streams | No committed state lost | Another replica serves; workers reconnect; the recovery manager resumes; outbox publisher resumes | In-flight gRPC calls fail and are retried by clients idempotently |
 | Orchestrator dies after commit, before reply | client timeout | State committed; caller unsure | Client retries submission with same idempotency key; gets existing execution | None logical |
 | Orchestrator dies after task CAS, before outbox publish | committed outbox row | Task assigned, dispatch not yet sent | Restarted publisher sends it; lease may expire first (§3.2) | Retry budget accounting for never-sent dispatch (§3.2) |
 | Orchestrator dies after result commit, before reply | worker RPC timeout | Task/execution transition committed | Worker retries; gets `ALREADY_FINISHED`/`STALE_LEASE` | None |
@@ -42,7 +42,7 @@ change the logical outcome, and which cannot"**.
 | Duplicate dispatch | duplicate pull delivery | One attempt; worker checks fence | Discard/ack if not open | Wasted work only |
 | Python runtime OOM/crash | exit code, supervisor | Attempt fails `RUNTIME_CRASH` | Retry policy; checkpoint may allow resume | Lost since last checkpoint; external effects possible |
 | Python hangs | task deadline | Worker SIGTERM/SIGKILL; reaper also expires lease | `TASK_TIMEOUT`; retry policy | Same as above |
-| Object storage unavailable | S3 errors, upload timeouts | Checkpoints/artifacts/logs fail; task result may still commit if not required | Retry upload; task retry from earlier checkpoint; `require_checkpoint` fails attempt | Resume granularity; large-output nodes fail until storage returns |
+| Artifact volume unavailable | filesystem errors | Large checkpoints cannot be offloaded; small states stay inline | Retry upload; task retry from an earlier inline checkpoint; `require_checkpoint` fails the attempt | Resume granularity; large-state nodes fail until the volume returns |
 | Checkpoint corrupt/mismatched | hash mismatch, schema/ABI mismatch | Attempt fails `CHECKPOINT_INVALID`/`CHECKPOINT_INCOMPATIBLE` | Restart node only if policy allows; otherwise fail | Progress loss |
 | Database migration fails mid-deploy | migration job | Deploy blocks; old version continues if compatible | Roll forward with a corrective migration; expand/contract avoids destructive steps | Operational only |
 | Clock skew | NTP alerts | Leases/deadlines unaffected (DB clock); log/trace timestamps may skew | NTP; timestamps diagnostic except DB | Misleading debugging |
@@ -80,7 +80,8 @@ NULL`). This is an internal failure window, not a worker failure.
 1. Heartbeats stop; after 15s the worker is unhealthy and receives no new work. Leases expire at 30s.
 2. Reaper closes the open attempt `lease_expired` with `outcome_unknown=true` and, if `started_at` is set,
    `effect_uncertain=true`.
-3. Retry policy decides: `pending` (new attempt, possibly from last committed checkpoint) or `failed`.
+3. The frozen retry policy decides: `pending` (new attempt, resuming the newest readable checkpoint) or `failed`
+   and `dead_lettered_at`. An uncertain non-idempotent side effect is not retried.
 4. If the worker is merely partitioned, it may continue and later report. The fence compares the **current** lease,
    which no longer matches. The report is rejected; the worker kills the sandbox. Fencing protects the database, not
    the outside world: the external effect may already have occurred. This is exactly why non-idempotent nodes must
@@ -153,8 +154,8 @@ not `read_only`.
 Downstream behaviour:
 
 - The event and attempt record expose the flag; the dashboard shows a warning on the task.
-- Automatic retry is allowed only if the node is `idempotent` (declared idempotency key) or its retry policy
-  explicitly includes `worker_lost`/`cancel`. Otherwise the task fails with `EFFECT_UNCERTAIN`.
+- Automatic retry is allowed only for `read_only` nodes, `idempotent` nodes, or a node with an `idempotency_key`.
+  Otherwise the task fails with `EFFECT_UNCERTAIN` and is dead-lettered for operator reconciliation.
 - Compensation is a workflow concern, not a platform feature in Phase 1. The platform will not invent a rollback.
 
 ## 4. Startup reconciliation
@@ -162,10 +163,10 @@ Downstream behaviour:
 | Service | On startup |
 |---|---|
 | API | Connect DB, verify migrations/readiness, start HTTP. No state to rebuild. SSE connections are re-established by clients. |
-| Orchestrator | Connect DB; acquire reaper advisory lock (retry); rebuild worker view as empty and wait for registrations (old workers become `unhealthy/offline` via heartbeat timeout); start publisher scanning unpublished outbox; start scheduler. It does not trust any prior in-memory assignment. |
+| Orchestrator | Connect DB; acquire the recovery advisory lock (retry); rebuild the worker view as empty and wait for registrations (old workers become `unhealthy/terminated` via heartbeat timeout); start the publisher scanning the unpublished outbox; start the scheduler. It does not trust any prior in-memory assignment. |
 | Worker | Load or generate stable ID; kill orphaned sandboxes and remove temp dirs; clear credential cache; connect gRPC; register; create/ensure its JetStream consumer; only then accept dispatch. It reports no result without a live lease. |
 | Publisher | Claim `published_at IS NULL AND available_at <= now()` with `SKIP LOCKED`; publish; mark. It does not renumber or reorder state. |
-| Reaper | Expire leases, close stale attempts, finalise cancels/deadlines/failures, evaluate completion, in bounded batches. Idempotent on every row. |
+| Recovery manager | Expire leases, force-reap tasks of terminated workers, repair active tasks with a missing attempt, enforce deadlines, repair interrupted executions with no active task, evaluate completion and report outbox lag in bounded batches. Idempotent on every row. |
 | Dashboard | No state; fetches from API. |
 
 ## 5. Degraded modes
@@ -173,7 +174,7 @@ Downstream behaviour:
 | Mode | Still works | Does not work | User-visible behaviour |
 |---|---|---|---|
 | NATS down | Submit, query, cancel, results of in-flight work, audit | New dispatches, live SSE | Executions stall in `pending`; UI says "scheduling delayed"; polling reflects committed state |
-| Object storage down | Small results, state transitions, tasks not needing checkpoints | Large outputs, checkpoint resume, logs | Tasks requiring artifacts fail/retry; warning on checkpoints |
+| Artifact volume down | Small results, inline checkpoints, state transitions | Large checkpoint offload, large artifacts, logs | Tasks requiring large state fail/retry; warning on checkpoints |
 | Orchestrator down | API reads, auth, definitions | New submissions/cancels, scheduling, result commits | `503` on execution mutations; workers stop after lease TTL |
 | Database read-only/failover | Nothing authoritative | Everything that needs writes; reads may continue briefly | Global degradation; `503` with retry |
 | Worker fleet below capacity | State machine works | Work waits | `pending` tasks; queue age alert; no false failure |
@@ -184,7 +185,7 @@ Downstream behaviour:
 | Asset | Backup | Target |
 |---|---|---|
 | PostgreSQL | Continuous WAL archiving + daily base backup; prod synchronous standby | RPO 0 with synchronous standby; RPO ≤5 min backup-only; RTO ≤1h Phase 1, ≤15 min managed |
-| Object storage | Versioning + lifecycle; checkpoint/artifacts are reproducible/expendable | Loss affects resume/artifacts, not committed logical state |
+| Checkpoint artifact volume | Snapshot with the host or use an S3/MinIO backend when multi-host | Loss can reduce resume granularity, never committed logical state |
 | NATS | R3 stream storage in prod; not backed up | Loss never changes logical state; only delay |
 | Definitions (`control`) | Included in PostgreSQL backup | Restored with DB |
 | Secrets/KMS | KMS-managed, separate backup | Loss requires re-issuing credentials; not restorable from app DB |
@@ -199,7 +200,7 @@ in-flight work as successful is a failure of the drill.
 - Outbox oldest unpublished age > 30s; publish error rate.
 - Lease expiry rate and `WORKER_LOST` rate per pool.
 - Result rejection rate (`STALE_LEASE`, `ALREADY_FINISHED`, `VALIDATION_FAILED`).
-- Reaper lock held / last successful tick age.
+- Recovery manager last successful pass age; leases reaped per pass; executions repaired per pass.
 - Worker heartbeats missing; registered vs active workers; dispatch consumer lag.
 - Executions in `pending`/`assigned` with no state change beyond threshold.
 - Execution deadline breaches and `EXECUTION_TIMEOUT` count.
@@ -243,11 +244,11 @@ task failure, except for `EXECUTION_TIMEOUT`.
 | `TASK_TIMEOUT` | attempt | Node timeout or reaper-enforced deadline. | Per `retry_on=timeout` |
 | `RUNTIME_CRASH` | attempt | Python process exited abnormally / OOM. | Per `transient` |
 | `RESULT_INVALID` | attempt | Malformed/oversized/ill-typed result. | Per policy, usually one retry then stop |
-| `RESULT_SCHEMA_INVALID` | attempt | Result does not match the declared output schema. | Usually permanent |
+| `RESULT_SCHEMA_INVALID` | attempt | Result does not match the declared output schema. | Configurable (`retry_on=result_invalid`) |
 | `CHECKPOINT_INVALID` | attempt | Hash/size/reference mismatch. | Per policy |
 | `CHECKPOINT_INCOMPATIBLE` | attempt | ABI/schema/agent-version mismatch on resume. | No, unless restart is allowed |
 | `CHECKPOINT_TOO_LARGE` | attempt | State exceeds the 32 MiB cap. | No |
-| `CHECKPOINT_UPLOAD_FAILED` | attempt | Object storage upload failed when `require_checkpoint=true`. | Per `transient` |
+| `CHECKPOINT_UPLOAD_FAILED` | attempt | Checkpoint upload failed; a success is never reported without durable state. | Per `transient` |
 | `ARTIFACT_UPLOAD_FAILED` | attempt | Large output could not be stored. | Per `transient` |
 | `ARTIFACT_TOO_LARGE` | attempt | Output/log exceeds the 64 MiB cap. | No |
 | `PROTOCOL_ERROR` | attempt | Worker/runtime violated the contract repeatedly. | No; alert |

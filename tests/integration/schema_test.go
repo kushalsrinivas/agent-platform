@@ -29,7 +29,9 @@ func databaseURL(env, fallback string) string {
 
 func connectPool(t *testing.T, env, fallback string) *pgxpool.Pool {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// The suite starts many short-lived pools; under a loaded Docker Desktop a ping can take longer than the
+	// old 10s budget even though PostgreSQL is healthy.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, databaseURL(env, fallback))
 	if err != nil {

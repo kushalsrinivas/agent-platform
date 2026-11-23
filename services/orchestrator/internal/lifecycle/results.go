@@ -154,24 +154,35 @@ func (s *Service) RejectTask(ctx context.Context, workerID, taskID, attemptID, l
 			return err
 		}
 
-		retry := t.AttemptCount < t.MaxAttempts && e.State != "failing" && e.State != "cancel_requested"
+		policy := taskRetryPolicy(t)
+		// A pre-execution rejection is not a consumed attempt: the worker never ran the node. Only permanent
+		// protocol/config rejections end the task.
+		transientRejection := reason == "WORKER_BUSY" || reason == "WORKER_SHUTTING_DOWN" ||
+			reason == "ATTEMPT_NOT_OPEN"
+		retry := (transientRejection || t.AttemptCount < policy.MaxAttempts) &&
+			reason != "INVALID_PAYLOAD" && reason != "UNSUPPORTED_RUNTIME" &&
+			e.State != "failing" && e.State != "cancel_requested"
 		var nextAttempt *time.Time
 		if retry {
-			next := time.Now().UTC().Add(retryBackoff(t.AttemptCount))
+			next := time.Now().UTC().Add(retryDelay(policy, t.AttemptCount))
 			nextAttempt = &next
 			if _, err := tx.Exec(ctx, `
 				UPDATE execution.execution_tasks
 				SET state = 'pending', state_version = state_version + 1, owner_worker_id = NULL,
-				    lease_id = NULL, lease_expires_at = NULL, next_attempt_at = $2, updated_at = now()
-				WHERE id = $1`, t.ID, nextAttempt); err != nil {
+				    lease_id = NULL, lease_expires_at = NULL, next_attempt_at = $2,
+				    attempt_count = CASE WHEN $3 THEN GREATEST(attempt_count - 1, 0) ELSE attempt_count END,
+				    updated_at = now()
+				WHERE id = $1`, t.ID, nextAttempt, transientRejection); err != nil {
 				return err
 			}
 		} else {
 			if _, err := tx.Exec(ctx, `
 				UPDATE execution.execution_tasks
 				SET state = 'failed', state_version = state_version + 1, ended_at = now(),
-				    owner_worker_id = NULL, lease_id = NULL, lease_expires_at = NULL, updated_at = now()
-				WHERE id = $1`, t.ID); err != nil {
+				    owner_worker_id = NULL, lease_id = NULL, lease_expires_at = NULL,
+				    last_failure_code = $2, dead_lettered_at = COALESCE(dead_lettered_at, now()),
+				    updated_at = now()
+				WHERE id = $1`, t.ID, reason); err != nil {
 				return err
 			}
 		}
@@ -338,6 +349,16 @@ func (s *Service) ReportTaskResult(ctx context.Context, workerID string,
 			t.StateVersion++
 		}
 
+		// Cancellation is durable and wins a race with a worker that finished just after the request. The work
+		// may have happened, but the task must not be recorded as a success of a cancelled execution.
+		if e.State == "cancel_requested" && result.Outcome != contracts.TaskOutcomeCancelled {
+			effectUncertain := result.Failure != nil && result.Failure.EffectUncertain
+			result.Outcome = contracts.TaskOutcomeCancelled
+			result.Failure = &contracts.TaskFailure{
+				Code: "CANCELLED", Message: "execution cancellation requested",
+				Classification: contracts.FailureCancelled, EffectUncertain: effectUncertain,
+			}
+		}
 		if err := s.closeAttemptWithResult(ctx, tx, a, result, req); err != nil {
 			return err
 		}
@@ -350,6 +371,7 @@ func (s *Service) ReportTaskResult(ctx context.Context, workerID string,
 		var nextAttempt *time.Time
 		retry := false
 		failureCode := ""
+		retryPolicy := taskRetryPolicy(t)
 		if result.Outcome != contracts.TaskOutcomeSucceeded {
 			failureCode = "TASK_FAILED"
 			if result.Failure != nil && result.Failure.Code != "" {
@@ -357,11 +379,12 @@ func (s *Service) ReportTaskResult(ctx context.Context, workerID string,
 			}
 			if result.Outcome == contracts.TaskOutcomeCancelled {
 				to = "cancelled"
-			} else if result.Failure != nil && retryable(result.Failure.Classification) &&
-				t.AttemptCount < t.MaxAttempts && e.State != "failing" && e.State != "cancel_requested" {
+			} else if result.Failure != nil && t.AttemptCount < retryPolicy.MaxAttempts &&
+				retryableFailure(retryPolicy, t, result.Failure) &&
+				e.State != "failing" && e.State != "cancel_requested" {
 				to = "pending"
 				retry = true
-				next := time.Now().UTC().Add(retryBackoff(t.AttemptCount))
+				next := time.Now().UTC().Add(retryDelay(retryPolicy, t.AttemptCount))
 				nextAttempt = &next
 			} else {
 				to = "failed"
@@ -382,14 +405,27 @@ func (s *Service) ReportTaskResult(ctx context.Context, workerID string,
 				    lease_id = NULL, lease_expires_at = NULL, next_attempt_at = $2, updated_at = now()
 				WHERE id = $1`, t.ID, nextAttempt)
 		default:
+			var failureCodePtr *string
+			if failureCode != "" {
+				failureCodePtr = &failureCode
+			}
 			_, err = tx.Exec(ctx, `
 				UPDATE execution.execution_tasks
 				SET state = $2, state_version = state_version + 1, ended_at = now(),
-				    owner_worker_id = NULL, lease_id = NULL, lease_expires_at = NULL, updated_at = now()
-				WHERE id = $1`, t.ID, to)
+				    owner_worker_id = NULL, lease_id = NULL, lease_expires_at = NULL,
+				    last_failure_code = COALESCE($3, last_failure_code),
+				    dead_lettered_at = CASE WHEN $2 = 'failed' THEN COALESCE(dead_lettered_at, now()) ELSE dead_lettered_at END,
+				    updated_at = now()
+				WHERE id = $1`, t.ID, to, failureCodePtr)
 		}
 		if err != nil {
 			return err
+		}
+		if retry && failureCode != "" {
+			if _, err := tx.Exec(ctx, `
+				UPDATE execution.execution_tasks SET last_failure_code = $2 WHERE id = $1`, t.ID, failureCode); err != nil {
+				return err
+			}
 		}
 
 		attemptOutcome := "succeeded"
@@ -626,14 +662,5 @@ func failureClassification(value workerv1.FailureClassification) (contracts.Fail
 		return contracts.FailureResultInvalid, nil
 	default:
 		return contracts.FailureWorkerError, nil
-	}
-}
-
-func retryable(classification contracts.FailureClassification) bool {
-	switch classification {
-	case contracts.FailureTransient, contracts.FailureTimeout, contracts.FailureWorkerError:
-		return true
-	default:
-		return false
 	}
 }

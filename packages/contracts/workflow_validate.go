@@ -4,7 +4,7 @@ import (
 	"unicode/utf8"
 )
 
-var retryOnValues = []string{"transient", "timeout", "worker_lost", "cancelled", "any"}
+var retryOnValues = []string{"transient", "timeout", "worker_lost", "result_invalid", "cancelled", "any"}
 
 // Validate enforces the graph contract: nodes, edges, DAG shape, input references and node policies.
 func (g *WorkflowGraph) Validate() error {
@@ -61,8 +61,13 @@ func validateGraph(v *validator, g *WorkflowGraph) {
 		v.addf("at most 2000 edges are allowed")
 	}
 
-	if g.Policy != nil && g.Policy.OnFailure != nil {
-		v.enum("policy.on_failure", *g.Policy.OnFailure, "fail_fast", "continue")
+	if g.Policy != nil {
+		if g.Policy.OnFailure != nil {
+			v.enum("policy.on_failure", *g.Policy.OnFailure, "fail_fast", "continue")
+		}
+		if g.Policy.Retry != nil {
+			v.validateRetry("policy.retry", g.Policy.Retry)
+		}
 	}
 
 	nodeIndex := make(map[string]WorkflowNode, len(g.Nodes))
@@ -80,7 +85,11 @@ func validateGraph(v *validator, g *WorkflowGraph) {
 		}
 		nodeIndex[node.ID] = *node
 		indegree[node.ID] = 0
-		v.validateNode(field, node)
+		var defaultRetry *RetryPolicy
+		if g.Policy != nil {
+			defaultRetry = g.Policy.Retry
+		}
+		v.validateNode(field, node, defaultRetry)
 	}
 
 	seenEdges := make(map[string]bool, len(g.Edges))
@@ -163,7 +172,7 @@ func validateGraph(v *validator, g *WorkflowGraph) {
 	}
 }
 
-func (v *validator) validateNode(field string, node *WorkflowNode) {
+func (v *validator) validateNode(field string, node *WorkflowNode, defaultRetry *RetryPolicy) {
 	if node.Type != NodeTypeAgent && node.Type != NodeTypeTool {
 		v.addf("%s.type must be agent or tool", field)
 	}
@@ -225,6 +234,9 @@ func (v *validator) validateNode(field string, node *WorkflowNode) {
 
 	// ADR 0006: non-idempotent work is never retried without an idempotency key.
 	maxAttempts := 1
+	if defaultRetry != nil && defaultRetry.MaxAttempts != nil {
+		maxAttempts = *defaultRetry.MaxAttempts
+	}
 	if node.Retry != nil && node.Retry.MaxAttempts != nil {
 		maxAttempts = *node.Retry.MaxAttempts
 	}

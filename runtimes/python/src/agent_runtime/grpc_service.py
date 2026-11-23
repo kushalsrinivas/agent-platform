@@ -21,7 +21,7 @@ from agent_runtime.langgraph_runtime import LangGraphRuntime
 from agent_runtime.proto_gen import runtime_pb2, runtime_pb2_grpc
 from agent_runtime.runtime import AgentRuntime, EchoAgentRuntime
 from agent_runtime.spec import AgentVersionSpec, NodeContext, NodeResult
-from checkpointing.codec import decode
+from checkpointing.codec import CheckpointError, decode
 from model_providers.base import ProviderError
 from tool_runtime import ToolRegistry, default_registry
 
@@ -136,6 +136,17 @@ class AgentRuntimeServicer(runtime_pb2_grpc.AgentRuntimeServicer):  # type: igno
                     else runtime_pb2.RUNTIME_FAILURE_CLASSIFICATION_PERMANENT,
                 ),
             )
+        except CheckpointError as exc:
+            emitter.task_failed("CHECKPOINT_INVALID", str(exc))
+            return runtime_pb2.ExecuteNodeResponse(
+                outcome=runtime_pb2.RUNTIME_OUTCOME_FAILED,
+                runtime_version=RUNTIME_VERSION,
+                failure=runtime_pb2.RuntimeFailure(
+                    code="CHECKPOINT_INVALID",
+                    message="checkpoint state is not compatible with this runtime",
+                    classification=runtime_pb2.RUNTIME_FAILURE_CLASSIFICATION_PERMANENT,
+                ),
+            )
         except Exception as exc:
             log.exception("runtime crashed", extra={"task_id": task.task_id})
             emitter.task_failed("RUNTIME_CRASH", str(exc))
@@ -181,7 +192,11 @@ class ToolRuntimeServicer(runtime_pb2_grpc.ToolRuntimeServicer):  # type: ignore
     async def ExecuteTool(self, request: Any, context: Any) -> Any:
         tool = request.context
         started = time.monotonic()
-        outcome = await self._tools.execute(tool.tool_id, _struct_to_dict(tool.arguments))
+        outcome = await self._tools.execute(
+            tool.tool_id,
+            _struct_to_dict(tool.arguments),
+            idempotency_key=tool.idempotency_key,
+        )
         response = runtime_pb2.ExecuteToolResponse(runtime_version=RUNTIME_VERSION)
         response.metrics.duration_ms = int((time.monotonic() - started) * 1000)
         if outcome.ok:
@@ -197,7 +212,12 @@ class ToolRuntimeServicer(runtime_pb2_grpc.ToolRuntimeServicer):  # type: ignore
 
 async def serve(socket_path: str, *, runtime_factory: Any | None = None, tools: ToolRegistry | None = None) -> None:
     """Serve the runtime ABI on a Unix socket until the worker terminates the process."""
-    server = grpc.aio.server()
+    server = grpc.aio.server(
+        options=[
+            ("grpc.max_receive_message_length", 36 * 1024 * 1024),
+            ("grpc.max_send_message_length", 36 * 1024 * 1024),
+        ]
+    )
     runtime_pb2_grpc.add_AgentRuntimeServicer_to_server(AgentRuntimeServicer(runtime_factory, tools), server)
     runtime_pb2_grpc.add_ToolRuntimeServicer_to_server(ToolRuntimeServicer(tools), server)
     bound = server.add_insecure_port(f"unix:{socket_path}")

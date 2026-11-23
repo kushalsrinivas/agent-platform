@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -146,6 +147,66 @@ func (h *Handlers) respondSubmitError(w http.ResponseWriter, r *http.Request, er
 		h.log.Error("submit execution failed", zap.String("code", st.Code().String()), zap.Error(err))
 		respond.Error(w, r, http.StatusInternalServerError, "internal", "could not submit execution")
 	}
+}
+
+// Cancel records a durable cancellation request and returns the current execution snapshot.
+func (h *Handlers) Cancel(w http.ResponseWriter, r *http.Request) {
+	if err := auth.RequireRole(r.Context(), auth.RoleOperator); err != nil {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "operator role required")
+		return
+	}
+	membership, _ := auth.MembershipFrom(r.Context())
+	principal, _ := auth.PrincipalFrom(r.Context())
+	executionID := chi.URLParam(r, "execution_id")
+	projectID := chi.URLParam(r, "project_id")
+
+	var request struct {
+		Reason string `json:"reason"`
+	}
+	if r.Body != nil {
+		if err := respond.Decode(w, r, 4096, &request); err != nil && !errors.Is(err, io.EOF) {
+			if respond.IsBodyTooLarge(err) {
+				respond.Error(w, r, http.StatusRequestEntityTooLarge, "payload_too_large", "request body exceeds 4 KiB")
+				return
+			}
+			respond.Error(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
+
+	callCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	result, err := h.orchestrator.Cancel(callCtx, &orchestratorv1.CancelExecutionRequest{
+		OrgId:       membership.OrgID,
+		ExecutionId: executionID,
+		RequestedBy: principal.ID,
+		Reason:      request.Reason,
+	})
+	if err != nil {
+		st := status.Convert(err)
+		switch st.Code() {
+		case codes.NotFound:
+			respond.Error(w, r, http.StatusNotFound, "not_found", "execution not found")
+		case codes.FailedPrecondition:
+			respond.Error(w, r, http.StatusConflict, "conflict", st.Message())
+		case codes.Unavailable, codes.DeadlineExceeded:
+			respond.Error(w, r, http.StatusServiceUnavailable, "orchestrator_unavailable", "execution service is unavailable")
+		default:
+			h.log.Error("execution cancellation failed", zap.String("execution_id", executionID), zap.Error(err))
+			respond.Error(w, r, http.StatusInternalServerError, "internal", "could not cancel execution")
+		}
+		return
+	}
+	if !result.GetAccepted() {
+		respond.Error(w, r, http.StatusConflict, "conflict", "execution is already terminal or failing")
+		return
+	}
+	execution, err := h.store.Get(r.Context(), membership.OrgID, projectID, executionID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, "internal", "cancellation committed; fetch the execution with GET")
+		return
+	}
+	respond.JSON(w, http.StatusAccepted, execution)
 }
 
 func (h *Handlers) List(w http.ResponseWriter, r *http.Request) {

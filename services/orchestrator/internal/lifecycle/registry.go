@@ -216,16 +216,48 @@ func (s *Service) Heartbeat(ctx context.Context, workerID string, capacity *work
 		return errors.New("lifecycle: worker_id is required")
 	}
 	return s.withTx(ctx, func(tx pgx.Tx) error {
+		// Renew attempt leases first. The result handler locks execution -> task -> worker, so the heartbeat must
+		// not take the worker lock before task locks; doing so used to deadlock with a concurrent result commit.
+		for _, renewal := range active {
+			if renewal.TaskID == "" || renewal.LeaseID == "" {
+				continue
+			}
+			// The expiry guard is the fence: a lease that already lapsed must not be revived by a late heartbeat.
+			_, err := tx.Exec(ctx, `
+				UPDATE execution.execution_tasks t
+				SET lease_expires_at = now() + make_interval(secs => $4), updated_at = now()
+				FROM execution.executions e
+				WHERE t.id = $1
+				  AND t.owner_worker_id = $2
+				  AND t.lease_id = $3::uuid
+				  AND t.state IN ('assigned', 'running')
+				  AND t.lease_expires_at > now()
+				  AND e.id = t.execution_id
+				  AND e.state IN ('pending', 'running')
+				  AND EXISTS (
+				      SELECT 1 FROM execution.workers w
+				      WHERE w.id = $2 AND w.status <> 'terminated'
+				  )`,
+				renewal.TaskID, workerID, renewal.LeaseID, int(s.leaseTTL/time.Second))
+			if err != nil {
+				return err
+			}
+		}
+
 		var reserved, maxConcurrency, reportedAvailable int
+		var currentStatus string
 		err := tx.QueryRow(ctx, `
-			SELECT reserved_slots, max_concurrency, reported_available_slots
+			SELECT reserved_slots, max_concurrency, reported_available_slots, status
 			FROM execution.workers WHERE id = $1 FOR UPDATE`, workerID).
-			Scan(&reserved, &maxConcurrency, &reportedAvailable)
+			Scan(&reserved, &maxConcurrency, &reportedAvailable, &currentStatus)
 		if isNoRows(err) {
 			return errors.New("lifecycle: worker is not registered")
 		}
 		if err != nil {
 			return err
+		}
+		if currentStatus == "terminated" {
+			return errors.New("lifecycle: worker is terminated")
 		}
 		available := reportedAvailable
 		newMax := maxConcurrency
@@ -284,28 +316,6 @@ func (s *Service) Heartbeat(ctx context.Context, workerID string, capacity *work
 		}
 		if tag.RowsAffected() == 0 {
 			return errors.New("lifecycle: worker is not registered")
-		}
-
-		for _, renewal := range active {
-			if renewal.TaskID == "" || renewal.LeaseID == "" {
-				continue
-			}
-			// The expiry guard is the fence: a lease that already lapsed must not be revived by a late heartbeat.
-			_, err := tx.Exec(ctx, `
-				UPDATE execution.execution_tasks t
-				SET lease_expires_at = now() + make_interval(secs => $4), updated_at = now()
-				FROM execution.executions e
-				WHERE t.id = $1
-				  AND t.owner_worker_id = $2
-				  AND t.lease_id = $3::uuid
-				  AND t.state IN ('assigned', 'running')
-				  AND t.lease_expires_at > now()
-				  AND e.id = t.execution_id
-				  AND e.state IN ('pending', 'running')`,
-				renewal.TaskID, workerID, renewal.LeaseID, int(s.leaseTTL/time.Second))
-			if err != nil {
-				return err
-			}
 		}
 		return nil
 	})

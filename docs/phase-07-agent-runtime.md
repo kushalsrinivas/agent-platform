@@ -89,8 +89,10 @@ OpenAI-compatible adapter also accepts a `base_url` in the agent model parameter
   (`model_request_started`, `model_response_received`, `tool_invocation_started/completed`) to stdout while the
   current ABI call remains unary.
 - **Checkpoints:** `get_state` serialises the message history and step count through the Phase 03 checkpoint codec
-  (gzip JSON, 32 MiB limit); `restore_state` validates the agent version and continues the conversation. The
-  runtime returns checkpoint bytes on success; durable upload to object storage is deferred (see deviations).
+  (gzip JSON, 32 MiB limit); `restore_state` validates the agent version and continues the conversation. Phase 08
+  writes checkpoints after each model response and tool call and at node completion into the worker's private
+  directory, uploads them through the fenced RPC and resumes them on retry. See
+  [phase-08-durable-execution.md](phase-08-durable-execution.md).
 - **Errors:** provider failures map to classified `NodeResult.failure`; `MAX_TURNS_EXCEEDED`, `TASK_TIMEOUT`,
   `CHECKPOINT_INVALID` and `RUNTIME_ERROR` are stable codes. Unexpected exceptions never escape as an RPC error.
 - **Cancellation:** `cancel()` sets a cooperative flag checked before each model call; the worker additionally
@@ -182,8 +184,8 @@ local venv.
 | Item | Status | Reason / trigger |
 |---|---|---|
 | Python process subscribes to NATS | No | The accepted architecture gives the Go worker the NATS consumer and lease; the Python process gets one attempt over a UDS and has no bus or DB credentials. |
-| Live token streaming to the control plane | Deferred | The runtime ABI is unary; structured events are emitted to logs instead. Add a streaming RPC when the dashboard needs token-level updates. |
-| Durable checkpoint upload | Deferred | `CreateArtifactUpload`/presigned object storage is not wired. The runtime produces and can restore checkpoint bytes; the worker logs and drops them today. |
+| Live token streaming to the control plane | Deferred | The runtime ABI is unary; structured events and durable checkpoints are emitted instead. Add a streaming RPC when the dashboard needs token-level updates. |
+| Durable checkpoint upload | Implemented in Phase 08 | The worker uploads runtime checkpoint files with `PutCheckpoint`; small states are inline and large states are offloaded by the orchestrator. |
 | Model credentials | Empty | No secret store exists; the runtime reads task-scoped credentials but the orchestrator returns none. Real provider calls therefore need credentials injection in a later slice. |
 | Hard memory/CPU limits | Deployment concern | The runtime samples usage; cgroup/no-new-privileges/egress policy is the sandbox phase. |
 | Provider SDKs | Not used | Plain HTTP keeps the image small and makes every wire format testable with `httpx.MockTransport`. |
