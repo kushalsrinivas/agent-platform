@@ -114,6 +114,24 @@ cd apps/dashboard && npm run dev
 Environment variables are documented in `.env.example`; defaults point at localhost, so the commands above work
 with no `.env` once the data stores are up.
 
+### Python agent runtime
+
+The worker image contains the Go host and a Python 3.12 virtual environment with `langgraph`, `grpcio`, `httpx`
+and the `agent_runtime` package. Each attempt starts `python -m agent_runtime serve --socket <path>` in a private
+temporary directory; the worker calls the runtime ABI over that Unix socket and kills the process group on
+completion, timeout or drain. The default provider is the deterministic `echo` provider; OpenAI-compatible,
+Anthropic and Gemini adapters are available by name and capability.
+
+For host-side runs and the integration suite, sync the runtime environment once:
+
+```bash
+cd runtimes/python && uv sync --frozen
+```
+
+`make integration-test` does this automatically; CI installs `uv` and syncs before the integration suite. The
+runtime emits JSON events on stdout and the worker forwards them; provider API keys are not wired yet, so only the
+echo provider executes without a future credentials slice.
+
 ### Worker registration and shutdown
 
 A worker advertises `WORKER_RUNTIME`, `WORKER_RUNTIME_VERSION`, `WORKER_CAPABILITIES`, `WORKER_CPU_CORES`,

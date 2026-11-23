@@ -4,7 +4,7 @@ Phase 1 has no tenant-authored tools: every tool ships with the runtime image an
 version from a workflow. Tool code runs in the same sandbox as the agent.
 """
 
-from tool_runtime.builtin import AddTool, EchoTool
+from tool_runtime.builtin import AddTool, EchoTool, WebSearchTool
 from tool_runtime.registry import Tool, ToolRegistry, ToolResult
 
 
@@ -13,7 +13,16 @@ def default_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(EchoTool())
     registry.register(AddTool())
+    registry.register(WebSearchTool())
     return registry
 
 
-__all__ = ["AddTool", "EchoTool", "Tool", "ToolRegistry", "ToolResult", "default_registry"]
+__all__ = [
+    "AddTool",
+    "EchoTool",
+    "Tool",
+    "ToolRegistry",
+    "ToolResult",
+    "WebSearchTool",
+    "default_registry",
+]

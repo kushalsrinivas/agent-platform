@@ -66,8 +66,10 @@ func DefaultConsumerConfig(workerID string, capacity int) ConsumerConfig {
 		MaxDeliver:    5,
 		AckWait:       60 * time.Second,
 		MaxAckPending: capacity,
-		BackOff:       []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second},
-		DLQSubject:    DLQSubject(workerID),
+		// NATS derives the effective ack wait from the first backoff, so the broker retry curve starts at the
+		// ack window. Explicit NakWithDelay uses the same curve.
+		BackOff:    []time.Duration{60 * time.Second, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute},
+		DLQSubject: DLQSubject(workerID),
 	}
 }
 
@@ -134,7 +136,7 @@ func NewConsumer(ctx context.Context, js jetstream.JetStream, cfg ConsumerConfig
 		cfg.MaxAckPending = 1
 	}
 	if len(cfg.BackOff) == 0 {
-		cfg.BackOff = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second}
+		cfg.BackOff = []time.Duration{60 * time.Second, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute}
 	}
 	if cfg.DLQSubject == "" {
 		cfg.DLQSubject = DLQSubject(cfg.WorkerID)
@@ -143,6 +145,12 @@ func NewConsumer(ctx context.Context, js jetstream.JetStream, cfg ConsumerConfig
 	stream, err := js.Stream(ctx, cfg.Stream)
 	if err != nil {
 		return nil, fmt.Errorf("messaging: load stream %s: %w", cfg.Stream, err)
+	}
+	// Recreate the worker's own durable consumer so a stale broker-side configuration (for example an old
+	// ack_wait from a previous deployment) cannot weaken delivery semantics. TASK_DISPATCH is a work-queue
+	// stream: acknowledged messages are gone, unacknowledged messages remain and are redelivered.
+	if err := stream.DeleteConsumer(ctx, cfg.Durable); err != nil && !errors.Is(err, jetstream.ErrConsumerNotFound) {
+		return nil, fmt.Errorf("messaging: reset consumer %s: %w", cfg.Durable, err)
 	}
 	natsConsumer, err := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
 		Durable:       cfg.Durable,
@@ -189,6 +197,7 @@ func (c *Consumer) Start(parent context.Context) error {
 		zap.String("filter", c.cfg.FilterSubject),
 		zap.Int("max_deliver", c.cfg.MaxDeliver),
 		zap.Int("max_ack_pending", c.cfg.MaxAckPending),
+		zap.Duration("ack_wait", c.cfg.AckWait),
 	)
 	return nil
 }

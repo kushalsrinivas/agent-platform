@@ -169,6 +169,13 @@ The worker owns the process lifecycle: deadline → `SIGTERM`, 5s grace, `SIGKIL
 cancellation alone is not trusted to stop tenant code. The runtime has no network listener beyond the UDS and no
 database/NATS credentials.
 
+Phase 07 implements the runtime side: `agent_runtime serve --socket`, the LangGraph adapter and the provider
+registry. The runtime emits one structured JSON event per line (`task_started`, `agent_initialized`,
+`model_request_started`, `model_response_received`, `tool_invocation_started`, `tool_invocation_completed`,
+`agent_completed`, `task_failed`); the worker forwards them to its stdout. Output is validated against the pinned
+node schema by the worker before reporting. Checkpoint bytes are produced at node end, but durable upload is not
+wired yet; live token streaming requires a streaming runtime RPC and is deferred.
+
 ## 6. NATS JetStream
 
 ### Streams and subjects

@@ -19,9 +19,20 @@ import (
 	"github.com/agent-platform/agent-platform/packages/contracts"
 )
 
-// Executor runs one accepted attempt. Phase 05 ships the deterministic echo executor; the sandboxed runtime
-// replaces it without changing the delivery or acknowledgement path.
-type Executor func(ctx context.Context, dispatch *contracts.TaskDispatch) (map[string]any, error)
+// ExecutionOutcome is one completed attempt execution. Failure carries the runtime's sanitised classification;
+// a non-nil error from the executor itself means the attempt could not run (infrastructure), not that the agent
+// failed.
+type ExecutionOutcome struct {
+	Output         map[string]any
+	Failure        *workerv1.TaskFailure
+	Metrics        *workerv1.AttemptMetrics
+	RuntimeVersion string
+	Checkpoint     []byte
+}
+
+// Executor runs one accepted attempt. Returning an error means the attempt never produced a result; the handler
+// then either reports a classified failure or, on worker shutdown, leaves the message for redelivery.
+type Executor func(ctx context.Context, dispatch *contracts.TaskDispatch) (ExecutionOutcome, error)
 
 // Handler processes one task.dispatch message. Returning nil authorises the broker acknowledgement.
 type Handler struct {
@@ -123,24 +134,56 @@ func (h *Handler) Handle(ctx context.Context, msg jetstream.Msg) error {
 		return fmt.Errorf("accept task: %w", err)
 	}
 	defer h.Client.Done(dispatch.TaskID)
+	h.Log.Info("task started",
+		zap.String("task_id", dispatch.TaskID),
+		zap.String("attempt_id", dispatch.AttemptID),
+		zap.String("execution_id", dispatch.ExecutionID),
+		zap.String("node_id", dispatch.NodeID),
+	)
 
 	startedAt := time.Now().UTC()
-	output, executeErr := h.Execute(runCtx, dispatch)
+	outcome, executeErr := h.Execute(runCtx, dispatch)
 	finishedAt := time.Now().UTC()
 	duration := finishedAt.Sub(startedAt).Milliseconds()
 
-	request := &workerv1.ReportTaskResultRequest{
-		TaskId:     dispatch.TaskID,
-		AttemptId:  dispatch.AttemptID,
-		LeaseId:    dispatch.LeaseID,
-		StartedAt:  timestamppb.New(startedAt),
-		FinishedAt: timestamppb.New(finishedAt),
-		Metrics:    &workerv1.AttemptMetrics{DurationMs: duration},
+	// A cancelled run context means the worker is shutting down or the attempt lost its broker deadline; do not
+	// burn an attempt on it. The lease is the recovery mechanism.
+	if errors.Is(runCtx.Err(), context.Canceled) && executeErr != nil {
+		return fmt.Errorf("attempt interrupted: %w", executeErr)
 	}
+
+	request := &workerv1.ReportTaskResultRequest{
+		TaskId:        dispatch.TaskID,
+		AttemptId:     dispatch.AttemptID,
+		LeaseId:       dispatch.LeaseID,
+		AttemptNumber: int32(dispatch.AttemptNumber), //nolint:gosec // bounded by max_attempts.
+		StartedAt:     timestamppb.New(startedAt),
+		FinishedAt:    timestamppb.New(finishedAt),
+	}
+	if outcome.Metrics != nil {
+		request.Metrics = outcome.Metrics
+	} else {
+		request.Metrics = &workerv1.AttemptMetrics{DurationMs: duration}
+	}
+	if outcome.RuntimeVersion != "" {
+		request.RuntimeVersion = outcome.RuntimeVersion
+	}
+
 	if executeErr != nil {
 		request.Outcome = workerv1.TaskOutcome_TASK_OUTCOME_FAILED
 		request.Failure = failureFor(runCtx, executeErr)
+	} else if outcome.Failure != nil {
+		request.Outcome = workerv1.TaskOutcome_TASK_OUTCOME_FAILED
+		request.Failure = outcome.Failure
+		h.Log.Warn("agent attempt failed",
+			zap.String("task_id", dispatch.TaskID),
+			zap.String("attempt_id", dispatch.AttemptID),
+			zap.String("code", outcome.Failure.GetCode()),
+			zap.String("classification", outcome.Failure.GetClassification().String()),
+			zap.String("message", outcome.Failure.GetMessage()),
+		)
 	} else {
+		output := outcome.Output
 		if output == nil {
 			output = map[string]any{}
 		}
@@ -155,6 +198,14 @@ func (h *Handler) Handle(ctx context.Context, msg jetstream.Msg) error {
 			request.Outcome = workerv1.TaskOutcome_TASK_OUTCOME_SUCCEEDED
 			request.Output = structOutput
 		}
+	}
+	if len(outcome.Checkpoint) > 0 {
+		// Durable checkpoint upload is deferred with the object-store integration; log that state exists so
+		// the gap is visible in operations.
+		h.Log.Debug("attempt produced checkpoint state; durable upload is deferred",
+			zap.String("task_id", dispatch.TaskID),
+			zap.Int("checkpoint_bytes", len(outcome.Checkpoint)),
+		)
 	}
 
 	// Reporting must still work after the execution deadline cancels runCtx; the result is the proof of the timeout.
@@ -204,11 +255,12 @@ func failureFor(ctx context.Context, err error) *workerv1.TaskFailure {
 	return &workerv1.TaskFailure{Code: code, Message: message, Classification: classification}
 }
 
-// Echo is the Phase 05 executor: it proves delivery, fencing and acknowledgement without model or tool calls.
-func Echo(_ context.Context, dispatch *contracts.TaskDispatch) (map[string]any, error) {
-	return map[string]any{
+// Echo is the deterministic offline executor: it proves delivery, fencing and acknowledgement without a runtime
+// process. The Python runtime executor replaces it in deployment.
+func Echo(_ context.Context, dispatch *contracts.TaskDispatch) (ExecutionOutcome, error) {
+	return ExecutionOutcome{Output: map[string]any{
 		"status":         "succeeded",
 		"node_id":        dispatch.NodeID,
 		"attempt_number": dispatch.AttemptNumber,
-	}, nil
+	}}, nil
 }

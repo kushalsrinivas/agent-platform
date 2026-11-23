@@ -30,6 +30,13 @@ make integration-test
   - `TestWorkerManagerDrainStopsAssignments` proves a draining worker receives no new tasks.
   - `TestWorkerManagerBootChangeReclaimsAttempts` proves a new boot for the same worker ID reclaims the previous
     process's attempt immediately.
+  - `TestRuntimeLangGraphAgentExecution` executes a real LangGraph agent through the Python runtime and asserts the
+    schema-validated report, runtime version, token usage and attempt event.
+  - `TestRuntimeOutputSchemaRejectsInvalidOutput` proves invalid runtime output is reported as
+    `RESULT_SCHEMA_INVALID` and never committed as a success.
+
+The runtime tests use the host venv at `runtimes/python/.venv`; `make integration-test` runs `uv sync --frozen`
+first. Set `RUNTIME_PYTHON` to override the interpreter path.
 
 `make integration-test` builds and starts `api`, `orchestrator` and `worker` as well as the data stores, waits for
 API health, then runs all suites. `ORCHESTRATOR_GRPC_ADDR` (derived from `ORCHESTRATOR_GRPC_PORT`) is passed to

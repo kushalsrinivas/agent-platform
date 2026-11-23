@@ -89,6 +89,7 @@ type TaskMetrics struct {
 	DurationMS *int64          `json:"duration_ms,omitempty"`
 	TokensIn   *int64          `json:"tokens_in,omitempty"`
 	TokensOut  *int64          `json:"tokens_out,omitempty"`
+	Steps      *int            `json:"steps,omitempty"`
 	Extra      *map[string]any `json:"extra,omitempty"`
 }
 

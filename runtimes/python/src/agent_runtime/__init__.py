@@ -4,20 +4,37 @@ The worker starts one process per task attempt and calls into this package. The 
 its input plus credentials: it cannot read or write platform state.
 """
 
-from agent_runtime.langgraph_agent import EchoState, build_echo_graph, run_echo_graph
+from agent_runtime.events import EventEmitter
+from agent_runtime.grpc_service import (
+    RUNTIME_ABI,
+    RUNTIME_VERSION,
+    AgentRuntimeServicer,
+    ToolRuntimeServicer,
+    serve,
+)
+from agent_runtime.langgraph_runtime import LangGraphRuntime
 from agent_runtime.logging import configure_logging
 from agent_runtime.runtime import AgentRuntime, EchoAgentRuntime
-from agent_runtime.spec import AgentSpec, NodeContext, NodeResult, RuntimeErrorInfo
+from agent_runtime.spec import (
+    AgentVersionSpec,
+    NodeContext,
+    NodeResult,
+    RuntimeErrorInfo,
+)
 
 __all__ = [
+    "RUNTIME_ABI",
+    "RUNTIME_VERSION",
     "AgentRuntime",
-    "AgentSpec",
+    "AgentRuntimeServicer",
+    "AgentVersionSpec",
     "EchoAgentRuntime",
-    "EchoState",
+    "EventEmitter",
+    "LangGraphRuntime",
     "NodeContext",
     "NodeResult",
     "RuntimeErrorInfo",
-    "build_echo_graph",
+    "ToolRuntimeServicer",
     "configure_logging",
-    "run_echo_graph",
+    "serve",
 ]

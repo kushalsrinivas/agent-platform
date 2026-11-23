@@ -6,6 +6,8 @@ import (
 	"io"
 	"time"
 
+	"google.golang.org/protobuf/types/known/structpb"
+
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -157,9 +159,75 @@ func (s *WorkerServer) ReportTaskResult(ctx context.Context,
 	}, nil
 }
 
-// GetTaskContext is implemented in the runtime phase; Phase 05 moves dispatch and results only.
-func (s *WorkerServer) GetTaskContext(context.Context, *workerv1.GetTaskContextRequest) (*workerv1.GetTaskContextResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "task context is not available in this phase")
+// GetTaskContext returns the pinned, immutable context for a live attempt. The worker fetches it after
+// acceptance so the bus stays small and no secrets or blobs travel on it.
+func (s *WorkerServer) GetTaskContext(ctx context.Context,
+	req *workerv1.GetTaskContextRequest) (*workerv1.GetTaskContextResponse, error) {
+	workerID := workerIDFromContext(ctx)
+	if workerID == "" {
+		return nil, status.Error(codes.Unauthenticated, "worker identity is required")
+	}
+	if req.GetTaskId() == "" || req.GetAttemptId() == "" || req.GetLeaseId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "task_id, attempt_id and lease_id are required")
+	}
+	task, err := s.service.GetTaskContext(ctx, workerID, req.GetTaskId(), req.GetAttemptId(), req.GetLeaseId())
+	if err != nil {
+		if errors.Is(err, ErrStaleLease) {
+			return nil, status.Error(codes.FailedPrecondition, "attempt is not owned by this worker")
+		}
+		s.log.Error("task context load failed",
+			zap.String("worker_id", workerID), zap.String("task_id", req.GetTaskId()), zap.Error(err))
+		return nil, status.Error(codes.Internal, "task context could not be loaded")
+	}
+
+	response := &workerv1.GetTaskContextResponse{
+		OrgId:          task.OrgID,
+		ProjectId:      task.ProjectID,
+		ExecutionId:    task.ExecutionID,
+		NodeId:         task.NodeID,
+		NodeType:       task.NodeType,
+		AgentVersionId: task.AgentVersionID,
+		ToolVersionId:  task.ToolVersionID,
+		Deadline:       timestamppb.New(task.Deadline),
+		Traceparent:    s.service.TraceparentFor(ctx, task.ExecutionID),
+	}
+	response.VersionSpec, _ = structpb.NewStruct(task.VersionSpec)
+	response.ExecutionInput, _ = structpb.NewStruct(task.ExecutionInput)
+	response.NodeParams, _ = structpb.NewStruct(task.NodeParams)
+	if task.OutputSchema != nil {
+		response.NodeOutputSchema, _ = structpb.NewStruct(task.OutputSchema)
+	}
+	if len(task.UpstreamOutputs) > 0 {
+		response.UpstreamOutputs = make(map[string]*structpb.Struct, len(task.UpstreamOutputs))
+		for nodeID, output := range task.UpstreamOutputs {
+			upstream, err := structpb.NewStruct(output)
+			if err != nil {
+				continue
+			}
+			response.UpstreamOutputs[nodeID] = upstream
+		}
+	}
+	return response, nil
+}
+
+// GetTaskCredentials is the credentials seam. No secret store is wired yet, so it returns an empty set for any
+// attempt that passes the fence; the runtime treats a missing credential ref as a configuration failure.
+func (s *WorkerServer) GetTaskCredentials(ctx context.Context,
+	req *workerv1.GetTaskCredentialsRequest) (*workerv1.GetTaskCredentialsResponse, error) {
+	workerID := workerIDFromContext(ctx)
+	if workerID == "" {
+		return nil, status.Error(codes.Unauthenticated, "worker identity is required")
+	}
+	if _, err := s.service.GetTaskContext(ctx, workerID, req.GetTaskId(), req.GetAttemptId(), req.GetLeaseId()); err != nil {
+		if errors.Is(err, ErrStaleLease) {
+			return nil, status.Error(codes.FailedPrecondition, "attempt is not owned by this worker")
+		}
+		return nil, status.Error(codes.Internal, "credentials could not be authorised")
+	}
+	return &workerv1.GetTaskCredentialsResponse{
+		Values:    map[string]string{},
+		ExpiresAt: timestamppb.New(time.Now().UTC().Add(15 * time.Minute)),
+	}, nil
 }
 
 // IsActiveWorker reports whether the worker is registered and currently active.

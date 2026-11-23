@@ -5,8 +5,10 @@ description = "Python execution runtime for the Agent Platform: agent loops, mod
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "grpcio>=1.85.3",
     "httpx>=0.28",
     "langgraph>=1.0",
+    "protobuf>=7.36.2",
     "pydantic>=2.10",
     "rfc8785>=0.1.4",
 ]
@@ -27,27 +29,41 @@ packages = [
 
 [dependency-groups]
 dev = [
+    "grpcio-tools>=1.85.3",
     "jsonschema>=4.26.0",
     "mypy>=1.14",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
     "ruff>=0.9",
+    "types-grpcio>=1.85.0.20261122",
+    "types-jsonschema>=4.26.0.20261006",
+    "types-protobuf>=7.35.1.20261122",
 ]
 
 [tool.ruff]
 line-length = 120
 target-version = "py312"
 src = ["src", "tests"]
+exclude = ["src/agent_runtime/proto_gen"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/agent_runtime/proto_gen/*" = ["E501"]
 ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.mypy]
 python_version = "3.12"
 files = ["src", "tests"]
+exclude = "src/agent_runtime/proto_gen"
 strict = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "agent_runtime.proto_gen.*"
+follow_imports = "skip"
+ignore_errors = true
 # LangGraph ships incomplete type information in a few places.
 ignore_missing_imports = true
 

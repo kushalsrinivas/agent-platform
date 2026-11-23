@@ -207,7 +207,7 @@ The Phase 05 redelivery, duplicate suppression and DLQ/redrive tests continue to
 
 | Item | Status | Reason / trigger |
 |---|---|---|
-| Python worker processes | The worker host is Go; the sandboxed Python runtime is not implemented in this phase. | The scheduler and lease protocol are runtime-independent. The integration tests use multiple Go hosts; the runtime phase replaces `delivery.Echo` with the UDS runtime. |
+| Python worker processes | Implemented in Phase 07: the Go host spawns one Python runtime process per attempt over a Unix socket. | The scheduler and lease protocol stay runtime-independent; the worker host remains the only NATS/DB writer. |
 | Operator-initiated drain | The control stream handles `DrainWorker` and the worker reacts, but no public endpoint/gRPC command is wired yet. | SIGTERM shutdown is complete; expose `DrainWorker` when `platformctl` or an admin API lands. |
 | Checkpoint before shutdown | Deferred to the runtime phase. | No runtime execution or checkpoint bytes exist yet. |
 | Task-level CPU/memory requests | Tracked but not enforced; worker CPU/memory are placement metadata. | The agent spec has no resource-request fields yet. Add them with the sandbox. |

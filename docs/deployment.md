@@ -183,6 +183,11 @@ docker compose exec -T postgres pg_dump -U postgres -Fc agent_platform > "agent_
 - Set `ORCHESTRATOR_ADMIN_TOKEN` to a strong random value if operator status/redrive is needed. The orchestrator
   port is removed from the host by the VPS override, so the surface is reachable only inside the Compose network;
   leave the token empty to disable both routes. Worker IDs must match `^wrk_[A-Za-z0-9_-]{8,64}$`.
+- The worker image includes the Python agent runtime. `WORKER_RUNTIME_COMMAND` defaults to
+  `python -m agent_runtime serve --socket {socket}`; setting it empty uses the offline echo executor. Each attempt
+  is a separate Python process in its own process group; `WORKER_RUNTIME_STARTUP_SECONDS` and
+  `WORKER_RUNTIME_KILL_SECONDS` bound startup and termination. The image is larger than a Go-only worker because it
+  carries the Python venv and LangGraph.
 - Workers advertise `WORKER_RUNTIME`, `WORKER_CAPABILITIES`, CPU cores and memory. The scheduler only assigns a
   node to a worker whose pool, capability and runtime ABI/digest match. Scale workers by adding replicas with
   distinct `WORKER_ID` values; a shared worker ID intentionally replaces the previous boot.

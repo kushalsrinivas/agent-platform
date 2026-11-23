@@ -247,6 +247,8 @@ message AttemptMetrics {
   int64 tokens_in = 2;
   int64 tokens_out = 3;
   google.protobuf.Struct extra = 4;
+  // Agent/tool steps observed by the runtime (model turns plus tool rounds).
+  int32 steps = 5;
 }
 
 message ReportTaskResultResponse {
@@ -333,6 +335,9 @@ message GetTaskContextResponse {
   CheckpointRef resume_checkpoint = 12;
   google.protobuf.Timestamp deadline = 13;
   string traceparent = 14;
+  // The pinned node output_schema, when present. The worker validates runtime output against it before
+  // reporting, so an invalid result never reaches the orchestrator as a success.
+  google.protobuf.Struct node_output_schema = 15;
 }
 
 message CheckpointRef {

@@ -78,6 +78,9 @@ func TestConsumerConfigDefaults(t *testing.T) {
 	if len(cfg.BackOff) != 5 || cfg.DLQSubject != "tasks.dlq.wrk_test_01" {
 		t.Fatalf("unexpected retry policy: %+v", cfg)
 	}
+	if cfg.BackOff[0] < cfg.AckWait {
+		t.Fatalf("first backoff %s is below the ack wait %s; NATS would shrink the ack window", cfg.BackOff[0], cfg.AckWait)
+	}
 }
 
 func TestConsumerRejectsInvalidWorkerID(t *testing.T) {

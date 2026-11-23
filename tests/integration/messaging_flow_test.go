@@ -516,11 +516,12 @@ func orchestratorGRPCAddr(t *testing.T) string {
 }
 
 type schedulerOptions struct {
-	Pool        string
-	NodeCount   int
-	Independent bool
-	Priority    int32
-	MaxAttempts int
+	Pool         string
+	NodeCount    int
+	Independent  bool
+	Priority     int32
+	MaxAttempts  int
+	OutputSchema map[string]any
 }
 
 func createSchedulerFixture(t *testing.T, client *apiClient, suffix string, opts schedulerOptions) fixtureExecution {
@@ -540,6 +541,9 @@ func createSchedulerFixture(t *testing.T, client *apiClient, suffix string, opts
 		}
 		if opts.MaxAttempts > 1 {
 			node["retry"] = map[string]any{"max_attempts": opts.MaxAttempts}
+		}
+		if opts.OutputSchema != nil {
+			node["output_schema"] = opts.OutputSchema
 		}
 		nodes = append(nodes, node)
 		if !opts.Independent && index > 1 {
@@ -598,7 +602,7 @@ func TestWorkerManagerDistributesTasks(t *testing.T) {
 	workerB := startTestWorkerWithCapacity(t, suffix+"b", pool, 1)
 	handled := make(chan string, 4)
 	startConsumer := func(worker *testWorker) {
-		execute := func(ctx context.Context, dispatch *contracts.TaskDispatch) (map[string]any, error) {
+		execute := func(ctx context.Context, dispatch *contracts.TaskDispatch) (delivery.ExecutionOutcome, error) {
 			handled <- worker.id + "|" + dispatch.TaskID
 			time.Sleep(2 * time.Second)
 			return delivery.Echo(ctx, dispatch)
@@ -778,7 +782,7 @@ func TestWorkerManagerLeaseRenewal(t *testing.T) {
 	worker := startTestWorkerWithCapacity(t, suffix, pool, 1)
 	worker.startConsumer(t, &delivery.Handler{
 		Client: worker.control, WorkerID: worker.id, Log: zap.NewNop(),
-		Execute: func(ctx context.Context, dispatch *contracts.TaskDispatch) (map[string]any, error) {
+		Execute: func(ctx context.Context, dispatch *contracts.TaskDispatch) (delivery.ExecutionOutcome, error) {
 			time.Sleep(3 * time.Second)
 			return delivery.Echo(ctx, dispatch)
 		},

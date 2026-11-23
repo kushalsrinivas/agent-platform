@@ -459,3 +459,50 @@ func clampInt32(value int) int32 {
 	}
 	return int32(value)
 }
+
+// GetTaskContext fetches the pinned, immutable context for a live attempt.
+func (c *Client) GetTaskContext(ctx context.Context, taskID, attemptID, leaseID string) (*workerv1.GetTaskContextResponse, error) {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil {
+		return nil, errors.New("orchestrator client is not connected")
+	}
+	ctx = metadata.AppendToOutgoingContext(ctx, WorkerIDMetadataKey, c.cfg.WorkerID)
+	return client.GetTaskContext(ctx, &workerv1.GetTaskContextRequest{
+		TaskId: taskID, AttemptId: attemptID, LeaseId: leaseID,
+	})
+}
+
+// GetTaskCredentials fetches short-lived, task-scoped credentials. The store is not wired yet, so callers must
+// treat an empty result as a configuration failure rather than an empty provider key.
+func (c *Client) GetTaskCredentials(ctx context.Context, taskID, attemptID, leaseID string,
+	names []string) (*workerv1.GetTaskCredentialsResponse, error) {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil {
+		return nil, errors.New("orchestrator client is not connected")
+	}
+	ctx = metadata.AppendToOutgoingContext(ctx, WorkerIDMetadataKey, c.cfg.WorkerID)
+	return client.GetTaskCredentials(ctx, &workerv1.GetTaskCredentialsRequest{
+		TaskId: taskID, AttemptId: attemptID, LeaseId: leaseID, Names: names,
+	})
+}
+
+// Progress reports advisory attempt telemetry. It never transitions state and failures are ignored by the
+// orchestrator.
+func (c *Client) Progress(_ context.Context, taskID, attemptID, leaseID, message string, step int64) error {
+	c.mu.Lock()
+	stream := c.stream
+	c.mu.Unlock()
+	if stream == nil {
+		return errors.New("control stream is not connected")
+	}
+	return c.send(stream, &workerv1.WorkerMessage{Body: &workerv1.WorkerMessage_TaskProgress{
+		TaskProgress: &workerv1.TaskProgress{
+			TaskId: taskID, AttemptId: attemptID, LeaseId: leaseID,
+			Step: step, Message: message, ReportedAt: timestamppb.Now(),
+		},
+	}})
+}
