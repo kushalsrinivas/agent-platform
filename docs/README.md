@@ -9,6 +9,7 @@ ADR wins and the document is a bug. Code written in later phases must cite and f
 | [deployment.md](deployment.md) | Single-host/VPS deployment, credentials, backups and upgrades. |
 | [phase-03-contracts.md](phase-03-contracts.md) | Phase 03 schema, workflow/task/event contracts, outbox and brief mapping. |
 | [phase-04-control-plane.md](phase-04-control-plane.md) | Phase 04 auth, API surface, execution submission and quotas. |
+| [phase-05-messaging.md](phase-05-messaging.md) | Phase 05 streams, outbox publisher, scheduler, durable delivery, duplicates, DLQ and redrive. |
 | [architecture.md](architecture.md) | What the system is, its boundaries, its invariants, and how the pieces cooperate. |
 | [service-responsibilities.md](service-responsibilities.md) | What each deployable does, reads, writes, and when it may become a separate service. |
 | [communication.md](communication.md) | External and internal protocols, envelope, subjects, delivery guarantees, versioning. |

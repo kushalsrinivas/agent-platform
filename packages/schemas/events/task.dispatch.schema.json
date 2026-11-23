@@ -4,10 +4,11 @@
   "title": "task.dispatch payload v1",
   "description": "The bus carries only this pointer; the worker fetches the pinned spec, inputs and credentials over gRPC after acceptance.",
   "type": "object",
-  "required": ["attempt_number", "node_id", "node_type", "spec_digest", "deadline", "lease_expires_at"],
+  "required": ["attempt_number", "lease_id", "node_id", "node_type", "spec_digest", "deadline", "lease_expires_at"],
   "additionalProperties": false,
   "properties": {
     "attempt_number": { "type": "integer", "minimum": 1 },
+    "lease_id": { "type": "string", "format": "uuid" },
     "node_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
     "node_type": { "enum": ["agent", "tool"] },
     "agent_version_id": { "type": "string", "pattern": "^agtv_[A-Za-z0-9_-]{8,64}$" },

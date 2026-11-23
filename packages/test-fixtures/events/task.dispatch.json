@@ -12,6 +12,7 @@
   "correlation_id": "exec_01JQ9A0B1C2D3E4F5G6H7J8K",
   "payload": {
     "attempt_number": 1,
+    "lease_id": "3f9c2f7a-5f36-4a4b-9d31-6b0e2f1a8c44",
     "node_id": "collect",
     "node_type": "tool",
     "tool_version_id": "tool_web_search:1",

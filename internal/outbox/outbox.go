@@ -28,9 +28,17 @@ type Message struct {
 	MessageType   string
 	SchemaVersion int
 	OrgID         string
+	ProjectID     string
 	ExecutionID   *string
+	TaskID        *string
+	AttemptID     *string
+	WorkerID      *string
+	CorrelationID *string
+	CausationID   *string
+	Traceparent   *string
 	Payload       json.RawMessage
 	Headers       json.RawMessage
+	CreatedAt     time.Time
 	AvailableAt   time.Time
 	Attempts      int
 }
@@ -52,7 +60,7 @@ func NewStore(pool *pgxpool.Pool) *Store {
 }
 
 // NewMessage builds a committed-ready message with a UUIDv7 row ID and a stable prefixed message ID.
-func NewMessage(orgID, subject, messageType string, executionID *string, payload any, headers map[string]string) (Message, error) {
+func NewMessage(orgID, projectID, subject, messageType string, executionID *string, payload any, headers map[string]string) (Message, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return Message{}, fmt.Errorf("outbox: marshal payload: %w", err)
@@ -77,6 +85,7 @@ func NewMessage(orgID, subject, messageType string, executionID *string, payload
 		return Message{}, err
 	}
 
+	now := time.Now().UTC()
 	msg := Message{
 		ID:            rowID.String(),
 		MessageID:     "msg_" + messageUUID.String(),
@@ -84,10 +93,12 @@ func NewMessage(orgID, subject, messageType string, executionID *string, payload
 		MessageType:   messageType,
 		SchemaVersion: 1,
 		OrgID:         orgID,
+		ProjectID:     projectID,
 		ExecutionID:   executionID,
 		Payload:       raw,
 		Headers:       rawHeaders,
-		AvailableAt:   time.Now().UTC(),
+		CreatedAt:     now,
+		AvailableAt:   now,
 	}
 	if err := msg.Validate(); err != nil {
 		return Message{}, err
@@ -118,6 +129,9 @@ func (m Message) Validate() error {
 	if m.OrgID == "" {
 		return errors.New("outbox: org_id is required")
 	}
+	if m.ProjectID == "" {
+		return errors.New("outbox: project_id is required")
+	}
 	if len(m.Payload) == 0 || !json.Valid(m.Payload) {
 		return errors.New("outbox: payload must be valid JSON")
 	}
@@ -134,11 +148,13 @@ func (s *Store) Insert(ctx context.Context, tx pgx.Tx, msg Message) error {
 	}
 	_, err := tx.Exec(ctx, `
 		INSERT INTO execution.outbox
-			(id, message_id, subject, message_type, schema_version, org_id, execution_id,
-			 payload, headers)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			(id, message_id, subject, message_type, schema_version, org_id, project_id,
+			 execution_id, task_id, attempt_id, worker_id, correlation_id, causation_id,
+			 traceparent, payload, headers, created_at)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		msg.ID, msg.MessageID, msg.Subject, msg.MessageType, msg.SchemaVersion,
-		msg.OrgID, msg.ExecutionID, msg.Payload, msg.Headers,
+		msg.OrgID, msg.ProjectID, msg.ExecutionID, msg.TaskID, msg.AttemptID, msg.WorkerID,
+		msg.CorrelationID, msg.CausationID, msg.Traceparent, msg.Payload, msg.Headers, msg.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("outbox: insert: %w", err)
@@ -165,8 +181,9 @@ func (s *Store) claim(ctx context.Context, tx pgx.Tx, orgID string, limit int) (
 		return nil, fmt.Errorf("outbox: limit must be between 1 and 100")
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT id::text, message_id, subject, message_type, schema_version, org_id, execution_id,
-		       payload, headers, available_at, attempts
+		SELECT id::text, message_id, subject, message_type, schema_version, org_id, project_id,
+		       execution_id, task_id, attempt_id, worker_id, correlation_id, causation_id,
+		       traceparent, payload, headers, created_at, available_at, attempts
 		FROM execution.outbox
 		WHERE published_at IS NULL AND available_at <= now()
 		  AND ($2 = '' OR org_id = $2)
@@ -182,16 +199,25 @@ func (s *Store) claim(ctx context.Context, tx pgx.Tx, orgID string, limit int) (
 	var messages []Message
 	for rows.Next() {
 		var msg Message
-		var executionID pgtype.Text
+		var projectID, executionID, taskID, attemptID, workerID, correlationID, causationID, traceparent pgtype.Text
 		if err := rows.Scan(
 			&msg.ID, &msg.MessageID, &msg.Subject, &msg.MessageType, &msg.SchemaVersion,
-			&msg.OrgID, &executionID, &msg.Payload, &msg.Headers, &msg.AvailableAt, &msg.Attempts,
+			&msg.OrgID, &projectID, &executionID, &taskID, &attemptID, &workerID,
+			&correlationID, &causationID, &traceparent,
+			&msg.Payload, &msg.Headers, &msg.CreatedAt, &msg.AvailableAt, &msg.Attempts,
 		); err != nil {
 			return nil, fmt.Errorf("outbox: scan: %w", err)
 		}
-		if executionID.Valid {
-			msg.ExecutionID = &executionID.String
+		if projectID.Valid {
+			msg.ProjectID = projectID.String
 		}
+		msg.ExecutionID = textPtr(executionID)
+		msg.TaskID = textPtr(taskID)
+		msg.AttemptID = textPtr(attemptID)
+		msg.WorkerID = textPtr(workerID)
+		msg.CorrelationID = textPtr(correlationID)
+		msg.CausationID = textPtr(causationID)
+		msg.Traceparent = textPtr(traceparent)
 		messages = append(messages, msg)
 	}
 	if err := rows.Err(); err != nil {
@@ -279,4 +305,11 @@ func (s *Store) dispatch(ctx context.Context, publisher Publisher, orgID string,
 		errs = append(errs, err)
 	}
 	return published, errors.Join(errs...)
+}
+
+func textPtr(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	return &value.String
 }

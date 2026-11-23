@@ -172,6 +172,7 @@ class TaskAttemptFinishedPayload(PayloadModel):
 
 class TaskDispatchPayload(PayloadModel):
     attempt_number: int = Field(ge=1)
+    lease_id: str
     node_id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     node_type: NodeType
     agent_version_id: str | None = Field(default=None, pattern=AGENT_VERSION_ID_PATTERN)

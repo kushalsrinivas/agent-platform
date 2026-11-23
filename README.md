@@ -69,9 +69,10 @@ task attempt is individually identifiable. Every execution pins immutable workfl
 | 02 — Repository and development environment | Complete. Monorepo, local stack, CI and dashboard shell. |
 | 03 — Database architecture and shared contracts | Complete. 17 tables, RLS, immutable versions, workflow/task/event schemas, Go/Python models, outbox. |
 | 04 — Go API and control plane | Complete. OIDC/dev auth, org/project/member/agent/workflow APIs, durable execution submission, quotas. |
-| 05 — Scheduler, worker and event pipeline | Next. |
+| 05 — Scheduler, worker and event pipeline | Complete. JetStream dispatch/DLQ, outbox publisher, scheduler, fenced results, redelivery and redrive. |
 
-The dashboard renders labelled fixtures until it is wired to the API in Phase 05. Phase 04 is documented in
+The dashboard renders labelled fixtures until the dashboard wiring phase. Phase 05 is documented in
+[`docs/phase-05-messaging.md`](docs/phase-05-messaging.md); Phase 04 is documented in
 [`docs/phase-04-control-plane.md`](docs/phase-04-control-plane.md); Phase 03 details are in
 [`docs/phase-03-contracts.md`](docs/phase-03-contracts.md).
 

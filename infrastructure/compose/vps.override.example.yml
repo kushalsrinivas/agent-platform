@@ -23,6 +23,9 @@ services:
     ports: !reset []
   orchestrator:
     ports: !reset []
+    environment:
+      # Optional operator surface; leave empty to disable it entirely.
+      ORCHESTRATOR_ADMIN_TOKEN: ${ORCHESTRATOR_ADMIN_TOKEN:-}
   worker:
     ports: !reset []
   api:
