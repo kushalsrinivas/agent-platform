@@ -135,10 +135,10 @@ func (s *Store) Insert(ctx context.Context, tx pgx.Tx, msg Message) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO execution.outbox
 			(id, message_id, subject, message_type, schema_version, org_id, execution_id,
-			 payload, headers, available_at)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			 payload, headers)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		msg.ID, msg.MessageID, msg.Subject, msg.MessageType, msg.SchemaVersion,
-		msg.OrgID, msg.ExecutionID, msg.Payload, msg.Headers, msg.AvailableAt,
+		msg.OrgID, msg.ExecutionID, msg.Payload, msg.Headers,
 	)
 	if err != nil {
 		return fmt.Errorf("outbox: insert: %w", err)
@@ -149,6 +149,18 @@ func (s *Store) Insert(ctx context.Context, tx pgx.Tx, msg Message) error {
 // Claim locks up to limit due rows, skipping rows held by another publisher, and returns them. The rows remain
 // locked until the caller commits or rolls back.
 func (s *Store) Claim(ctx context.Context, tx pgx.Tx, limit int) ([]Message, error) {
+	return s.claim(ctx, tx, "", limit)
+}
+
+// ClaimForOrg is the scoped variant used by tests and tenant-scoped operations.
+func (s *Store) ClaimForOrg(ctx context.Context, tx pgx.Tx, orgID string, limit int) ([]Message, error) {
+	if orgID == "" {
+		return nil, errors.New("outbox: org id is required")
+	}
+	return s.claim(ctx, tx, orgID, limit)
+}
+
+func (s *Store) claim(ctx context.Context, tx pgx.Tx, orgID string, limit int) ([]Message, error) {
 	if limit < 1 || limit > 100 {
 		return nil, fmt.Errorf("outbox: limit must be between 1 and 100")
 	}
@@ -157,9 +169,10 @@ func (s *Store) Claim(ctx context.Context, tx pgx.Tx, limit int) ([]Message, err
 		       payload, headers, available_at, attempts
 		FROM execution.outbox
 		WHERE published_at IS NULL AND available_at <= now()
+		  AND ($2 = '' OR org_id = $2)
 		ORDER BY available_at, id
 		LIMIT $1
-		FOR UPDATE SKIP LOCKED`, limit,
+		FOR UPDATE SKIP LOCKED`, limit, orgID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("outbox: claim: %w", err)
@@ -224,13 +237,25 @@ func (s *Store) MarkFailed(ctx context.Context, tx pgx.Tx, id string, retryAfter
 // that claimed them. A crash after publish and before commit may duplicate a message; consumers are idempotent by
 // contract, and MessageID is the Nats-Msg-Id.
 func (s *Store) DispatchOnce(ctx context.Context, publisher Publisher, limit int, retryAfter time.Duration) (int, error) {
+	return s.dispatch(ctx, publisher, "", limit, retryAfter)
+}
+
+// DispatchOnceForOrg is the tenant-scoped variant used by tests and operational tooling.
+func (s *Store) DispatchOnceForOrg(ctx context.Context, publisher Publisher, orgID string, limit int, retryAfter time.Duration) (int, error) {
+	if orgID == "" {
+		return 0, errors.New("outbox: org id is required")
+	}
+	return s.dispatch(ctx, publisher, orgID, limit, retryAfter)
+}
+
+func (s *Store) dispatch(ctx context.Context, publisher Publisher, orgID string, limit int, retryAfter time.Duration) (int, error) {
 	if publisher == nil {
 		return 0, errors.New("outbox: publisher is required")
 	}
 	published := 0
 	var errs []error
 	err := postgres.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		messages, err := s.Claim(ctx, tx, limit)
+		messages, err := s.claim(ctx, tx, orgID, limit)
 		if err != nil {
 			return err
 		}

@@ -15,7 +15,10 @@ POSTGRES_PASSWORD ?= $(or $(shell sed -n 's/^POSTGRES_PASSWORD=//p' .env 2>/dev/
 API_DATABASE_URL ?= postgres://app_api:dev_api_password@localhost:$(POSTGRES_PORT)/agent_platform?sslmode=disable
 ORCHESTRATOR_DATABASE_URL ?= postgres://app_orchestrator:dev_orchestrator_password@localhost:$(POSTGRES_PORT)/agent_platform?sslmode=disable
 POSTGRES_DATABASE_URL ?= postgres://postgres:$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/agent_platform?sslmode=disable
-NATS_URL ?= nats://localhost:4222
+NATS_PORT ?= $(or $(shell sed -n 's/^NATS_PORT=//p' .env 2>/dev/null | tail -1),4222)
+NATS_URL ?= nats://localhost:$(NATS_PORT)
+API_PORT ?= $(or $(shell sed -n 's/^API_PORT=//p' .env 2>/dev/null | tail -1),8080)
+API_URL ?= http://localhost:$(API_PORT)
 LDFLAGS := -s -w \
 	-X $(GO_PKG)/internal/platform/buildinfo.Version=$(VERSION) \
 	-X $(GO_PKG)/internal/platform/buildinfo.Commit=$(COMMIT) \
@@ -128,9 +131,15 @@ build-go: ## Build Go binaries into bin/
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/worker ./services/worker/cmd/worker
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/platformctl ./cli/cmd/platformctl
 
-integration-test: ## Run integration tests against the Docker data stores
-	POSTGRES_PORT=$(POSTGRES_PORT) $(COMPOSE) up -d postgres nats redis minio minio-init
-	POSTGRES_PORT=$(POSTGRES_PORT) $(COMPOSE) run --rm migrate
+integration-test: ## Run integration tests against the Docker stack
+	POSTGRES_PORT=$(POSTGRES_PORT) $(COMPOSE) up -d --build postgres nats redis minio minio-init api orchestrator
+	@echo "Waiting for the API..."
+	@for i in $$(seq 1 60); do \
+		if curl -fsS "$(API_URL)/healthz" >/dev/null 2>&1; then break; fi; \
+		sleep 2; \
+	done
+	@curl -fsS "$(API_URL)/healthz" >/dev/null || { echo "API did not become healthy"; $(COMPOSE) logs --no-color api; exit 1; }
+	API_URL="$(API_URL)" \
 	API_DATABASE_URL="$(API_DATABASE_URL)" \
 	ORCHESTRATOR_DATABASE_URL="$(ORCHESTRATOR_DATABASE_URL)" \
 	POSTGRES_DATABASE_URL="$(POSTGRES_DATABASE_URL)" \

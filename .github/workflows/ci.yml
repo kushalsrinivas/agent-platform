@@ -94,6 +94,7 @@ jobs:
     env:
       # Avoid collisions with anything preinstalled on the runner.
       POSTGRES_PORT: 55432
+      API_URL: http://localhost:8080
       API_DATABASE_URL: postgres://app_api:dev_api_password@localhost:55432/agent_platform?sslmode=disable
       ORCHESTRATOR_DATABASE_URL: postgres://app_orchestrator:dev_orchestrator_password@localhost:55432/agent_platform?sslmode=disable
       POSTGRES_DATABASE_URL: postgres://postgres:postgres@localhost:55432/agent_platform?sslmode=disable
@@ -103,17 +104,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Start data stores
-        run: docker compose up -d postgres nats redis minio minio-init
-      - name: Apply migrations
-        run: docker compose run --rm migrate
-      - name: Wait for NATS
+      - name: Start the control plane
+        run: docker compose up -d --build postgres nats redis minio minio-init api orchestrator
+      - name: Wait for the API
         run: |
-          for i in $(seq 1 30); do
-            if curl -fsS http://localhost:8222/healthz >/dev/null; then exit 0; fi
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:8080/healthz >/dev/null; then exit 0; fi
             sleep 2
           done
-          echo "NATS did not become healthy" >&2
+          echo "API did not become healthy" >&2
+          docker compose logs --no-color
           exit 1
       - name: Run integration tests
         run: go test -tags=integration -count=1 ./tests/integration/...

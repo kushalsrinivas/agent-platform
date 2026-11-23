@@ -15,6 +15,9 @@ make dev     # build images, run migrations, start everything
 
 Then open http://localhost:3000. API health is at http://localhost:8080/healthz.
 
+Host ports can be remapped in `.env` if another local project owns them; all services and test commands derive
+their URLs from those values.
+
 For local tests, linters or running services outside Docker, install Go 1.26+, Node.js 20.9+ and
 [uv](https://docs.astral.sh/uv/), then:
 
@@ -65,10 +68,12 @@ task attempt is individually identifiable. Every execution pins immutable workfl
 | 01 — Architecture and contracts | Complete. Normative docs in [`docs/`](docs/README.md). |
 | 02 — Repository and development environment | Complete. Monorepo, local stack, CI and dashboard shell. |
 | 03 — Database architecture and shared contracts | Complete. 17 tables, RLS, immutable versions, workflow/task/event schemas, Go/Python models, outbox. |
-| 04 — Core execution path | Next. |
+| 04 — Go API and control plane | Complete. OIDC/dev auth, org/project/member/agent/workflow APIs, durable execution submission, quotas. |
+| 05 — Scheduler, worker and event pipeline | Next. |
 
-The dashboard renders labelled fixtures until the execution API exists; there is no fake client layer to unwind.
-Phase 03 details are in [`docs/phase-03-contracts.md`](docs/phase-03-contracts.md).
+The dashboard renders labelled fixtures until it is wired to the API in Phase 05. Phase 04 is documented in
+[`docs/phase-04-control-plane.md`](docs/phase-04-control-plane.md); Phase 03 details are in
+[`docs/phase-03-contracts.md`](docs/phase-03-contracts.md).
 
 ## Reading order
 

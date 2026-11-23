@@ -1,5 +1,4 @@
-// Command api is the public HTTP entry point: authentication, tenant resolution, REST/SSE and command forwarding.
-// Phase 02 provides the server shell and health surface; product endpoints land in Phase 03.
+// Command api is the public HTTP entry point: authentication, tenant resolution, REST and command forwarding.
 package main
 
 import (
@@ -16,6 +15,10 @@ import (
 	"github.com/agent-platform/agent-platform/internal/platform/logging"
 	"github.com/agent-platform/agent-platform/internal/platform/postgres"
 	"github.com/agent-platform/agent-platform/internal/platform/run"
+	"github.com/agent-platform/agent-platform/services/api/internal/auth"
+	"github.com/agent-platform/agent-platform/services/api/internal/database"
+	"github.com/agent-platform/agent-platform/services/api/internal/executions"
+	"github.com/agent-platform/agent-platform/services/api/internal/server"
 )
 
 type serviceConfig struct {
@@ -24,6 +27,19 @@ type serviceConfig struct {
 	HTTPAddr    string   `env:"API_HTTP_ADDR" envDefault:":8080"`
 	DatabaseURL string   `env:"API_DATABASE_URL" envDefault:"postgres://app_api:dev_api_password@localhost:5432/agent_platform?sslmode=disable"`
 	CORSOrigins []string `env:"API_CORS_ORIGINS" envSeparator:"," envDefault:"http://localhost:3000"`
+
+	OrchestratorAddr     string `env:"API_ORCHESTRATOR_GRPC_ADDR" envDefault:"localhost:9090"`
+	OrchestratorInsecure bool   `env:"API_ORCHESTRATOR_INSECURE" envDefault:"true"`
+
+	AuthMode      string `env:"AUTH_MODE" envDefault:""`
+	AuthDevSecret string `env:"AUTH_DEV_SECRET"`
+	AuthDevIssuer string `env:"AUTH_DEV_ISSUER" envDefault:"agent-platform-dev"`
+	AuthAudience  string `env:"AUTH_AUDIENCE" envDefault:"agent-platform-api"`
+	OIDCIssuerURL string `env:"OIDC_ISSUER_URL"`
+	OIDCClientID  string `env:"OIDC_CLIENT_ID"`
+
+	RateLimitPerMinute int `env:"API_RATE_LIMIT_PER_MINUTE" envDefault:"120"`
+	RateLimitBurst     int `env:"API_RATE_LIMIT_BURST" envDefault:"30"`
 }
 
 func main() {
@@ -52,8 +68,38 @@ func main() {
 	}
 	defer pool.Close()
 
-	dbCheck := func(ctx context.Context) error { return pool.Ping(ctx) }
+	authConfig := auth.Config{
+		Mode:          cfg.AuthMode,
+		Environment:   cfg.Environment,
+		DevSecret:     cfg.AuthDevSecret,
+		DevIssuer:     cfg.AuthDevIssuer,
+		Audience:      cfg.AuthAudience,
+		OIDCIssuerURL: cfg.OIDCIssuerURL,
+		OIDCClientID:  cfg.OIDCClientID,
+	}
+	verifier, err := auth.NewVerifier(ctx, authConfig)
+	if err != nil {
+		log.Fatal("invalid authentication configuration", zap.Error(err))
+	}
 
+	var devIssuer *auth.DevIssuer
+	if verifier.IsDevelopment() {
+		devIssuer, err = auth.NewDevIssuer(authConfig)
+		if err != nil {
+			log.Fatal("invalid development auth configuration", zap.Error(err))
+		}
+		log.Warn("development bearer token endpoint is mounted at POST /v1/dev/token")
+	} else {
+		log.Info("OIDC bearer authentication enabled")
+	}
+
+	orchestrator, err := executions.DialOrchestrator(cfg.OrchestratorAddr, cfg.OrchestratorInsecure, log)
+	if err != nil {
+		log.Fatal("orchestrator client configuration failed", zap.Error(err))
+	}
+	defer func() { _ = orchestrator.Close() }()
+
+	db := database.New(pool)
 	srv := httpserver.New(httpserver.Options{
 		Addr:   cfg.HTTPAddr,
 		Logger: log,
@@ -61,16 +107,29 @@ func main() {
 			cors.Handler(cors.Options{
 				AllowedOrigins:   cfg.CORSOrigins,
 				AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete, http.MethodOptions},
-				AllowedHeaders:   []string{"Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID"},
+				AllowedHeaders:   []string{"Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID", "Traceparent"},
 				AllowCredentials: true,
 				MaxAge:           300,
 			}),
 		},
-		Checks: []httpserver.Check{dbCheck},
+		Checks: []httpserver.Check{func(ctx context.Context) error { return pool.Ping(ctx) }},
 	})
 	srv.Router().Get("/v1/meta", metaHandler(cfg.Environment))
 
-	log.Info("starting api", zap.String("commit", buildinfo.Commit))
+	server.Mount(srv.Router(), server.Deps{
+		DB:           db,
+		Verifier:     verifier,
+		DevIssuer:    devIssuer,
+		Orchestrator: orchestrator,
+		Logger:       log,
+		Config: server.Config{
+			RateLimitPerMinute: cfg.RateLimitPerMinute,
+			RateLimitBurst:     cfg.RateLimitBurst,
+			MaxBodyBytes:       1 << 20,
+		},
+	})
+
+	log.Info("starting api", zap.String("commit", buildinfo.Commit), zap.String("auth_mode", cfg.AuthMode))
 
 	if err := run.Group(ctx, srv.Start); err != nil {
 		log.Fatal("api stopped", zap.Error(err))

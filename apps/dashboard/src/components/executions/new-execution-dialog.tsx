@@ -29,7 +29,7 @@ export function NewExecutionDialog() {
     setErrors({});
     setOpen(false);
     toast.info("Input validated", {
-      description: "Execution submission is wired to the API in Phase 04.",
+      description: "Execution submission is wired to the API in Phase 05.",
     });
   }
 

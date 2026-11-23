@@ -27,7 +27,7 @@ That is the entire path. `make dev` is the single documented command once depend
 
 | Service | URL | Notes |
 |---|---|---|
-| Dashboard | http://localhost:3000 | Demo data until Phase 04 |
+| Dashboard | http://localhost:3000 | Demo data until Phase 05 |
 | API | http://localhost:8080 | `/healthz`, `/readyz`, `/v1/meta` |
 | Orchestrator gRPC | localhost:9090 | reflection enabled in development |
 | Orchestrator HTTP | http://localhost:8081 | health and version |
@@ -37,8 +37,37 @@ That is the entire path. `make dev` is the single documented command once depend
 | Redis | localhost:6379 | |
 | Object storage | http://localhost:9000 | S3 API; console at :9001 (`minioadmin` / `minioadmin123`) |
 
+The ports above are defaults. Every published port is configurable in `.env` (`POSTGRES_PORT`, `NATS_PORT`,
+`REDIS_PORT`, `MINIO_API_PORT`, `API_PORT`, `ORCHESTRATOR_GRPC_PORT`, `ORCHESTRATOR_HTTP_PORT`, `WORKER_PORT`,
+`DASHBOARD_PORT`). `make integration-test` derives `API_URL`, database URLs and the NATS URL from the same values,
+so a remapped local stack still runs the full suite.
+
 Migration order is `control` then `execution`; the one-shot `migrate` service enforces it. Application containers
 wait for it with `depends_on: service_completed_successfully`.
+
+### Calling the API locally
+
+The local stack runs the API in `AUTH_MODE=dev`. Mint a short-lived bearer token and call the control plane:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/v1/dev/token \
+  -H 'Content-Type: application/json' \
+  -d '{"principal_id":"user_local"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+
+curl -s http://localhost:8080/v1/orgs -H "Authorization: Bearer $TOKEN"
+curl -s -X POST http://localhost:8080/v1/orgs \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Local Org","slug":"local-org"}'
+```
+
+If `API_PORT` is remapped in `.env`, use that port instead of 8080.
+
+`POST /v1/dev/token` is mounted only when `ENVIRONMENT=development` and `AUTH_MODE=dev`; it is never part of
+production. In production the API verifies OIDC bearer JWTs (`AUTH_MODE=oidc`, `OIDC_ISSUER_URL`,
+`OIDC_CLIENT_ID`). The VPS override defaults to OIDC; do not expose a dev-mode API.
+
+The complete Phase 04 flow (org → project → agent → publish → workflow → publish → execution) is exercised by
+`make integration-test` in [`tests/integration/api_flow_test.go`](../tests/integration/api_flow_test.go).
 
 ### Object storage
 
@@ -60,7 +89,7 @@ nothing in the application imports a MinIO SDK. Pinning a different S3 server is
 | `make test` | Go unit tests (race detector) and both Python suites. |
 | `make lint` | gofmt, `go vet`, golangci-lint, Ruff, mypy, Biome and `tsc`. |
 | `make migrate` | Apply migrations to the running database. |
-| `make integration-test` | Start data stores, migrate, run `tests/integration`. |
+| `make integration-test` | Build and start the control plane, migrate, run the full integration suite. |
 | `make build` | Binaries into `bin/`; Python wheels; dashboard production build. |
 | `make images` | Build every Docker image without starting anything. |
 | `make proto` | Regenerate Go code from `proto/` (requires plugin install). |
@@ -119,7 +148,7 @@ the dependency graph is small enough to read.
 
 - `migrations/control/0001` creates the schema, development roles and default privileges.
 - `migrations/control/0002` creates the nine control tables; `0003` adds RLS, immutability triggers, grants and
-  organisation discovery.
+  organisation discovery. `0004` adds the API membership-auth helper and the organisation list's timestamps.
 - `migrations/execution/0001` creates the execution schema and roles; `0002` creates the eight execution tables,
   indexes and outbox; `0003` adds RLS, append-only audit, attempt immutability and grants.
 - Both use golang-migrate and separate migration tables (`control_schema_migrations`,
@@ -173,14 +202,16 @@ These are the places where the project chose the smaller option on purpose. Revi
 | Environment-based config, no Viper | The config is flat, small and the same in every environment. `env` tags are typed and testable. | Config needs nested files, hot reload or multiple sources. |
 | One root Go module | Independent per-service builds without `go.work`, `replace` directives or version skew. | A service needs an independent release cadence. |
 | Manual constructor injection | Three binaries, one dependency graph each; a DI framework would hide wiring for no benefit. | The graph becomes large enough that startup wiring is unreadable. |
-| `sqlc` deferred | The tables exist, but there are no query-heavy repositories yet; the outbox uses hand-written SQL with explicit locking. | The first CRUD/scheduling repository in Phase 04. |
-| `go-playground/validator` deferred | No request bodies exist yet. Add it with the first API resource. | Phase 04 request models. |
+| `sqlc` deferred | The API repositories use explicit SQL with RLS, locking and pagination; generated queries would hide those boundaries. | Query volume or repetition makes generated code a clear win. |
+| `go-playground/validator` deferred | Request bodies are small and use `encoding/json` strict decoding plus package-level validation. | A shared request-validation layer is needed. |
+| Local passwords / sessions | OIDC owns registration, login, password hashing and sessions; the platform stores no passwords. | A first-party account system is a separate product decision. |
+| API keys | OIDC service-principal tokens cover machine clients; API keys need a scope design and pre-tenant lookup function. | CI or partner clients need scoped non-OIDC credentials. |
 | Normalized workflow node/edge tables | The immutable graph is one JSONB value, validated by the shared contract; normalizing it would create a second source of truth. | Graph querying at scale or per-node permissions (requires an ADR). |
 | Deferred brief tables (`users`, `environments`, `api_keys`, `agent_deployments`, tool/MCP/approval/usage tables) | Each conflicts with a Phase 1 non-goal or lacks a design. The mapping and triggers are in [`phase-03-contracts.md`](phase-03-contracts.md). | The corresponding ADR/feature exists. |
 | HTTP/2 gRPC contracts generated, no Python stubs | Python speaks to the worker over a UDS; generating stubs before the runtime ABI exists adds dead code. | Runtime ABI implementation. |
 | `apps/docs` deferred | Authored docs are reviewed as Markdown in `/docs`; a docs site is packaging, not content. | Docs need search/versioning/interactive API reference. |
 | `tests/e2e`, `tests/load`, `tests/chaos` placeholders | Their targets (API, execution lifecycle, fault injection) do not exist yet. | The first vertical slice and the scheduler land. |
-| Dashboard fixture data | The API has no execution endpoints yet. Fixtures are Zod-validated and labelled in the UI. | Phase 04 list/SSE endpoints. |
+| Dashboard fixture data | The API exists, but the dashboard still renders fixtures. | Phase 05 API wiring (list + SSE). |
 
 ## CI
 
@@ -190,15 +221,18 @@ These are the places where the project chose the smaller option on purpose. Revi
 2. Python: Ruff, format check, mypy and pytest for both projects.
 3. Dashboard: Biome, `tsc`, production build.
 4. Compose: validates `docker-compose.yml`.
-5. Integration: starts data stores, applies migrations, runs the infrastructure, schema/RLS and outbox suites.
+5. Integration: builds and starts the API/orchestrator, applies migrations, then runs the infrastructure,
+   schema/RLS/immutability, outbox and full API flow suites.
 
 No job needs secrets. External model providers are never called by tests.
 
 ## Troubleshooting
 
-**Port already in use** — stop the competing service or remap the port in `docker-compose.yml`. Postgres can be
-remapped without touching anything else: set `POSTGRES_PORT=55432` in `.env`, then use the same value in
-`API_DATABASE_URL` / `ORCHESTRATOR_DATABASE_URL` when running services outside Docker.
+**Port already in use** — another local project owns the port. Remap it in `.env`; every host port is configurable
+(`POSTGRES_PORT`, `NATS_PORT`, `REDIS_PORT`, `MINIO_API_PORT`, `API_PORT`, `ORCHESTRATOR_GRPC_PORT`,
+`ORCHESTRATOR_HTTP_PORT`, `WORKER_PORT`, `DASHBOARD_PORT`). Update `API_CORS_ORIGINS` if the dashboard port changes.
+The non-Docker database/NATS URLs are derived by `make integration-test`; when running services by hand, update
+`API_DATABASE_URL` / `ORCHESTRATOR_DATABASE_URL` / `WORKER_NATS_URL` to match.
 
 **`schema "control" is missing`** — migrations have not run: `make migrate`.
 

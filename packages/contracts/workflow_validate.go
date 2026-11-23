@@ -6,7 +6,26 @@ import (
 
 var retryOnValues = []string{"transient", "timeout", "worker_lost", "cancelled", "any"}
 
-// Validate enforces the workflow contract. It reports every problem it finds in one pass.
+// Validate enforces the graph contract: nodes, edges, DAG shape, input references and node policies.
+func (g *WorkflowGraph) Validate() error {
+	v := &validator{}
+	validateGraph(v, g)
+	return v.err()
+}
+
+// ParseWorkflowGraph strictly decodes and validates a persisted workflow graph.
+func ParseWorkflowGraph(data []byte) (*WorkflowGraph, error) {
+	var graph WorkflowGraph
+	if err := parseStrict(data, &graph); err != nil {
+		return nil, err
+	}
+	if err := graph.Validate(); err != nil {
+		return nil, err
+	}
+	return &graph, nil
+}
+
+// Validate enforces the full document contract. It reports every problem it finds in one pass.
 func (d *WorkflowDocument) Validate() error {
 	v := &validator{}
 
@@ -19,33 +38,40 @@ func (d *WorkflowDocument) Validate() error {
 	if d.Description != nil && utf8.RuneCountInString(*d.Description) > 2000 {
 		v.addf("description must be at most 2000 characters")
 	}
-	if d.Nodes == nil {
+
+	validateGraph(v, &d.WorkflowGraph)
+
+	return v.err()
+}
+
+func validateGraph(v *validator, g *WorkflowGraph) {
+	if g.Nodes == nil {
 		v.addf("nodes is required")
 	}
-	if d.Edges == nil {
+	if g.Edges == nil {
 		v.addf("edges is required (use [] for a single-node workflow)")
 	}
-	if len(d.Nodes) == 0 {
+	if len(g.Nodes) == 0 {
 		v.addf("at least one node is required")
 	}
-	if len(d.Nodes) > 500 {
+	if len(g.Nodes) > 500 {
 		v.addf("at most 500 nodes are allowed")
 	}
-	if len(d.Edges) > 2000 {
+	if len(g.Edges) > 2000 {
 		v.addf("at most 2000 edges are allowed")
 	}
 
-	if d.Policy != nil && d.Policy.OnFailure != nil {
-		v.enum("policy.on_failure", *d.Policy.OnFailure, "fail_fast", "continue")
+	if g.Policy != nil && g.Policy.OnFailure != nil {
+		v.enum("policy.on_failure", *g.Policy.OnFailure, "fail_fast", "continue")
 	}
 
-	nodeIndex := make(map[string]WorkflowNode, len(d.Nodes))
-	adjacency := make(map[string][]string, len(d.Nodes))
-	reverse := make(map[string][]string, len(d.Nodes))
-	indegree := make(map[string]int, len(d.Nodes))
+	nodeIndex := make(map[string]WorkflowNode, len(g.Nodes))
+	adjacency := make(map[string][]string, len(g.Nodes))
+	reverse := make(map[string][]string, len(g.Nodes))
+	indegree := make(map[string]int, len(g.Nodes))
 
-	for i := range d.Nodes {
-		node := &d.Nodes[i]
+	for i := range g.Nodes {
+		node := &g.Nodes[i]
 		field := "nodes[" + itoa(i) + "]"
 		v.requiredString(field+".id", node.ID, 1, 64)
 		v.pattern(field+".id", node.ID, nodeIDPattern)
@@ -57,9 +83,9 @@ func (d *WorkflowDocument) Validate() error {
 		v.validateNode(field, node)
 	}
 
-	seenEdges := make(map[string]bool, len(d.Edges))
-	for i := range d.Edges {
-		edge := &d.Edges[i]
+	seenEdges := make(map[string]bool, len(g.Edges))
+	for i := range g.Edges {
+		edge := &g.Edges[i]
 		field := "edges[" + itoa(i) + "]"
 		v.requiredString(field+".from", edge.From, 1, 64)
 		v.requiredString(field+".to", edge.To, 1, 64)
@@ -88,7 +114,7 @@ func (d *WorkflowDocument) Validate() error {
 	}
 
 	// Kahn's algorithm: every node must be emitted or the graph contains a cycle.
-	queue := make([]string, 0, len(d.Nodes))
+	queue := make([]string, 0, len(g.Nodes))
 	for id, degree := range indegree {
 		if degree == 0 {
 			queue = append(queue, id)
@@ -106,12 +132,12 @@ func (d *WorkflowDocument) Validate() error {
 			}
 		}
 	}
-	if visited != len(d.Nodes) {
+	if visited != len(g.Nodes) {
 		v.addf("workflow graph contains a cycle")
 	}
 
-	for i := range d.Nodes {
-		node := &d.Nodes[i]
+	for i := range g.Nodes {
+		node := &g.Nodes[i]
 		if node.InputFrom == nil {
 			continue
 		}
@@ -135,8 +161,6 @@ func (d *WorkflowDocument) Validate() error {
 			v.addf("node %q may select at most 16 upstream outputs", node.ID)
 		}
 	}
-
-	return v.err()
 }
 
 func (v *validator) validateNode(field string, node *WorkflowNode) {

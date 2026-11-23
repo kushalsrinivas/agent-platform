@@ -453,14 +453,14 @@ func TestOutboxContract(t *testing.T) {
 		defer func() { _ = tx2.Rollback(ctx) }()
 
 		store := outbox.NewStore(orchestrator)
-		first, err := store.Claim(ctx, tx1, 10)
+		first, err := store.ClaimForOrg(ctx, tx1, s.orgID, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(first) != 2 {
 			t.Fatalf("first claim returned %d messages, want 2", len(first))
 		}
-		second, err := store.Claim(ctx, tx2, 10)
+		second, err := store.ClaimForOrg(ctx, tx2, s.orgID, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -473,7 +473,7 @@ func TestOutboxContract(t *testing.T) {
 		publisher := &fakePublisher{err: errors.New("broker unavailable")}
 		// Only msg2 is still unpublished; msg1 is still unpublished too. Dispatch with limit 1 claims the
 		// oldest message. A failure must reschedule it rather than mark it published.
-		published, err := outbox.NewStore(orchestrator).DispatchOnce(ctx, publisher, 10, time.Millisecond)
+		published, err := outbox.NewStore(orchestrator).DispatchOnceForOrg(ctx, publisher, s.orgID, 10, time.Millisecond)
 		if err == nil {
 			t.Fatal("dispatch with a failing publisher must return an error")
 		}
@@ -495,7 +495,7 @@ func TestOutboxContract(t *testing.T) {
 
 	t.Run("success marks published", func(t *testing.T) {
 		publisher := &fakePublisher{}
-		published, err := outbox.NewStore(orchestrator).DispatchOnce(ctx, publisher, 10, time.Millisecond)
+		published, err := outbox.NewStore(orchestrator).DispatchOnceForOrg(ctx, publisher, s.orgID, 10, time.Millisecond)
 		if err != nil {
 			t.Fatalf("dispatch: %v", err)
 		}

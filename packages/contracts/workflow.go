@@ -103,6 +103,16 @@ type WorkflowPolicy struct {
 // Graph returns the immutable graph portion of the document.
 func (d WorkflowDocument) Graph() WorkflowGraph { return d.WorkflowGraph }
 
+// CanonicalJSON returns RFC 8785 bytes for the graph.
+func (g WorkflowGraph) CanonicalJSON() ([]byte, error) {
+	return Canonicalize(g)
+}
+
+// Digest is the content digest stored on workflow_versions.
+func (g WorkflowGraph) Digest() (string, error) {
+	return Digest(g)
+}
+
 // CanonicalGraph returns RFC 8785 bytes for the graph that is persisted on workflow_versions.
 func (d WorkflowDocument) CanonicalGraph() ([]byte, error) {
 	return Canonicalize(d.WorkflowGraph)
