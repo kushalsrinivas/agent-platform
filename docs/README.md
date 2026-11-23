@@ -1,10 +1,12 @@
-# Documentation Index — Phase 01
+# Documentation Index — Phase 01 architecture, Phase 02 development
 
 This directory is the normative architecture for the agent platform. Where a document and an ADR disagree, the
 ADR wins and the document is a bug. Code written in later phases must cite and follow these documents.
 
 | Document | Answers |
 |---|---|
+| [development.md](development.md) | How to set up, run, test, migrate and reset the local stack. |
+| [deployment.md](deployment.md) | Single-host/VPS deployment, credentials, backups and upgrades. |
 | [architecture.md](architecture.md) | What the system is, its boundaries, its invariants, and how the pieces cooperate. |
 | [service-responsibilities.md](service-responsibilities.md) | What each deployable does, reads, writes, and when it may become a separate service. |
 | [communication.md](communication.md) | External and internal protocols, envelope, subjects, delivery guarantees, versioning. |

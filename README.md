@@ -2,34 +2,71 @@
 
 A multi-tenant platform for running versioned agent workflows with durable execution state.
 
-**Phase 01 is complete when the documentation in [`docs/`](docs/README.md) lets an engineer explain how an
-execution starts, how work reaches a worker, how results are committed, where state lives, what happens when a
-worker dies, and how duplicate messages are neutralised — without reading code.**
+Go control plane, PostgreSQL source of truth, NATS JetStream transport, Python execution sandbox, Next.js
+dashboard.
 
-No application code is written in Phase 01. The architecture, contracts, state machines and decisions are the
-deliverable. Implementation starts in Phase 02 against these documents.
+## Quick start
 
-## Repository layout (Phase 01)
+Only Docker with Compose v2 is required to run the stack:
+
+```bash
+make dev     # build images, run migrations, start everything
+```
+
+Then open http://localhost:3000. API health is at http://localhost:8080/healthz.
+
+For local tests, linters or running services outside Docker, install Go 1.26+, Node.js 20.9+ and
+[uv](https://docs.astral.sh/uv/), then:
+
+```bash
+make setup   # verify tools, install dependencies, create .env
+```
+
+Every command, port and troubleshooting step is in [`docs/development.md`](docs/development.md). Single-host / VPS
+deployment is in [`docs/deployment.md`](docs/deployment.md).
+
+## Repository layout
 
 ```
-docs/
-  architecture.md              System architecture and invariants
-  service-responsibilities.md  Which deployable does what, owns what
-  communication.md             Protocols, message envelope, subjects, versioning
-  data-ownership.md            Tables, schemas, roles, object storage, retention
-  state-machines/
-    execution.md               Execution lifecycle and completion rules
-    task.md                    Task lifecycle, attempts, leases, retries
-  failure-and-recovery.md      Failure matrix and recovery behaviour
-  api/
-    openapi.yaml               Initial external REST/SSE contract
-    envelope.schema.json       Internal message envelope (JSON Schema)
-  adr/                         15 mandatory architecture decision records
-proto/
-  worker/v1/worker.proto       Worker <-> orchestrator gRPC contract
-  orchestrator/v1/commands.proto  API <-> orchestrator command contract
-  runtime/v1/runtime.proto     Worker <-> Python runtime contract
+apps/dashboard/          Next.js dashboard: design system, shell, graph rendering
+apps/docs/               Hosted docs site (deferred; docs live in /docs)
+services/api/            Go HTTP control plane: auth, REST/SSE, command forwarding
+services/orchestrator/   Go execution owner: scheduler, leases, retries, events
+services/worker/         Go attempt host and Python sandbox supervisor
+runtimes/python/         agent_runtime, model_providers, tool_runtime, mcp, checkpointing
+sdk/go/                  Go API client
+sdk/python/              Python API client
+cli/                     platformctl
+proto/                   Wire contracts; gen/ holds generated Go (committed)
+packages/                Shared contracts, schemas and fixtures
+migrations/              control/ then execution/, applied in order
+infrastructure/          Dockerfiles, compose, Kubernetes/Helm/monitoring placeholders
+tests/                   Integration, e2e, load and chaos suites
+docs/                    Architecture, state machines, ADRs, API contracts, development
 ```
+
+Service builds are independent (`go build ./services/api/...`) and share one root Go module. Dependency injection
+is manual constructor wiring in each `main.go`. Details:
+[development.md § Go module layout](docs/development.md#go-module-layout).
+
+## The architecture in one paragraph
+
+Go control plane (`api`, `orchestrator`) and a Go worker host own all decisions and state. PostgreSQL is the
+single source of truth. NATS JetStream only transports work; losing or duplicating a message never changes the
+logical outcome. Python (`agent-runtime`, `tool-runtime`) executes one task attempt inside a sandbox and reports
+a result; it never writes the database, never publishes events and never decides that a workflow finished. The
+orchestrator fences every result with a per-attempt lease, validates it, and commits the state transition. Every
+task attempt is individually identifiable. Every execution pins immutable workflow and agent versions.
+
+## Status
+
+| Phase | State |
+|---|---|
+| 01 — Architecture and contracts | Complete. Normative docs in [`docs/`](docs/README.md). |
+| 02 — Repository and development environment | Complete. This scaffolding, local stack, CI and dashboard shell. |
+| 03 — Core execution path | Next. |
+
+The dashboard renders labelled fixtures until the execution API exists; there is no fake client layer to unwind.
 
 ## Reading order
 
@@ -38,12 +75,5 @@ proto/
 3. [`docs/data-ownership.md`](docs/data-ownership.md) and [`docs/communication.md`](docs/communication.md).
 4. [`docs/adr/`](docs/adr/README.md) — why the above looks the way it does.
 5. [`docs/failure-and-recovery.md`](docs/failure-and-recovery.md) — the unhappy paths.
-
-## The one-paragraph version
-
-Go control plane (`api`, `orchestrator`) and a Go worker host own all decisions and state. PostgreSQL is the
-single source of truth. NATS JetStream only transports work; losing or duplicating a message never changes the
-logical outcome. Python (`agent-runtime`, `tool-runtime`) executes one task attempt inside a sandbox and reports
-a result; it never writes the database, never publishes events and never decides that a workflow finished. The
-orchestrator fences every result with a per-attempt lease, validates it, and commits the state transition. Every
-task attempt is individually identifiable. Every execution pins immutable workflow and agent versions.
+6. [`docs/development.md`](docs/development.md) — how to run and change it.
+7. [`docs/deployment.md`](docs/deployment.md) — running it on a single host.

@@ -1,0 +1,33 @@
+# VPS / single-host deployment override (example).
+#
+#   cp infrastructure/compose/vps.override.example.yml infrastructure/compose/vps.override.yml
+#   docker compose -f docker-compose.yml -f infrastructure/compose/vps.override.yml up -d --build
+#
+# Requires Docker Compose v2.24+ for `!reset`. The base file is the local development stack; this override
+# removes every datastore port from the host so only the dashboard and API are reachable.
+#
+# Before exposing this host:
+#   - change POSTGRES_PASSWORD and MINIO_* in .env (fresh volume only),
+#   - set the public dashboard origin below,
+#   - rotate the application role passwords (see docs/deployment.md#5-credentials),
+#   - put TLS (Caddy, nginx, Traefik) in front of ports 3000 and 8080.
+
+services:
+  postgres:
+    ports: !reset []
+  nats:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  minio:
+    ports: !reset []
+  orchestrator:
+    ports: !reset []
+  worker:
+    ports: !reset []
+  api:
+    environment:
+      API_CORS_ORIGINS: ${PUBLIC_DASHBOARD_ORIGIN:-http://localhost:3000}
+  dashboard:
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
