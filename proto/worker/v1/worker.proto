@@ -72,6 +72,12 @@ message Hello {
   string join_token = 9;
   // Runtime image digests this worker can execute (AgentSpec.runtime.image_digest).
   repeated string runtime_digests = 10;
+  // Runtime family and version, e.g. "python" and "1.0.0". Distinct from the Go host binary_version.
+  string runtime = 11;
+  string runtime_version = 12;
+  // Advertised capabilities, e.g. agent_execution, tool_execution, langgraph, mcp.
+  repeated string capabilities = 13;
+  WorkerResources resources = 14;
 }
 
 message HelloAck {
@@ -86,6 +92,11 @@ message Heartbeat {
   repeated ActiveAttempt active_attempts = 2;
   // Latest observed capacity may shrink under memory pressure; the worker manager uses the newest value.
   Capacity capacity = 3;
+  // Process-level usage since the previous heartbeat. Advisory for placement and operator visibility.
+  double cpu_usage_percent = 4;
+  int64 memory_used_mb = 5;
+  WorkerStatus status = 6;
+  string runtime_version = 7;
 }
 
 message ActiveAttempt {
@@ -160,6 +171,21 @@ message Capacity {
   int32 available_slots = 2;
 }
 
+message WorkerResources {
+  double cpu_cores = 1;
+  int64 memory_mb = 2;
+}
+
+enum WorkerStatus {
+  WORKER_STATUS_UNSPECIFIED = 0;
+  WORKER_STATUS_STARTING = 1;
+  WORKER_STATUS_AVAILABLE = 2;
+  WORKER_STATUS_BUSY = 3;
+  WORKER_STATUS_DRAINING = 4;
+  WORKER_STATUS_UNHEALTHY = 5;
+  WORKER_STATUS_TERMINATED = 6;
+}
+
 // ---------------------------------------------------------------------------
 // Result reporting
 // ---------------------------------------------------------------------------
@@ -178,6 +204,8 @@ message ReportTaskResultRequest {
   google.protobuf.Timestamp started_at = 10;
   google.protobuf.Timestamp finished_at = 11;
   string runtime_version = 12;
+  // Monotonic per-task attempt generation; a stale generation is rejected even if the lease is guessed.
+  int32 attempt_number = 13;
 }
 
 enum TaskOutcome {

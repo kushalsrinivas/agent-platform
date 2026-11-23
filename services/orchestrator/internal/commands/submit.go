@@ -75,11 +75,13 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 		WorkflowVersion int32          `json:"workflow_version"`
 		Input           map[string]any `json:"input"`
 		DeadlineAt      *string        `json:"deadline_at"`
+		Priority        int32          `json:"priority"`
 	}{
 		WorkflowID:      req.WorkflowId,
 		WorkflowVersion: req.WorkflowVersion,
 		Input:           input,
 		DeadlineAt:      optionalTime(requestedDeadline),
+		Priority:        req.Priority,
 	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, "could not canonicalise the request")
@@ -146,17 +148,26 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 			}
 		}
 
-		agentVersionIDs := make(map[string]string)
+		type pinnedAgent struct {
+			VersionID     string
+			RuntimeABI    int
+			RuntimeDigest string
+			Provider      string
+			Model         string
+		}
+		agentMeta := make(map[string]pinnedAgent)
 		for _, node := range graph.Nodes {
 			if node.Agent == nil {
 				continue
 			}
 			var resolvedID, agentVersionState string
+			var runtimeABI int
+			var specJSON []byte
 			err := tx.QueryRow(ctx, `
-				SELECT id, status FROM control.agent_versions
+				SELECT id, status, runtime_abi, spec FROM control.agent_versions
 				WHERE org_id = $1 AND project_id = $2 AND agent_id = $3 AND version = $4`,
 				req.OrgId, req.ProjectId, node.Agent.AgentID, node.Agent.Version).
-				Scan(&resolvedID, &agentVersionState)
+				Scan(&resolvedID, &agentVersionState, &runtimeABI, &specJSON)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return status.Errorf(codes.InvalidArgument, "node %q references a missing agent version", node.ID)
 			}
@@ -166,7 +177,24 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 			if agentVersionState != "published" && agentVersionState != "deprecated" {
 				return status.Errorf(codes.InvalidArgument, "node %q references an unpublished agent version", node.ID)
 			}
-			agentVersionIDs[node.ID] = resolvedID
+			var spec struct {
+				Model struct {
+					Provider string `json:"provider"`
+					Name     string `json:"name"`
+				} `json:"model"`
+				Runtime struct {
+					ImageDigest string `json:"image_digest"`
+				} `json:"runtime"`
+			}
+			if err := json.Unmarshal(specJSON, &spec); err != nil {
+				return status.Errorf(codes.FailedPrecondition, "node %q agent spec is invalid", node.ID)
+			}
+			agentMeta[node.ID] = pinnedAgent{
+				VersionID: resolvedID, RuntimeABI: runtimeABI,
+				RuntimeDigest: spec.Runtime.ImageDigest,
+				Provider:      spec.Model.Provider,
+				Model:         spec.Model.Name,
+			}
 		}
 
 		// Serialize project submissions so the quota check and insert cannot overshoot the limit.
@@ -194,11 +222,11 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 		var createdAt time.Time
 		err = tx.QueryRow(ctx, `
 			INSERT INTO execution.executions
-				(id, org_id, project_id, workflow_id, workflow_version_id, state, state_version,
+				(id, org_id, project_id, workflow_id, workflow_version_id, state, state_version, priority,
 				 request_id, request_digest, input, input_digest, created_by, deadline_at, next_event_seq)
-			VALUES ($1, $2, $3, $4, $5, 'pending', 1, $6, $7, $8::jsonb, $9, $10, $11, 2)
+			VALUES ($1, $2, $3, $4, $5, 'pending', 1, $6, $7, $8, $9::jsonb, $10, $11, $12, 2)
 			RETURNING created_at`,
-			executionID, req.OrgId, req.ProjectId, req.WorkflowId, workflowVersionID,
+			executionID, req.OrgId, req.ProjectId, req.WorkflowId, workflowVersionID, req.Priority,
 			req.RequestId, requestDigest, inputJSON, inputDigest, req.RequestedBy, deadline).
 			Scan(&createdAt)
 		if err != nil {
@@ -227,9 +255,21 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 			}
 
 			var agentVersionID, toolVersionID *string
+			var runtimeABI *int
+			var runtimeDigest, provider, model *string
 			if node.Type == contracts.NodeTypeAgent {
-				value := agentVersionIDs[node.ID]
-				agentVersionID = &value
+				meta := agentMeta[node.ID]
+				agentVersionID = &meta.VersionID
+				runtimeABI = &meta.RuntimeABI
+				if meta.RuntimeDigest != "" {
+					runtimeDigest = &meta.RuntimeDigest
+				}
+				if meta.Provider != "" {
+					provider = &meta.Provider
+				}
+				if meta.Model != "" {
+					model = &meta.Model
+				}
 			} else if node.Tool != nil {
 				value := fmt.Sprintf("%s:%d", node.Tool.ToolID, node.Tool.Version)
 				toolVersionID = &value
@@ -238,11 +278,14 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 			_, err := tx.Exec(ctx, `
 				INSERT INTO execution.execution_tasks
 					(id, execution_id, org_id, node_id, node_type, agent_version_id, tool_version_id,
-					 worker_pool, state, attempt_count, max_attempts, timeout_seconds, side_effect_class)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', 0, $9, $10, $11)`,
+					 worker_pool, priority, runtime_abi, runtime_digest, provider, model,
+					 state, attempt_count, max_attempts, timeout_seconds, side_effect_class)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+				        'pending', 0, $14, $15, $16)`,
 				taskID, executionID, req.OrgId, node.ID, string(node.Type),
 				nullableArg(agentVersionID), nullableArg(toolVersionID), nullableArg(node.WorkerPool),
-				maxAttempts, timeoutSeconds, sideEffect)
+				req.Priority, nullableArgInt(runtimeABI), nullableArg(runtimeDigest), nullableArg(provider),
+				nullableArg(model), maxAttempts, timeoutSeconds, sideEffect)
 			if err != nil {
 				return err
 			}
@@ -332,6 +375,9 @@ func validateSubmitRequest(req *orchestratorv1.SubmitExecutionRequest) error {
 	if req.RequestedBy == "" {
 		return status.Error(codes.InvalidArgument, "requested_by is required")
 	}
+	if req.Priority < -100 || req.Priority > 100 {
+		return status.Error(codes.InvalidArgument, "priority must be between -100 and 100")
+	}
 	return nil
 }
 
@@ -356,6 +402,13 @@ func asUniqueViolation(err error) bool {
 }
 
 func nullableArg(value *string) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableArgInt(value *int) any {
 	if value == nil {
 		return nil
 	}

@@ -1,13 +1,19 @@
 // Command worker is the Go host that consumes durable task dispatches, holds leases and reports fenced results.
 //
 // The worker never writes PostgreSQL and never publishes execution state. It acknowledges a JetStream message only
-// after the orchestrator has committed the result for that attempt.
+// after the orchestrator has committed the result for that attempt. On shutdown it drains: no new work is accepted,
+// in-flight attempts finish within the grace period, leases are left to expire if they do not, and the session is
+// reported terminated.
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -25,14 +31,21 @@ import (
 type serviceConfig struct {
 	config.Common
 
-	WorkerID         string `env:"WORKER_ID"`
-	HTTPAddr         string `env:"WORKER_HTTP_ADDR" envDefault:":8082"`
-	NATSURL          string `env:"WORKER_NATS_URL" envDefault:"nats://localhost:4222"`
-	OrchestratorAddr string `env:"WORKER_ORCHESTRATOR_GRPC_ADDR" envDefault:"localhost:9090"`
-	OrchestratorTLS  bool   `env:"WORKER_ORCHESTRATOR_TLS" envDefault:"false"`
-	Pool             string `env:"WORKER_POOL" envDefault:"default"`
-	MaxConcurrency   int    `env:"WORKER_MAX_CONCURRENCY" envDefault:"4"`
-	RuntimeABI       int32  `env:"WORKER_RUNTIME_ABI" envDefault:"1"`
+	WorkerID         string  `env:"WORKER_ID"`
+	HTTPAddr         string  `env:"WORKER_HTTP_ADDR" envDefault:":8082"`
+	NATSURL          string  `env:"WORKER_NATS_URL" envDefault:"nats://localhost:4222"`
+	OrchestratorAddr string  `env:"WORKER_ORCHESTRATOR_GRPC_ADDR" envDefault:"localhost:9090"`
+	OrchestratorTLS  bool    `env:"WORKER_ORCHESTRATOR_TLS" envDefault:"false"`
+	Pool             string  `env:"WORKER_POOL" envDefault:"default"`
+	Runtime          string  `env:"WORKER_RUNTIME" envDefault:"python"`
+	RuntimeVersion   string  `env:"WORKER_RUNTIME_VERSION" envDefault:"0.1.0"`
+	Capabilities     string  `env:"WORKER_CAPABILITIES" envDefault:"agent_execution,tool_execution"`
+	CPUCores         float64 `env:"WORKER_CPU_CORES" envDefault:"0"`
+	MemoryMB         int64   `env:"WORKER_MEMORY_MB" envDefault:"2048"`
+	MaxConcurrency   int     `env:"WORKER_MAX_CONCURRENCY" envDefault:"4"`
+	RuntimeABI       int32   `env:"WORKER_RUNTIME_ABI" envDefault:"1"`
+	HeartbeatMillis  int     `env:"WORKER_HEARTBEAT_MS" envDefault:"5000"`
+	ShutdownGraceSec int     `env:"WORKER_SHUTDOWN_GRACE_SECONDS" envDefault:"25"`
 }
 
 func main() {
@@ -47,6 +60,13 @@ func main() {
 		}
 		cfg.WorkerID = "wrk_" + sanitize(host)
 	}
+	if cfg.CPUCores <= 0 {
+		cfg.CPUCores = float64(runtime.NumCPU())
+	}
+	if cfg.ShutdownGraceSec < 1 {
+		cfg.ShutdownGraceSec = 1
+	}
+	capabilities := parseCapabilities(cfg.Capabilities)
 
 	log, err := logging.New(logging.Config{
 		Service:     "worker",
@@ -60,9 +80,9 @@ func main() {
 	}
 	defer func() { _ = log.Sync() }()
 
-	ctx := run.SignalContext()
+	signalCtx := run.SignalContext()
 
-	nc, err := natsconn.Connect(ctx, cfg.NATSURL, cfg.WorkerID)
+	nc, err := natsconn.Connect(signalCtx, cfg.NATSURL, cfg.WorkerID)
 	if err != nil {
 		log.Fatal("nats unavailable", zap.Error(err))
 	}
@@ -73,13 +93,19 @@ func main() {
 	}
 
 	controlClient := control.New(control.Config{
-		Address:        cfg.OrchestratorAddr,
-		Insecure:       !cfg.OrchestratorTLS,
-		WorkerID:       cfg.WorkerID,
-		Pool:           cfg.Pool,
-		MaxConcurrency: cfg.MaxConcurrency,
-		BinaryVersion:  buildinfo.Version,
-		RuntimeABIs:    []int32{cfg.RuntimeABI},
+		Address:         cfg.OrchestratorAddr,
+		Insecure:        !cfg.OrchestratorTLS,
+		WorkerID:        cfg.WorkerID,
+		Pool:            cfg.Pool,
+		Runtime:         cfg.Runtime,
+		RuntimeVersion:  cfg.RuntimeVersion,
+		Capabilities:    capabilities,
+		CPUCores:        cfg.CPUCores,
+		MemoryMB:        cfg.MemoryMB,
+		MaxConcurrency:  cfg.MaxConcurrency,
+		BinaryVersion:   buildinfo.Version,
+		RuntimeABIs:     []int32{cfg.RuntimeABI},
+		HeartbeatPeriod: time.Duration(cfg.HeartbeatMillis) * time.Millisecond,
 	}, log)
 
 	consumerConfig := messaging.DefaultConsumerConfig(cfg.WorkerID, cfg.MaxConcurrency)
@@ -89,14 +115,10 @@ func main() {
 		Execute:  delivery.Echo,
 		Log:      log,
 	}
-	consumer, err := messaging.NewConsumer(ctx, js, consumerConfig, handler, log)
+	consumer, err := messaging.NewConsumer(signalCtx, js, consumerConfig, handler, log)
 	if err != nil {
 		log.Fatal("task consumer unavailable", zap.Error(err))
 	}
-	if err := consumer.Start(ctx); err != nil {
-		log.Fatal("task consumer could not start", zap.Error(err))
-	}
-	defer consumer.Stop()
 
 	srv := httpserver.New(httpserver.Options{
 		Addr:   cfg.HTTPAddr,
@@ -113,9 +135,14 @@ func main() {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{
-			"worker_id": cfg.WorkerID,
-			"consumer":  consumer.Config().Durable,
-			"stats":     consumer.Stats(),
+			"worker_id":    cfg.WorkerID,
+			"runtime":      cfg.Runtime,
+			"runtime_ver":  cfg.RuntimeVersion,
+			"capabilities": capabilities,
+			"draining":     controlClient.Draining(),
+			"active_count": controlClient.ActiveCount(),
+			"consumer":     consumer.Config().Durable,
+			"stats":        consumer.Stats(),
 			"broker": map[string]any{
 				"num_pending":   info.NumPending,
 				"num_ack_pend":  info.NumAckPending,
@@ -124,18 +151,83 @@ func main() {
 		})
 	})
 
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	var group sync.WaitGroup
+	group.Add(2)
+	go func() {
+		defer group.Done()
+		if err := controlClient.Run(runCtx); err != nil {
+			log.Error("worker control loop stopped", zap.Error(err))
+		}
+	}()
+	go func() {
+		defer group.Done()
+		if err := srv.Start(runCtx); err != nil {
+			log.Error("worker HTTP server stopped", zap.Error(err))
+		}
+	}()
+	if err := consumer.Start(runCtx); err != nil {
+		log.Fatal("task consumer could not start", zap.Error(err))
+	}
+
 	log.Info("starting worker",
 		zap.String("worker_id", cfg.WorkerID),
 		zap.String("pool", cfg.Pool),
+		zap.String("runtime", cfg.Runtime),
+		zap.String("runtime_version", cfg.RuntimeVersion),
+		zap.Strings("capabilities", capabilities),
+		zap.Float64("cpu_cores", cfg.CPUCores),
+		zap.Int64("memory_mb", cfg.MemoryMB),
 		zap.Int("max_concurrency", cfg.MaxConcurrency),
 		zap.String("orchestrator", cfg.OrchestratorAddr),
 		zap.String("consumer", consumerConfig.Durable),
 	)
 
-	if err := run.Group(ctx, controlClient.Run, srv.Start); err != nil {
-		log.Fatal("worker stopped", zap.Error(err))
+	select {
+	case <-signalCtx.Done():
+		log.Info("worker shutdown requested")
+	case <-controlClient.DrainCh():
+		log.Info("worker drain requested by the control plane")
 	}
+
+	// Stop accepting new dispatches, then let in-flight attempts report their fenced results.
+	controlClient.BeginDrain()
+	log.Info("worker draining", zap.Int("active_attempts", controlClient.ActiveCount()))
+	consumer.Stop()
+	grace := time.Duration(cfg.ShutdownGraceSec) * time.Second
+	deadline := time.Now().Add(grace)
+	for controlClient.ActiveCount() > 0 && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if active := controlClient.ActiveCount(); active > 0 {
+		log.Warn("shutdown grace expired with active attempts; leases will expire",
+			zap.Int("active_attempts", active), zap.Duration("grace", grace))
+	}
+	controlClient.Shutdown()
+	cancelRun()
+	group.Wait()
 	log.Info("worker stopped cleanly")
+}
+
+func parseCapabilities(value string) []string {
+	result := make([]string, 0, 4)
+	seen := map[string]struct{}{}
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" || len(item) > 64 {
+			continue
+		}
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		seen[item] = struct{}{}
+		result = append(result, item)
+	}
+	if len(result) == 0 {
+		return []string{"agent_execution", "tool_execution"}
+	}
+	return result
 }
 
 func sanitize(value string) string {

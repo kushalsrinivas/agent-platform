@@ -257,8 +257,17 @@ func (s *Service) ReportTaskResult(ctx context.Context, workerID string,
 			response = ResultResponse{Status: ResultValidationFailed, Message: "attempt does not belong to task"}
 			return nil
 		}
+		if req.AttemptNumber != 0 && int(req.AttemptNumber) != a.AttemptNumber {
+			response = ResultResponse{Status: ResultValidationFailed, Message: "attempt generation does not match"}
+			return nil
+		}
 		if a.Outcome != nil {
 			if a.LeaseID == req.LeaseId && a.WorkerID == workerID {
+				if *a.Outcome == "lease_expired" || *a.Outcome == "incomplete" {
+					// The orchestrator reclaimed this attempt; a late success is stale and must not be applied.
+					response = ResultResponse{Status: ResultStaleLease, Message: "attempt lease was already reclaimed"}
+					return nil
+				}
 				response = ResultResponse{
 					Status: ResultAlreadyFinished, TaskState: t.State,
 					Message: "attempt was already finalised; safe to acknowledge",

@@ -36,6 +36,8 @@ message SubmitExecutionRequest {
   string requested_by = 7;
   google.protobuf.Timestamp deadline_at = 8;
   string traceparent = 9;
+  // Scheduling priority, -100..100. Higher runs first; aging prevents permanent starvation.
+  int32 priority = 10;
 }
 
 message SubmitExecutionResponse {

@@ -27,22 +27,32 @@ func (s *Service) DispatchOnce(ctx context.Context, limit int) (int, error) {
 		limit = 20
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT t.id, t.execution_id
-		FROM execution.execution_tasks t
-		JOIN execution.executions e ON e.id = t.execution_id
-		WHERE t.state = 'pending'
-		  AND e.state IN ('pending', 'running')
-		  AND (t.next_attempt_at IS NULL OR t.next_attempt_at <= now())
-		  AND t.attempt_count < t.max_attempts
-		  AND NOT EXISTS (
-		      SELECT 1
-		      FROM execution.task_dependencies d
-		      JOIN execution.execution_tasks upstream
-		        ON upstream.id = d.depends_on_task_id AND upstream.execution_id = d.execution_id
-		      WHERE d.task_id = t.id AND d.execution_id = t.execution_id
-		        AND upstream.state NOT IN ('succeeded', 'failed', 'cancelled', 'skipped')
-		  )
-		ORDER BY t.created_at, t.id
+		SELECT id, execution_id
+		FROM (
+			SELECT t.id, t.execution_id, e.org_id,
+			       t.priority, t.created_at,
+			       row_number() OVER (
+			           PARTITION BY e.org_id
+			           ORDER BY t.priority DESC, t.created_at, t.id
+			       ) AS tenant_rank,
+			       t.priority + LEAST(FLOOR(EXTRACT(EPOCH FROM (now() - t.created_at)) / 60)::integer, 200)
+			           AS effective_priority
+			FROM execution.execution_tasks t
+			JOIN execution.executions e ON e.id = t.execution_id
+			WHERE t.state = 'pending'
+			  AND e.state IN ('pending', 'running')
+			  AND (t.next_attempt_at IS NULL OR t.next_attempt_at <= now())
+			  AND t.attempt_count < t.max_attempts
+			  AND NOT EXISTS (
+			      SELECT 1
+			      FROM execution.task_dependencies d
+			      JOIN execution.execution_tasks upstream
+			        ON upstream.id = d.depends_on_task_id AND upstream.execution_id = d.execution_id
+			      WHERE d.task_id = t.id AND d.execution_id = t.execution_id
+			        AND upstream.state NOT IN ('succeeded', 'failed', 'cancelled', 'skipped')
+			  )
+		) ranked
+		ORDER BY tenant_rank, effective_priority DESC, created_at, id
 		LIMIT $1`, limit)
 	if err != nil {
 		return 0, fmt.Errorf("lifecycle: scan dispatch candidates: %w", err)
@@ -63,6 +73,10 @@ func (s *Service) DispatchOnce(ctx context.Context, limit int) (int, error) {
 
 	dispatched := 0
 	for _, candidate := range candidates {
+		s.log.Debug("dispatch candidate considered",
+			zap.String("task_id", candidate.TaskID),
+			zap.String("execution_id", candidate.ExecutionID),
+		)
 		assigned, err := s.dispatchOne(ctx, candidate.TaskID)
 		if err != nil {
 			s.log.Error("dispatch candidate failed",
@@ -84,16 +98,26 @@ func (s *Service) dispatchOne(ctx context.Context, taskID string) (bool, error) 
 	err := s.withTx(ctx, func(tx pgx.Tx) error {
 		e, err := s.lockExecutionForTask(ctx, tx, taskID)
 		if err != nil {
+			if isNoRows(err) {
+				return nil
+			}
 			return err
 		}
 		if e.State != "pending" && e.State != "running" {
+			s.log.Debug("dispatch skipped: execution not schedulable",
+				zap.String("task_id", taskID), zap.String("execution_state", e.State))
 			return nil
 		}
 		t, err := s.lockTask(ctx, tx, taskID)
 		if err != nil {
+			if isNoRows(err) {
+				return nil
+			}
 			return err
 		}
 		if t.State != "pending" {
+			s.log.Debug("dispatch skipped: task not pending",
+				zap.String("task_id", taskID), zap.String("task_state", t.State))
 			return nil
 		}
 
@@ -102,10 +126,19 @@ func (s *Service) dispatchOne(ctx context.Context, taskID string) (bool, error) 
 			return err
 		}
 		if !deps.terminal {
+			s.log.Debug("dispatch skipped: dependencies not terminal", zap.String("task_id", taskID))
 			return nil
 		}
 		if !deps.anySucceeded {
 			return s.skipTask(ctx, tx, e, t, deps.reason)
+		}
+		allowed, err := s.limitsAllow(ctx, tx, e, t)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			s.log.Debug("dispatch skipped: admission limit", zap.String("task_id", taskID), zap.Int("priority", t.Priority))
+			return nil
 		}
 
 		workerID, err := s.pickWorker(ctx, tx, t)
@@ -158,8 +191,16 @@ func (s *Service) dispatchOne(ctx context.Context, taskID string) (bool, error) 
 
 		tag, err = tx.Exec(ctx, `
 			UPDATE execution.workers
-			SET reserved_slots = reserved_slots + 1, updated_at = now()
-			WHERE id = $1 AND reserved_slots < max_concurrency`, workerID)
+			SET reserved_slots = reserved_slots + 1,
+			    status = CASE WHEN reserved_slots + 1 >= LEAST(max_concurrency, reported_available_slots)
+			        THEN 'busy' ELSE 'available' END,
+			    status_changed_at = CASE WHEN status <> (
+			        CASE WHEN reserved_slots + 1 >= LEAST(max_concurrency, reported_available_slots)
+			            THEN 'busy' ELSE 'available' END) THEN now() ELSE status_changed_at END,
+			    updated_at = now()
+			WHERE id = $1
+			  AND status IN ('available', 'busy')
+			  AND reserved_slots < LEAST(max_concurrency, reported_available_slots)`, workerID)
 		if err != nil {
 			return fmt.Errorf("lifecycle: reserve worker slot: %w", err)
 		}
@@ -216,6 +257,12 @@ func (s *Service) dispatchOne(ctx context.Context, taskID string) (bool, error) 
 		}
 
 		assigned = true
+		s.log.Debug("task dispatched",
+			zap.String("task_id", t.ID),
+			zap.String("worker_id", workerID),
+			zap.String("attempt_id", attemptID),
+			zap.Int("priority", t.Priority),
+		)
 		return nil
 	})
 	return assigned, err
@@ -296,22 +343,83 @@ func (s *Service) specDigest(ctx context.Context, tx pgx.Tx, t *task) (string, e
 	return "", fmt.Errorf("lifecycle: task %s has no pinned version", t.ID)
 }
 
+func (s *Service) limitsAllow(ctx context.Context, tx pgx.Tx, e *execution, t *task) (bool, error) {
+	if s.maxActiveTasksPerTenant > 0 {
+		var active int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM execution.execution_tasks
+			WHERE org_id = $1 AND state IN ('assigned', 'running')`, e.OrgID).Scan(&active); err != nil {
+			return false, err
+		}
+		if active >= s.maxActiveTasksPerTenant {
+			return false, nil
+		}
+	}
+	if t.Provider != nil {
+		if limit := s.providerConcurrency[*t.Provider]; limit > 0 {
+			var active int
+			if err := tx.QueryRow(ctx, `
+				SELECT count(*) FROM execution.execution_tasks
+				WHERE provider = $1 AND state IN ('assigned', 'running')`, *t.Provider).Scan(&active); err != nil {
+				return false, err
+			}
+			if active >= limit {
+				return false, nil
+			}
+		}
+	}
+	if t.ToolVersionID != nil {
+		if limit := s.toolConcurrency[*t.ToolVersionID]; limit > 0 {
+			var active int
+			if err := tx.QueryRow(ctx, `
+				SELECT count(*) FROM execution.execution_tasks
+				WHERE tool_version_id = $1 AND state IN ('assigned', 'running')`, *t.ToolVersionID).Scan(&active); err != nil {
+				return false, err
+			}
+			if active >= limit {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
+func requiredCapability(nodeType string) string {
+	if nodeType == "tool" {
+		return "tool_execution"
+	}
+	return "agent_execution"
+}
+
 func (s *Service) pickWorker(ctx context.Context, tx pgx.Tx, t *task) (string, error) {
 	pool := ""
 	if t.WorkerPool != nil {
 		pool = *t.WorkerPool
 	}
+	var runtimeABI any
+	if t.RuntimeABI != nil {
+		runtimeABI = *t.RuntimeABI
+	}
+	var runtimeDigest any
+	if t.RuntimeDigest != nil {
+		runtimeDigest = *t.RuntimeDigest
+	}
 	var workerID string
 	err := tx.QueryRow(ctx, `
 		SELECT id
 		FROM execution.workers
-		WHERE status = 'active'
+		WHERE status IN ('available', 'busy')
 		  AND last_heartbeat_at > now() - make_interval(secs => $2)
 		  AND reserved_slots < LEAST(max_concurrency, reported_available_slots)
 		  AND ($1 = '' OR pool = $1)
-		ORDER BY reserved_slots ASC, last_heartbeat_at DESC
+		  AND $3 = ANY(capabilities)
+		  AND ($4::integer IS NULL OR $4 = ANY(runtime_abis))
+		  AND (cardinality(runtime_digests) = 0 OR $5::text IS NULL OR $5 = ANY(runtime_digests))
+		ORDER BY reserved_slots ASC, cpu_usage_percent ASC NULLS LAST, last_heartbeat_at ASC, id ASC
 		LIMIT 1
-		FOR UPDATE SKIP LOCKED`, pool, int(HeartbeatTimeout/time.Second)).Scan(&workerID)
+		FOR UPDATE SKIP LOCKED`,
+		pool, int(s.heartbeatTimeout/time.Second), requiredCapability(t.NodeType), runtimeABI, runtimeDigest).
+		Scan(&workerID)
 	if isNoRows(err) {
 		return "", nil
 	}

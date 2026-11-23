@@ -110,3 +110,63 @@ func TestFailureClassificationDefaultsToWorkerError(t *testing.T) {
 		t.Fatalf("classification = %s, want worker_error", value)
 	}
 }
+
+func TestParseConcurrencyLimits(t *testing.T) {
+	limits, err := ParseConcurrencyLimits("echo=1, openai=4,anthropic=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limits["echo"] != 1 || limits["openai"] != 4 || limits["anthropic"] != 2 || len(limits) != 3 {
+		t.Fatalf("limits = %v", limits)
+	}
+	if _, err := ParseConcurrencyLimits("openai"); err == nil {
+		t.Fatal("missing value must be rejected")
+	}
+	if _, err := ParseConcurrencyLimits("openai=0"); err == nil {
+		t.Fatal("zero limit must be rejected")
+	}
+	if _, err := ParseConcurrencyLimits("openai=not-a-number"); err == nil {
+		t.Fatal("non-numeric limit must be rejected")
+	}
+	empty, err := ParseConcurrencyLimits("")
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty limits = %v, err = %v", empty, err)
+	}
+}
+
+func TestStatusForWorker(t *testing.T) {
+	service := &Service{}
+	cases := []struct {
+		reserved, max, available int
+		requested, want          string
+	}{
+		{0, 4, 4, "", "available"},
+		{4, 4, 4, "", "busy"},
+		{1, 4, 0, "", "busy"},
+		{1, 4, 4, "draining", "draining"},
+		{1, 4, 4, "unhealthy", "unhealthy"},
+		{1, 4, 4, "available", "available"},
+	}
+	for _, tc := range cases {
+		if got := service.statusForWorker(tc.reserved, tc.max, tc.available, tc.requested); got != tc.want {
+			t.Fatalf("status(%d,%d,%d,%q) = %q, want %q", tc.reserved, tc.max, tc.available, tc.requested, got, tc.want)
+		}
+	}
+}
+
+func TestRequiredCapability(t *testing.T) {
+	if requiredCapability("agent") != "agent_execution" || requiredCapability("tool") != "tool_execution" {
+		t.Fatal("unexpected capability mapping")
+	}
+}
+
+func TestNormalizeCapabilities(t *testing.T) {
+	got := normalizeCapabilities([]string{" agent_execution ", "agent_execution", "", "mcp"})
+	if len(got) != 2 || got[0] != "agent_execution" || got[1] != "mcp" {
+		t.Fatalf("capabilities = %v", got)
+	}
+	defaults := normalizeCapabilities(nil)
+	if len(defaults) != 2 {
+		t.Fatalf("defaults = %v", defaults)
+	}
+}

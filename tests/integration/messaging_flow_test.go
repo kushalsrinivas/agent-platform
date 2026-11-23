@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -17,24 +18,43 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/structpb"
 
+	workerv1 "github.com/agent-platform/agent-platform/gen/worker/v1"
 	"github.com/agent-platform/agent-platform/internal/messaging"
 	"github.com/agent-platform/agent-platform/internal/worker/control"
 	"github.com/agent-platform/agent-platform/internal/worker/delivery"
+	"github.com/agent-platform/agent-platform/packages/contracts"
 )
 
 type testWorker struct {
-	id      string
-	pool    string
-	control *control.Client
-	js      jetstream.JetStream
-	nc      *nats.Conn
-	cancel  context.CancelFunc
+	id       string
+	pool     string
+	capacity int
+	control  *control.Client
+	js       jetstream.JetStream
+	nc       *nats.Conn
+	cancel   context.CancelFunc
+	done     <-chan struct{}
 }
 
 func startTestWorker(t *testing.T, suffix, pool string) *testWorker {
+	return startTestWorkerWithCapacity(t, suffix, pool, 4)
+}
+
+func startTestWorkerWithCapacity(t *testing.T, suffix, pool string, capacity int) *testWorker {
+	return startTestWorkerNamed(t, "wrk_msg_"+suffix, pool, capacity)
+}
+
+func startTestWorkerNamed(t *testing.T, workerID, pool string, capacity int) *testWorker {
 	t.Helper()
-	nc, err := nats.Connect(natsURL(t), nats.Name("test-worker-"+suffix))
+	if capacity < 1 {
+		capacity = 1
+	}
+	nc, err := nats.Connect(natsURL(t), nats.Name("test-worker-"+workerID))
 	if err != nil {
 		t.Fatalf("nats connect: %v", err)
 	}
@@ -42,20 +62,28 @@ func startTestWorker(t *testing.T, suffix, pool string) *testWorker {
 	if err != nil {
 		t.Fatalf("jetstream: %v", err)
 	}
-	workerID := "wrk_msg_" + suffix
 	ctx, cancel := context.WithCancel(context.Background())
 	controlClient := control.New(control.Config{
 		Address:         orchestratorGRPCAddr(t),
 		Insecure:        true,
 		WorkerID:        workerID,
 		Pool:            pool,
-		MaxConcurrency:  4,
+		Runtime:         "python",
+		RuntimeVersion:  "test-1.0.0",
+		Capabilities:    []string{"agent_execution", "tool_execution"},
+		CPUCores:        2,
+		MemoryMB:        2048,
+		MaxConcurrency:  capacity,
 		BinaryVersion:   "test",
 		RuntimeABIs:     []int32{1},
 		HeartbeatPeriod: time.Second,
 		ReconnectDelay:  500 * time.Millisecond,
 	}, zap.NewNop())
-	go func() { _ = controlClient.Run(ctx) }()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = controlClient.Run(ctx)
+	}()
 
 	deadline := time.Now().Add(10 * time.Second)
 	for !controlClient.Connected() {
@@ -67,13 +95,26 @@ func startTestWorker(t *testing.T, suffix, pool string) *testWorker {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	worker := &testWorker{id: workerID, pool: pool, control: controlClient, js: js, nc: nc, cancel: cancel}
+	worker := &testWorker{
+		id: workerID, pool: pool, capacity: capacity, control: controlClient,
+		js: js, nc: nc, cancel: cancel, done: done,
+	}
 	t.Cleanup(func() {
 		cancel()
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Logf("test worker control loop did not stop")
+		}
 		background, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
 		admin := adminPool(t)
+		// The worker may still own an assigned test task; fixtures are cleaned up in LIFO order, so detach
+		// tasks first rather than depending on the org cleanup having run.
+		if _, err := admin.Exec(background,
+			`DELETE FROM execution.execution_tasks WHERE owner_worker_id = $1`, workerID); err != nil {
+			t.Logf("delete test worker tasks: %v", err)
+		}
 		if _, err := admin.Exec(background, `DELETE FROM execution.workers WHERE id = $1`, workerID); err != nil {
 			t.Logf("delete test worker: %v", err)
 		}
@@ -84,7 +125,7 @@ func startTestWorker(t *testing.T, suffix, pool string) *testWorker {
 
 func (w *testWorker) startConsumer(t *testing.T, handler messaging.Handler, configure func(*messaging.ConsumerConfig)) {
 	t.Helper()
-	config := messaging.DefaultConsumerConfig(w.id, 4)
+	config := messaging.DefaultConsumerConfig(w.id, w.capacity)
 	if configure != nil {
 		configure(&config)
 	}
@@ -111,22 +152,22 @@ type fixtureExecution struct {
 	taskIDs     []string
 }
 
-func createFixtureExecution(t *testing.T, client *apiClient, suffix, pool string, twoNodes bool) fixtureExecution {
+func createWorkerProject(t *testing.T, client *apiClient, suffix string) (string, string, string) {
 	t.Helper()
 	org := client.request(http.MethodPost, "/v1/orgs", map[string]any{
-		"name": "Messaging Org", "slug": "messaging-" + suffix,
+		"name": "Worker Manager Org", "slug": "worker-manager-" + suffix,
 	}, nil, http.StatusCreated)
 	orgID := asString(t, org, "id")
 	admin := adminPool(t)
 	t.Cleanup(func() { cleanupAPITestOrg(t, admin, orgID) })
 
 	project := client.request(http.MethodPost, "/v1/orgs/"+orgID+"/projects", map[string]any{
-		"name": "Messaging", "slug": "messaging",
+		"name": "Worker Manager", "slug": "worker-manager",
 	}, nil, http.StatusCreated)
 	projectID := asString(t, project, "id")
 
 	agent := client.request(http.MethodPost, "/v1/orgs/"+orgID+"/projects/"+projectID+"/agents", map[string]any{
-		"name": "worker-agent", "description": "messaging delivery test",
+		"name": "worker-agent", "description": "worker manager test",
 		"version": map[string]any{"spec": map[string]any{
 			"model": map[string]any{
 				"provider": "echo", "name": "echo-1", "credential_ref": "default",
@@ -143,7 +184,32 @@ func createFixtureExecution(t *testing.T, client *apiClient, suffix, pool string
 	client.request(http.MethodPost,
 		"/v1/orgs/"+orgID+"/projects/"+projectID+"/agents/"+agentID+"/versions/1:publish",
 		nil, nil, http.StatusOK)
+	return orgID, projectID, agentID
+}
 
+func loadTaskIDs(t *testing.T, executionID string) []string {
+	t.Helper()
+	admin := adminPool(t)
+	rows, err := admin.Query(context.Background(),
+		`SELECT id FROM execution.execution_tasks WHERE execution_id = $1 ORDER BY created_at, node_id`, executionID)
+	if err != nil {
+		t.Fatalf("query fixture tasks: %v", err)
+	}
+	defer rows.Close()
+	var taskIDs []string
+	for rows.Next() {
+		var taskID string
+		if err := rows.Scan(&taskID); err != nil {
+			t.Fatalf("scan fixture task: %v", err)
+		}
+		taskIDs = append(taskIDs, taskID)
+	}
+	return taskIDs
+}
+
+func createFixtureExecution(t *testing.T, client *apiClient, suffix, pool string, twoNodes bool) fixtureExecution {
+	t.Helper()
+	orgID, projectID, agentID := createWorkerProject(t, client, suffix)
 	nodes := []any{map[string]any{
 		"id": "plan", "type": "agent",
 		"agent":       map[string]any{"agent_id": agentID, "version": 1},
@@ -182,21 +248,10 @@ func createFixtureExecution(t *testing.T, client *apiClient, suffix, pool string
 		}, map[string]string{"Idempotency-Key": "msg-" + suffix}, http.StatusAccepted)
 	executionID := asString(t, execution, "id")
 
-	fixture := fixtureExecution{orgID: orgID, projectID: projectID, workflowID: workflowID, executionID: executionID}
-	rows, err := admin.Query(context.Background(),
-		`SELECT id FROM execution.execution_tasks WHERE execution_id = $1 ORDER BY created_at`, executionID)
-	if err != nil {
-		t.Fatalf("query fixture tasks: %v", err)
+	return fixtureExecution{
+		orgID: orgID, projectID: projectID, workflowID: workflowID, executionID: executionID,
+		taskIDs: loadTaskIDs(t, executionID),
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var taskID string
-		if err := rows.Scan(&taskID); err != nil {
-			t.Fatalf("scan fixture task: %v", err)
-		}
-		fixture.taskIDs = append(fixture.taskIDs, taskID)
-	}
-	return fixture
 }
 
 func waitExecutionState(t *testing.T, client *apiClient, fixture fixtureExecution, want string) {
@@ -458,4 +513,548 @@ func orchestratorGRPCAddr(t *testing.T) string {
 		return value
 	}
 	return "localhost:9090"
+}
+
+type schedulerOptions struct {
+	Pool        string
+	NodeCount   int
+	Independent bool
+	Priority    int32
+	MaxAttempts int
+}
+
+func createSchedulerFixture(t *testing.T, client *apiClient, suffix string, opts schedulerOptions) fixtureExecution {
+	t.Helper()
+	orgID, projectID, agentID := createWorkerProject(t, client, suffix)
+	if opts.NodeCount < 1 {
+		opts.NodeCount = 1
+	}
+	nodes := make([]any, 0, opts.NodeCount)
+	edges := make([]any, 0, opts.NodeCount)
+	for index := 1; index <= opts.NodeCount; index++ {
+		nodeID := fmt.Sprintf("task_%d", index)
+		node := map[string]any{
+			"id": nodeID, "type": "agent",
+			"agent":       map[string]any{"agent_id": agentID, "version": 1},
+			"worker_pool": opts.Pool, "timeout_seconds": 60,
+		}
+		if opts.MaxAttempts > 1 {
+			node["retry"] = map[string]any{"max_attempts": opts.MaxAttempts}
+		}
+		nodes = append(nodes, node)
+		if !opts.Independent && index > 1 {
+			edges = append(edges, map[string]any{"from": fmt.Sprintf("task_%d", index-1), "to": nodeID})
+		}
+	}
+	workflow := client.request(http.MethodPost, "/v1/orgs/"+orgID+"/projects/"+projectID+"/workflows",
+		map[string]any{
+			"name": "scheduler-flow",
+			"version": map[string]any{"graph": map[string]any{
+				"nodes":        nodes,
+				"edges":        edges,
+				"policy":       map[string]any{"on_failure": "fail_fast"},
+				"input_schema": map[string]any{"type": "object", "required": []any{"topic"}},
+			}},
+		}, nil, http.StatusCreated)
+	workflowID := asString(t, workflow, "id")
+	client.request(http.MethodPost,
+		"/v1/orgs/"+orgID+"/projects/"+projectID+"/workflows/"+workflowID+"/versions/1:publish",
+		nil, nil, http.StatusOK)
+
+	execution := client.request(http.MethodPost, "/v1/orgs/"+orgID+"/projects/"+projectID+"/executions",
+		map[string]any{
+			"workflow_id": workflowID, "workflow_version": 1,
+			"input": map[string]any{"topic": "scheduler"}, "priority": opts.Priority,
+		}, map[string]string{"Idempotency-Key": "sched-" + suffix}, http.StatusAccepted)
+	executionID := asString(t, execution, "id")
+	return fixtureExecution{
+		orgID: orgID, projectID: projectID, workflowID: workflowID, executionID: executionID,
+		taskIDs: loadTaskIDs(t, executionID),
+	}
+}
+
+func submitExtraExecution(t *testing.T, client *apiClient, fixture fixtureExecution, key string, priority int32) fixtureExecution {
+	t.Helper()
+	execution := client.request(http.MethodPost,
+		"/v1/orgs/"+fixture.orgID+"/projects/"+fixture.projectID+"/executions",
+		map[string]any{
+			"workflow_id": fixture.workflowID, "workflow_version": 1,
+			"input": map[string]any{"topic": "scheduler"}, "priority": priority,
+		}, map[string]string{"Idempotency-Key": key}, http.StatusAccepted)
+	executionID := asString(t, execution, "id")
+	return fixtureExecution{
+		orgID: fixture.orgID, projectID: fixture.projectID, workflowID: fixture.workflowID,
+		executionID: executionID, taskIDs: loadTaskIDs(t, executionID),
+	}
+}
+
+func TestWorkerManagerDistributesTasks(t *testing.T) {
+	client := newAPIClient(t)
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
+	client.token = client.devToken("wm_dist_" + suffix)
+	pool := "wm-dist-" + suffix
+
+	workerA := startTestWorkerWithCapacity(t, suffix+"a", pool, 1)
+	workerB := startTestWorkerWithCapacity(t, suffix+"b", pool, 1)
+	handled := make(chan string, 4)
+	startConsumer := func(worker *testWorker) {
+		execute := func(ctx context.Context, dispatch *contracts.TaskDispatch) (map[string]any, error) {
+			handled <- worker.id + "|" + dispatch.TaskID
+			time.Sleep(2 * time.Second)
+			return delivery.Echo(ctx, dispatch)
+		}
+		worker.startConsumer(t, &delivery.Handler{
+			Client: worker.control, WorkerID: worker.id, Execute: execute, Log: zap.NewNop(),
+		}, nil)
+	}
+	startConsumer(workerA)
+	startConsumer(workerB)
+
+	fixture := createSchedulerFixture(t, client, suffix, schedulerOptions{
+		Pool: pool, NodeCount: 2, Independent: true,
+	})
+	waitExecutionState(t, client, fixture, "succeeded")
+
+	handledBy := map[string]string{}
+	for index := 0; index < 2; index++ {
+		select {
+		case value := <-handled:
+			parts := strings.SplitN(value, "|", 2)
+			handledBy[parts[1]] = parts[0]
+		case <-time.After(20 * time.Second):
+			t.Fatal("both workers did not report a task")
+		}
+	}
+	if len(handledBy) != 2 {
+		t.Fatalf("handled tasks = %v", handledBy)
+	}
+	workers := map[string]struct{}{}
+	for _, workerID := range handledBy {
+		workers[workerID] = struct{}{}
+	}
+	if len(workers) != 2 {
+		t.Fatalf("expected both workers to receive work, got %v", handledBy)
+	}
+}
+
+func TestWorkerManagerPriorityOrder(t *testing.T) {
+	client := newAPIClient(t)
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
+	client.token = client.devToken("wm_prio_" + suffix)
+	pool := "wm-prio-" + suffix
+
+	normal := createSchedulerFixture(t, client, suffix, schedulerOptions{Pool: pool, NodeCount: 1})
+	high := submitExtraExecution(t, client, normal, "high-"+suffix, 100)
+	admin := adminPool(t)
+	rows, err := admin.Query(context.Background(), `
+		SELECT e.id, e.priority, t.id, t.priority, t.state, COALESCE(t.worker_pool, '')
+		FROM execution.executions e JOIN execution.execution_tasks t ON t.execution_id = e.id
+		WHERE e.id = ANY($1) ORDER BY e.priority`, []string{normal.executionID, high.executionID})
+	if err == nil {
+		for rows.Next() {
+			var executionID, taskID, state, workerPool string
+			var executionPriority, taskPriority int
+			if err := rows.Scan(&executionID, &executionPriority, &taskID, &taskPriority, &state, &workerPool); err == nil {
+				t.Logf("priority fixture execution=%s priority=%d task=%s task_priority=%d state=%s pool=%s",
+					executionID, executionPriority, taskID, taskPriority, state, workerPool)
+				if executionID == high.executionID && taskPriority != 100 {
+					t.Fatalf("high-priority task has priority %d", taskPriority)
+				}
+				if workerPool != pool {
+					t.Fatalf("task pool = %q, want %q", workerPool, pool)
+				}
+			}
+		}
+		rows.Close()
+	}
+	startTestWorkerWithCapacity(t, suffix, pool, 1)
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		var executionID string
+		err := admin.QueryRow(context.Background(), `
+			SELECT execution_id FROM execution.execution_tasks
+			WHERE execution_id = ANY($1) AND state = 'assigned'
+			ORDER BY created_at LIMIT 1`, []string{normal.executionID, high.executionID}).Scan(&executionID)
+		if err == nil {
+			if executionID != high.executionID {
+				rows, queryErr := admin.Query(context.Background(), `
+					SELECT t.id, t.priority, t.state, e.org_id, e.state, COALESCE(t.worker_pool, ''),
+					       COALESCE(t.owner_worker_id, ''),
+					       row_number() OVER (PARTITION BY e.org_id ORDER BY t.priority DESC, t.created_at, t.id) AS tenant_rank,
+					       t.priority + LEAST(FLOOR(EXTRACT(EPOCH FROM (now() - t.created_at)) / 60)::integer, 200) AS effective
+					FROM execution.execution_tasks t
+					JOIN execution.executions e ON e.id = t.execution_id
+					WHERE e.id = ANY($1) ORDER BY tenant_rank, effective DESC`,
+					[]string{normal.executionID, high.executionID})
+				if queryErr == nil {
+					for rows.Next() {
+						var taskID, taskState, orgID, executionState, workerPool, owner string
+						var taskPriority, rank, effective int
+						if err := rows.Scan(&taskID, &taskPriority, &taskState, &orgID, &executionState, &workerPool, &owner, &rank, &effective); err == nil {
+							t.Logf("rank=%d effective=%d priority=%d task=%s task_state=%s pool=%s owner=%s org=%s execution_state=%s",
+								rank, effective, taskPriority, taskID, taskState, workerPool, owner, orgID, executionState)
+						}
+					}
+					rows.Close()
+				}
+				workerRows, workerErr := admin.Query(context.Background(), `
+					SELECT id, status, max_concurrency, reserved_slots, reported_available_slots, pool
+					FROM execution.workers ORDER BY id`)
+				if workerErr == nil {
+					for workerRows.Next() {
+						var workerID, status, workerPool string
+						var maxConcurrency, reserved, reported int
+						if err := workerRows.Scan(&workerID, &status, &maxConcurrency, &reserved, &reported, &workerPool); err == nil {
+							t.Logf("worker=%s status=%s pool=%s slots=%d/%d reported=%d",
+								workerID, status, workerPool, reserved, maxConcurrency, reported)
+						}
+					}
+					workerRows.Close()
+				}
+				t.Fatalf("assigned execution = %s, want high-priority %s", executionID, high.executionID)
+			}
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatal("no task was assigned")
+}
+
+func TestWorkerManagerTenantFairness(t *testing.T) {
+	client := newAPIClient(t)
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
+	client.token = client.devToken("wm_fair_" + suffix)
+	pool := "wm-fair-" + suffix
+
+	first := createSchedulerFixture(t, client, suffix+"a", schedulerOptions{
+		Pool: pool, NodeCount: 2, Independent: true,
+	})
+	second := createSchedulerFixture(t, client, suffix+"b", schedulerOptions{
+		Pool: pool, NodeCount: 2, Independent: true,
+	})
+	startTestWorkerWithCapacity(t, suffix+"a", pool, 1)
+	startTestWorkerWithCapacity(t, suffix+"b", pool, 1)
+	admin := adminPool(t)
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, err := admin.Query(context.Background(), `
+			SELECT DISTINCT e.org_id
+			FROM execution.execution_tasks t
+			JOIN execution.executions e ON e.id = t.execution_id
+			WHERE t.execution_id = ANY($1) AND t.state = 'assigned'`,
+			[]string{first.executionID, second.executionID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var orgIDs []string
+		for rows.Next() {
+			var orgID string
+			if err := rows.Scan(&orgID); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			orgIDs = append(orgIDs, orgID)
+		}
+		rows.Close()
+		if len(orgIDs) == 2 {
+			if orgIDs[0] == orgIDs[1] {
+				t.Fatalf("both assignments came from one tenant: %v", orgIDs)
+			}
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatal("two tenants were not both assigned work")
+}
+
+func TestWorkerManagerLeaseRenewal(t *testing.T) {
+	client := newAPIClient(t)
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
+	client.token = client.devToken("wm_lease_" + suffix)
+	pool := "wm-lease-" + suffix
+
+	worker := startTestWorkerWithCapacity(t, suffix, pool, 1)
+	worker.startConsumer(t, &delivery.Handler{
+		Client: worker.control, WorkerID: worker.id, Log: zap.NewNop(),
+		Execute: func(ctx context.Context, dispatch *contracts.TaskDispatch) (map[string]any, error) {
+			time.Sleep(3 * time.Second)
+			return delivery.Echo(ctx, dispatch)
+		},
+	}, nil)
+	fixture := createSchedulerFixture(t, client, suffix, schedulerOptions{Pool: pool, NodeCount: 1})
+	admin := adminPool(t)
+
+	var before time.Time
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		err := admin.QueryRow(context.Background(), `
+			SELECT lease_expires_at FROM execution.execution_tasks
+			WHERE id = $1 AND state = 'running'`, fixture.taskIDs[0]).Scan(&before)
+		if err == nil {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if before.IsZero() {
+		t.Fatal("task never started")
+	}
+	time.Sleep(2 * time.Second)
+	var after time.Time
+	if err := admin.QueryRow(context.Background(), `
+		SELECT lease_expires_at FROM execution.execution_tasks WHERE id = $1`,
+		fixture.taskIDs[0]).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !after.After(before) {
+		t.Fatalf("lease was not renewed: before=%s after=%s", before, after)
+	}
+	waitExecutionState(t, client, fixture, "succeeded")
+}
+
+func TestWorkerManagerStaleWorkerCannotCommit(t *testing.T) {
+	client := newAPIClient(t)
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
+	client.token = client.devToken("wm_fence_" + suffix)
+	pool := "wm-fence-" + suffix
+
+	workerA := startTestWorkerWithCapacity(t, suffix+"a", pool, 1)
+	fixture := createSchedulerFixture(t, client, suffix, schedulerOptions{
+		Pool: pool, NodeCount: 1, MaxAttempts: 2,
+	})
+	admin := adminPool(t)
+
+	var taskID, attemptID, leaseID string
+	var attemptNumber int
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		err := admin.QueryRow(context.Background(), `
+			SELECT t.id, a.id, a.lease_id, a.attempt_number
+			FROM execution.execution_tasks t
+			JOIN execution.task_attempts a ON a.task_id = t.id
+			WHERE t.execution_id = $1 AND t.state = 'assigned' AND a.finished_at IS NULL`,
+			fixture.executionID).Scan(&taskID, &attemptID, &leaseID, &attemptNumber)
+		if err == nil {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if taskID == "" {
+		t.Fatal("task was never assigned to the first worker")
+	}
+
+	workerA.cancel()
+	time.Sleep(500 * time.Millisecond)
+	if _, err := admin.Exec(context.Background(), `
+		UPDATE execution.workers SET status = 'unhealthy', last_heartbeat_at = now() - interval '30 seconds'
+		WHERE id = $1`, workerA.id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(context.Background(), `
+		UPDATE execution.execution_tasks SET lease_expires_at = now() - interval '1 second'
+		WHERE id = $1`, taskID); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline = time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		var state string
+		var outcome string
+		err := admin.QueryRow(context.Background(), `
+			SELECT t.state, a.outcome FROM execution.execution_tasks t
+			JOIN execution.task_attempts a ON a.id = $2
+			WHERE t.id = $1`, taskID, attemptID).Scan(&state, &outcome)
+		if err == nil && state == "pending" && outcome == "lease_expired" {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	workerB := startTestWorkerWithCapacity(t, suffix+"b", pool, 1)
+	workerB.startConsumer(t, &delivery.Handler{
+		Client: workerB.control, WorkerID: workerB.id, Execute: delivery.Echo, Log: zap.NewNop(),
+	}, nil)
+	waitExecutionState(t, client, fixture, "succeeded")
+
+	if _, err := admin.Exec(context.Background(), `
+		UPDATE execution.workers SET status = 'available', last_heartbeat_at = now() WHERE id = $1`,
+		workerA.id); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := grpc.NewClient(orchestratorGRPCAddr(t),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	ctx := metadata.AppendToOutgoingContext(context.Background(), control.WorkerIDMetadataKey, workerA.id)
+	output, err := structpb.NewStruct(map[string]any{"stale": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := workerv1.NewWorkerControlClient(conn).ReportTaskResult(ctx,
+		&workerv1.ReportTaskResultRequest{
+			TaskId: taskID, AttemptId: attemptID, LeaseId: leaseID, AttemptNumber: int32(attemptNumber), //nolint:gosec // bounded by max_attempts.
+			Outcome: workerv1.TaskOutcome_TASK_OUTCOME_SUCCEEDED, Output: output,
+		})
+	if err != nil {
+		t.Fatalf("stale result was not answered: %v", err)
+	}
+	if response.GetStatus() != workerv1.ResultStatus_RESULT_STATUS_STALE_LEASE {
+		t.Fatalf("stale result status = %s, want STALE_LEASE", response.GetStatus())
+	}
+
+	var succeeded, expired int
+	if err := admin.QueryRow(context.Background(), `
+		SELECT count(*) FILTER (WHERE outcome = 'succeeded'),
+		       count(*) FILTER (WHERE outcome = 'lease_expired')
+		FROM execution.task_attempts WHERE execution_id = $1`, fixture.executionID).
+		Scan(&succeeded, &expired); err != nil {
+		t.Fatal(err)
+	}
+	if succeeded != 1 || expired != 1 {
+		t.Fatalf("attempt outcomes succeeded=%d lease_expired=%d, want 1/1", succeeded, expired)
+	}
+	var taskState, executionState string
+	if err := admin.QueryRow(context.Background(), `
+		SELECT t.state, e.state FROM execution.execution_tasks t
+		JOIN execution.executions e ON e.id = t.execution_id WHERE t.id = $1`, taskID).
+		Scan(&taskState, &executionState); err != nil {
+		t.Fatal(err)
+	}
+	if taskState != "succeeded" || executionState != "succeeded" {
+		t.Fatalf("stale result changed state: task=%s execution=%s", taskState, executionState)
+	}
+}
+
+func TestWorkerManagerDrainStopsAssignments(t *testing.T) {
+	client := newAPIClient(t)
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
+	client.token = client.devToken("wm_drain_" + suffix)
+	pool := "wm-drain-" + suffix
+
+	draining := startTestWorkerWithCapacity(t, suffix+"a", pool, 1)
+	available := startTestWorkerWithCapacity(t, suffix+"b", pool, 1)
+	available.startConsumer(t, &delivery.Handler{
+		Client: available.control, WorkerID: available.id, Execute: delivery.Echo, Log: zap.NewNop(),
+	}, nil)
+	draining.control.BeginDrain()
+	admin := adminPool(t)
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		var status string
+		if err := admin.QueryRow(context.Background(), `
+			SELECT status FROM execution.workers WHERE id = $1`, draining.id).Scan(&status); err == nil && status == "draining" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	fixture := createSchedulerFixture(t, client, suffix, schedulerOptions{Pool: pool, NodeCount: 1})
+	waitExecutionState(t, client, fixture, "succeeded")
+	var assignedWorker string
+	if err := admin.QueryRow(context.Background(), `
+		SELECT worker_id FROM execution.task_attempts WHERE execution_id = $1`,
+		fixture.executionID).Scan(&assignedWorker); err != nil {
+		t.Fatal(err)
+	}
+	if assignedWorker != available.id {
+		t.Fatalf("task assigned to %s; draining worker %s must not receive work", assignedWorker, draining.id)
+	}
+}
+
+func TestWorkerManagerBootChangeReclaimsAttempts(t *testing.T) {
+	client := newAPIClient(t)
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
+	client.token = client.devToken("wm_boot_" + suffix)
+	pool := "wm-boot-" + suffix
+
+	original := startTestWorkerWithCapacity(t, suffix+"a", pool, 1)
+	fixture := createSchedulerFixture(t, client, suffix, schedulerOptions{
+		Pool: pool, NodeCount: 1, MaxAttempts: 2,
+	})
+	admin := adminPool(t)
+
+	var oldAttemptID string
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		err := admin.QueryRow(context.Background(), `
+			SELECT a.id FROM execution.execution_tasks t
+			JOIN execution.task_attempts a ON a.task_id = t.id
+			WHERE t.execution_id = $1 AND a.finished_at IS NULL`, fixture.executionID).Scan(&oldAttemptID)
+		if err == nil {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if oldAttemptID == "" {
+		t.Fatal("original worker never received an attempt")
+	}
+	t.Logf("fixture task=%s old attempt=%s execution=%s", fixture.taskIDs[0], oldAttemptID, fixture.executionID)
+
+	// If the boot changes before the dispatch outbox row is published, the attempt is correctly reclaimed as
+	// incomplete and its number may be reused. Wait for publication so this test exercises the lease_expired path.
+	publishedDeadline := time.Now().Add(10 * time.Second)
+	for {
+		var published int
+		if err := admin.QueryRow(context.Background(), `
+			SELECT count(*) FROM execution.outbox
+			WHERE task_id = $1 AND attempt_id = $2 AND message_type = 'task.dispatch'
+			  AND published_at IS NOT NULL`, fixture.taskIDs[0], oldAttemptID).Scan(&published); err != nil {
+			t.Fatal(err)
+		}
+		if published > 0 {
+			break
+		}
+		if time.Now().After(publishedDeadline) {
+			t.Fatal("task dispatch was not published before the boot change")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Register a replacement process with the same worker ID and a new boot ID.
+	_ = startTestWorkerNamed(t, original.id, pool, 1)
+
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		var outcome string
+		var attemptNumber int
+		err := admin.QueryRow(context.Background(), `
+			SELECT outcome, attempt_number FROM execution.task_attempts WHERE id = $1`,
+			oldAttemptID).Scan(&outcome, &attemptNumber)
+		if err == nil && outcome == "lease_expired" && attemptNumber == 1 {
+			var nextAttempts int
+			if err := admin.QueryRow(context.Background(), `
+				SELECT count(*) FROM execution.task_attempts
+				WHERE execution_id = $1 AND attempt_number = 2`, fixture.executionID).Scan(&nextAttempts); err != nil {
+				t.Fatal(err)
+			}
+			if nextAttempts == 1 {
+				return
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	rows, err := admin.Query(context.Background(), `
+		SELECT a.attempt_number, COALESCE(a.outcome, 'open'), t.state, t.attempt_count,
+		       t.max_attempts, COALESCE(t.owner_worker_id, ''), t.next_attempt_at
+		FROM execution.execution_tasks t
+		LEFT JOIN execution.task_attempts a ON a.task_id = t.id
+		WHERE t.execution_id = $1 ORDER BY a.attempt_number`, fixture.executionID)
+	if err == nil {
+		for rows.Next() {
+			var number int
+			var outcome, state, owner string
+			var attemptCount, maxAttempts int
+			var nextAttempt *time.Time
+			if err := rows.Scan(&number, &outcome, &state, &attemptCount, &maxAttempts, &owner, &nextAttempt); err == nil {
+				t.Logf("attempt=%d outcome=%s task=%s count=%d max=%d owner=%s next=%v",
+					number, outcome, state, attemptCount, maxAttempts, owner, nextAttempt)
+			}
+		}
+		rows.Close()
+	}
+	t.Fatal("new boot did not reclaim and redispatch the previous attempt")
 }

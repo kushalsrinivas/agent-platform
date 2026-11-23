@@ -40,6 +40,7 @@ type createRequest struct {
 	WorkflowVersion int            `json:"workflow_version"`
 	Input           map[string]any `json:"input"`
 	DeadlineAt      *time.Time     `json:"deadline_at,omitempty"`
+	Priority        int32          `json:"priority"`
 }
 
 func (h *Handlers) Create(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +79,10 @@ func (h *Handlers) Create(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "workflow_version must be a positive integer")
 		return
 	}
+	if request.Priority < -100 || request.Priority > 100 {
+		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "priority must be between -100 and 100")
+		return
+	}
 	inputJSON, err := json.Marshal(request.Input)
 	if err != nil || len(inputJSON) > maxExecutionInput {
 		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "input exceeds 256 KiB or is not serialisable")
@@ -98,6 +103,7 @@ func (h *Handlers) Create(w http.ResponseWriter, r *http.Request) {
 		RequestId:       idempotencyKey,
 		RequestedBy:     principal.ID,
 		Traceparent:     r.Header.Get("traceparent"),
+		Priority:        request.Priority,
 	}
 	if request.DeadlineAt != nil {
 		protoRequest.DeadlineAt = timestamppb.New(request.DeadlineAt.UTC())

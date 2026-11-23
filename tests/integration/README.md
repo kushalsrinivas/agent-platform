@@ -14,12 +14,22 @@ make integration-test
   version → publish → workflow version → publish → execution; then verifies the committed execution, tasks,
   dependencies, audit event and outbox row in PostgreSQL, idempotent replay/conflict, RBAC and cross-tenant 404.
   Since Phase 05 schedules immediately, the task/outbox assertions accept a live or completed execution.
-- `messaging_flow_test.go` — the Phase 05 exit criterion against real JetStream:
+- `messaging_flow_test.go` — the Phase 05 exit criterion against real JetStream and the Phase 06 worker-manager
+  scenarios:
   - `TestMessagingRedeliveryAndDuplicateSuppression` commits a result, simulates a crash before the broker ack,
     waits for redelivery, and proves the duplicate is acknowledged as `ALREADY_FINISHED` with one attempt and one
     completion event per task.
   - `TestMessagingDeadLetterAndRedrive` poisons a dispatch until it is dead-lettered, inspects the preserved DLQ
     envelope, flips the handler, redrives and proves the task completes exactly once.
+  - `TestWorkerManagerDistributesTasks` starts two capacity-1 workers and proves they receive different tasks.
+  - `TestWorkerManagerPriorityOrder` proves a priority-100 execution is assigned before a normal one.
+  - `TestWorkerManagerTenantFairness` proves two tenants each get work in the same dispatch pass.
+  - `TestWorkerManagerLeaseRenewal` proves heartbeats extend an executing task's lease.
+  - `TestWorkerManagerStaleWorkerCannotCommit` reclaims a dead worker's lease, completes the retry on another
+    worker, and proves the old result returns `STALE_LEASE` without changing state.
+  - `TestWorkerManagerDrainStopsAssignments` proves a draining worker receives no new tasks.
+  - `TestWorkerManagerBootChangeReclaimsAttempts` proves a new boot for the same worker ID reclaims the previous
+    process's attempt immediately.
 
 `make integration-test` builds and starts `api`, `orchestrator` and `worker` as well as the data stores, waits for
 API health, then runs all suites. `ORCHESTRATOR_GRPC_ADDR` (derived from `ORCHESTRATOR_GRPC_PORT`) is passed to

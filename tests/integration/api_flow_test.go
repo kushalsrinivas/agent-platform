@@ -365,4 +365,13 @@ func cleanupAPITestOrg(t *testing.T, admin *pgxpool.Pool, orgID string) {
 			t.Logf("cleanup %q: %v", query, err)
 		}
 	}
+	// Deleting an in-flight execution skips the normal slot release. Tests are sequential, so reset the
+	// fleet's counters once the test's task rows are gone.
+	if _, err := admin.Exec(cleanupCtx, `
+		UPDATE execution.workers
+		SET reserved_slots = 0,
+		    status = CASE WHEN status = 'busy' THEN 'available' ELSE status END,
+		    updated_at = now()`); err != nil {
+		t.Logf("cleanup worker slots: %v", err)
+	}
 }

@@ -86,7 +86,13 @@ func (s *WorkerServer) Connect(stream workerv1.WorkerControl_ConnectServer) erro
 					LeaseID:   active.GetLeaseId(),
 				})
 			}
-			if err := s.service.Heartbeat(stream.Context(), workerID, heartbeat.GetCapacity(), renewals); err != nil {
+			usage := WorkerUsage{
+				RuntimeVersion: heartbeat.GetRuntimeVersion(),
+				CPUPercent:     heartbeat.GetCpuUsagePercent(),
+				MemoryUsedMB:   heartbeat.GetMemoryUsedMb(),
+				Status:         workerStatusString(heartbeat.GetStatus()),
+			}
+			if err := s.service.Heartbeat(stream.Context(), workerID, heartbeat.GetCapacity(), renewals, usage); err != nil {
 				s.log.Warn("worker heartbeat failed", zap.String("worker_id", workerID), zap.Error(err))
 			}
 		case *workerv1.WorkerMessage_TaskAccepted:
@@ -160,12 +166,29 @@ func (s *WorkerServer) GetTaskContext(context.Context, *workerv1.GetTaskContextR
 func (s *Service) IsActiveWorker(ctx context.Context, workerID string) (bool, error) {
 	var active bool
 	err := s.pool.QueryRow(ctx, `
-		SELECT status = 'active' AND last_heartbeat_at > now() - make_interval(secs => $2)
-		FROM execution.workers WHERE id = $1`, workerID, int(HeartbeatTimeout/time.Second)).Scan(&active)
+		SELECT status <> 'terminated' AND last_heartbeat_at > now() - make_interval(secs => $2)
+		FROM execution.workers WHERE id = $1`, workerID, int(s.workerTerminateAfter/time.Second)).Scan(&active)
 	if isNoRows(err) {
 		return false, nil
 	}
 	return active, err
+}
+
+func workerStatusString(status workerv1.WorkerStatus) string {
+	switch status {
+	case workerv1.WorkerStatus_WORKER_STATUS_STARTING:
+		return "starting"
+	case workerv1.WorkerStatus_WORKER_STATUS_BUSY:
+		return "busy"
+	case workerv1.WorkerStatus_WORKER_STATUS_DRAINING:
+		return "draining"
+	case workerv1.WorkerStatus_WORKER_STATUS_UNHEALTHY:
+		return "unhealthy"
+	case workerv1.WorkerStatus_WORKER_STATUS_TERMINATED:
+		return "terminated"
+	default:
+		return "available"
+	}
 }
 
 func workerIDFromContext(ctx context.Context) string {

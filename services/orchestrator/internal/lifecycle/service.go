@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -27,19 +29,102 @@ const (
 	LeaseTTL = 30 * time.Second
 	// HeartbeatTimeout is when a worker stops receiving new assignments.
 	HeartbeatTimeout = 15 * time.Second
+	// WorkerTerminateAfter is when a silent worker is recorded as terminated.
+	WorkerTerminateAfter = 60 * time.Second
 )
+
+// Config tunes scheduling and lease behaviour.
+type Config struct {
+	LeaseTTL                time.Duration
+	HeartbeatTimeout        time.Duration
+	WorkerTerminateAfter    time.Duration
+	MaxActiveTasksPerTenant int
+	ProviderConcurrency     map[string]int
+	ToolConcurrency         map[string]int
+}
 
 // Service applies lifecycle transitions inside short database transactions.
 type Service struct {
-	pool     *pgxpool.Pool
-	log      *zap.Logger
-	store    *outbox.Store
-	leaseTTL time.Duration
+	pool                    *pgxpool.Pool
+	log                     *zap.Logger
+	store                   *outbox.Store
+	leaseTTL                time.Duration
+	heartbeatTimeout        time.Duration
+	workerTerminateAfter    time.Duration
+	maxActiveTasksPerTenant int
+	providerConcurrency     map[string]int
+	toolConcurrency         map[string]int
 }
 
-// New builds the lifecycle service.
+// New builds the lifecycle service with defaults.
 func New(pool *pgxpool.Pool, log *zap.Logger) *Service {
-	return &Service{pool: pool, log: log, store: outbox.NewStore(pool), leaseTTL: LeaseTTL}
+	return NewWithConfig(pool, log, Config{})
+}
+
+// NewWithConfig builds the lifecycle service and clamps invalid configuration to safe defaults.
+func NewWithConfig(pool *pgxpool.Pool, log *zap.Logger, cfg Config) *Service {
+	if cfg.LeaseTTL <= 0 {
+		cfg.LeaseTTL = LeaseTTL
+	}
+	if cfg.HeartbeatTimeout <= 0 {
+		cfg.HeartbeatTimeout = HeartbeatTimeout
+	}
+	if cfg.WorkerTerminateAfter <= 0 {
+		cfg.WorkerTerminateAfter = WorkerTerminateAfter
+	}
+	if cfg.WorkerTerminateAfter <= cfg.HeartbeatTimeout {
+		cfg.WorkerTerminateAfter = cfg.HeartbeatTimeout * 2
+	}
+	return &Service{
+		pool: pool, log: log, store: outbox.NewStore(pool),
+		leaseTTL: cfg.LeaseTTL, heartbeatTimeout: cfg.HeartbeatTimeout,
+		workerTerminateAfter:    cfg.WorkerTerminateAfter,
+		maxActiveTasksPerTenant: cfg.MaxActiveTasksPerTenant,
+		providerConcurrency:     cloneLimits(cfg.ProviderConcurrency),
+		toolConcurrency:         cloneLimits(cfg.ToolConcurrency),
+	}
+}
+
+func cloneLimits(source map[string]int) map[string]int {
+	result := make(map[string]int, len(source))
+	for key, value := range source {
+		if value > 0 {
+			result[key] = value
+		}
+	}
+	return result
+}
+
+// ParseConcurrencyLimits parses "provider=4,anthropic=2" into positive limits. Empty input disables the limit.
+func ParseConcurrencyLimits(raw string) (map[string]int, error) {
+	limits := map[string]int{}
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		key, value, found := strings.Cut(entry, "=")
+		if !found || strings.TrimSpace(key) == "" {
+			return nil, fmt.Errorf("invalid concurrency limit %q; expected name=limit", entry)
+		}
+		limit, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || limit < 1 || limit > 1024 {
+			return nil, fmt.Errorf("invalid concurrency limit %q; limit must be 1..1024", entry)
+		}
+		limits[strings.TrimSpace(key)] = limit
+	}
+	return limits, nil
+}
+
+func (s *Service) statusForWorker(reserved, maxConcurrency, available int, requested string) string {
+	switch requested {
+	case "draining", "unhealthy", "starting", "terminated":
+		return requested
+	}
+	if available <= 0 || reserved >= maxConcurrency {
+		return "busy"
+	}
+	return "available"
 }
 
 type execution struct {
@@ -62,6 +147,11 @@ type task struct {
 	OrgID           string
 	NodeID          string
 	NodeType        string
+	Priority        int
+	RuntimeABI      *int
+	RuntimeDigest   *string
+	Provider        *string
+	Model           *string
 	State           string
 	StateVersion    int64
 	AttemptCount    int
@@ -126,17 +216,21 @@ func (s *Service) lockExecutionForTask(ctx context.Context, tx pgx.Tx, taskID st
 func (s *Service) lockTask(ctx context.Context, tx pgx.Tx, taskID string) (*task, error) {
 	var t task
 	var agentVersion, toolVersion, workerPool, owner, lease, latest pgtype.Text
+	var runtimeDigest, provider, model pgtype.Text
+	var runtimeABI pgtype.Int4
 	var leaseExpires pgtype.Timestamptz
 	err := tx.QueryRow(ctx, `
-		SELECT id, execution_id, org_id, node_id, node_type, state, state_version, attempt_count,
-		       max_attempts, timeout_seconds, agent_version_id, tool_version_id, worker_pool,
-		       owner_worker_id, lease_id, lease_expires_at, latest_attempt_id,
+		SELECT id, execution_id, org_id, node_id, node_type, priority, runtime_abi, runtime_digest,
+		       provider, model, state, state_version, attempt_count, max_attempts, timeout_seconds,
+		       agent_version_id, tool_version_id, worker_pool, owner_worker_id, lease_id,
+		       lease_expires_at, latest_attempt_id,
 		       (lease_expires_at IS NOT NULL AND lease_expires_at <= now())
 		FROM execution.execution_tasks
 		WHERE id = $1
 		FOR UPDATE`, taskID).
-		Scan(&t.ID, &t.ExecutionID, &t.OrgID, &t.NodeID, &t.NodeType, &t.State, &t.StateVersion,
-			&t.AttemptCount, &t.MaxAttempts, &t.TimeoutSeconds, &agentVersion, &toolVersion, &workerPool,
+		Scan(&t.ID, &t.ExecutionID, &t.OrgID, &t.NodeID, &t.NodeType, &t.Priority, &runtimeABI,
+			&runtimeDigest, &provider, &model, &t.State, &t.StateVersion, &t.AttemptCount,
+			&t.MaxAttempts, &t.TimeoutSeconds, &agentVersion, &toolVersion, &workerPool,
 			&owner, &lease, &leaseExpires, &latest, &t.LeaseExpired)
 	if err != nil {
 		return nil, err
@@ -148,6 +242,13 @@ func (s *Service) lockTask(ctx context.Context, tx pgx.Tx, taskID string) (*task
 	t.LeaseID = textPtr(lease)
 	t.LeaseExpiresAt = timePtr(leaseExpires)
 	t.LatestAttemptID = textPtr(latest)
+	if runtimeABI.Valid {
+		value := int(runtimeABI.Int32)
+		t.RuntimeABI = &value
+	}
+	t.RuntimeDigest = textPtr(runtimeDigest)
+	t.Provider = textPtr(provider)
+	t.Model = textPtr(model)
 	return &t, nil
 }
 
@@ -448,7 +549,14 @@ func (s *Service) releaseWorkerSlot(ctx context.Context, tx pgx.Tx, workerID str
 	}
 	_, err := tx.Exec(ctx, `
 		UPDATE execution.workers
-		SET reserved_slots = GREATEST(reserved_slots - 1, 0), updated_at = now()
+		SET reserved_slots = GREATEST(reserved_slots - 1, 0),
+		    status = CASE WHEN status = 'busy'
+		        AND reserved_slots - 1 < LEAST(max_concurrency, reported_available_slots)
+		        THEN 'available' ELSE status END,
+		    status_changed_at = CASE WHEN status = 'busy'
+		        AND reserved_slots - 1 < LEAST(max_concurrency, reported_available_slots)
+		        THEN now() ELSE status_changed_at END,
+		    updated_at = now()
 		WHERE id = $1`, workerID)
 	return err
 }

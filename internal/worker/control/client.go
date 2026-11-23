@@ -1,4 +1,4 @@
-// Package control holds one worker <-> orchestrator session: registration, heartbeats and fenced result calls.
+// Package control holds one worker <-> orchestrator session: registration, heartbeats, fencing and drain.
 package control
 
 import (
@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	workerv1 "github.com/agent-platform/agent-platform/gen/worker/v1"
+	"github.com/agent-platform/agent-platform/internal/platform/resources"
 )
 
 // WorkerIDMetadataKey is the local-development worker identity header. Production mTLS binds it to the certificate.
@@ -29,6 +31,11 @@ type Config struct {
 	Insecure        bool
 	WorkerID        string
 	Pool            string
+	Runtime         string
+	RuntimeVersion  string
+	Capabilities    []string
+	CPUCores        float64
+	MemoryMB        int64
 	MaxConcurrency  int
 	BinaryVersion   string
 	RuntimeABIs     []int32
@@ -45,8 +52,9 @@ type activeAttempt struct {
 
 // Client owns the control stream and exposes only the operations the delivery loop needs.
 type Client struct {
-	cfg Config
-	log *zap.Logger
+	cfg     Config
+	log     *zap.Logger
+	sampler *resources.Sampler
 
 	mu        sync.Mutex
 	conn      *grpc.ClientConn
@@ -57,6 +65,12 @@ type Client struct {
 	active    map[string]activeAttempt
 
 	sendMu sync.Mutex
+
+	draining  atomic.Bool
+	drainCh   chan struct{}
+	drainOnce sync.Once
+	stopCh    chan struct{}
+	stopOnce  sync.Once
 }
 
 // New builds a worker control client.
@@ -70,25 +84,53 @@ func New(cfg Config, log *zap.Logger) *Client {
 	if cfg.MaxConcurrency < 1 {
 		cfg.MaxConcurrency = 1
 	}
-	return &Client{cfg: cfg, log: log, active: map[string]activeAttempt{}}
+	if cfg.Runtime == "" {
+		cfg.Runtime = "python"
+	}
+	if cfg.RuntimeVersion == "" {
+		cfg.RuntimeVersion = "unknown"
+	}
+	if len(cfg.Capabilities) == 0 {
+		cfg.Capabilities = []string{"agent_execution", "tool_execution"}
+	}
+	if cfg.CPUCores <= 0 {
+		cfg.CPUCores = 1
+	}
+	if cfg.MemoryMB <= 0 {
+		cfg.MemoryMB = 1024
+	}
+	return &Client{
+		cfg: cfg, log: log, sampler: resources.New(), active: map[string]activeAttempt{},
+		drainCh: make(chan struct{}), stopCh: make(chan struct{}),
+	}
 }
 
-// Run keeps a session open until the context is cancelled. A broken stream reconnects; dispatch delivery then
-// fails transiently and the broker redelivers rather than the worker executing without a live control plane.
+// Run keeps a session open until the context is cancelled or Shutdown is called. A broken stream reconnects;
+// dispatch delivery then fails transiently and the broker redelivers rather than executing without a control plane.
 func (c *Client) Run(ctx context.Context) error {
 	c.log.Info("worker control loop started", zap.String("orchestrator", c.cfg.Address))
-	for ctx.Err() == nil {
-		if err := c.session(ctx); err != nil && ctx.Err() == nil {
+	for ctx.Err() == nil && !c.stopped() {
+		if err := c.session(ctx); err != nil && ctx.Err() == nil && !c.stopped() {
 			c.log.Warn("worker session ended", zap.Error(err), zap.Duration("retry_in", c.cfg.ReconnectDelay))
 		}
 		select {
 		case <-ctx.Done():
+		case <-c.stopCh:
 		case <-time.After(c.cfg.ReconnectDelay):
 		}
 	}
 	c.close()
 	c.log.Info("worker control loop stopped")
 	return nil
+}
+
+func (c *Client) stopped() bool {
+	select {
+	case <-c.stopCh:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) session(ctx context.Context) error {
@@ -112,15 +154,27 @@ func (c *Client) session(ctx context.Context) error {
 		return fmt.Errorf("open control stream: %w", err)
 	}
 	defer func() { _ = stream.CloseSend() }()
+	helloAvailable := c.cfg.MaxConcurrency
+	if c.draining.Load() {
+		// A reconnecting draining worker must not be offered work for the brief window before its first heartbeat.
+		helloAvailable = 0
+	}
 	if err := stream.Send(&workerv1.WorkerMessage{Body: &workerv1.WorkerMessage_Hello{Hello: &workerv1.Hello{
 		WorkerId:        c.cfg.WorkerID,
 		BootId:          newBootID(),
 		Pool:            c.cfg.Pool,
-		Capacity:        &workerv1.Capacity{MaxConcurrency: clampInt32(c.cfg.MaxConcurrency), AvailableSlots: clampInt32(c.cfg.MaxConcurrency)},
+		Capacity:        &workerv1.Capacity{MaxConcurrency: clampInt32(c.cfg.MaxConcurrency), AvailableSlots: clampInt32(helloAvailable)},
 		RuntimeAbis:     c.cfg.RuntimeABIs,
 		RuntimeDigests:  c.cfg.RuntimeDigests,
 		BinaryVersion:   c.cfg.BinaryVersion,
 		ProtocolVersion: 1,
+		Runtime:         c.cfg.Runtime,
+		RuntimeVersion:  c.cfg.RuntimeVersion,
+		Capabilities:    c.cfg.Capabilities,
+		Resources: &workerv1.WorkerResources{
+			CpuCores: c.cfg.CPUCores,
+			MemoryMb: c.cfg.MemoryMB,
+		},
 	}}}); err != nil {
 		return fmt.Errorf("send hello: %w", err)
 	}
@@ -141,6 +195,9 @@ func (c *Client) session(ctx context.Context) error {
 	c.log.Info("worker registered",
 		zap.String("worker_id", c.cfg.WorkerID),
 		zap.String("session_id", ack.GetSessionId()),
+		zap.String("runtime", c.cfg.Runtime),
+		zap.String("runtime_version", c.cfg.RuntimeVersion),
+		zap.Strings("capabilities", c.cfg.Capabilities),
 		zap.Duration("lease_ttl", time.Duration(ack.GetLeaseTtlMs())*time.Millisecond),
 	)
 
@@ -160,6 +217,9 @@ func (c *Client) session(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			c.goodbye(stream, "shutdown")
+			return nil
+		case <-c.stopCh:
 			c.goodbye(stream, "shutdown")
 			return nil
 		case err := <-readDone:
@@ -190,6 +250,7 @@ func (c *Client) read(stream workerv1.WorkerControl_ConnectClient) error {
 				zap.String("reason", body.Drain.GetReason()),
 				zap.Int32("grace_seconds", body.Drain.GetGracePeriodSeconds()),
 			)
+			c.BeginDrain()
 		case *workerv1.OrchestratorMessage_Error:
 			c.log.Warn("orchestrator control error",
 				zap.String("code", body.Error.GetCode()),
@@ -201,6 +262,32 @@ func (c *Client) read(stream workerv1.WorkerControl_ConnectClient) error {
 		}
 	}
 }
+
+// BeginDrain stops accepting new work and reports the draining status immediately. In-flight attempts keep their
+// leases because heartbeats continue until Shutdown.
+func (c *Client) BeginDrain() {
+	c.drainOnce.Do(func() {
+		c.draining.Store(true)
+		close(c.drainCh)
+	})
+	c.mu.Lock()
+	stream := c.stream
+	c.mu.Unlock()
+	if stream != nil {
+		if err := c.sendHeartbeat(stream); err != nil {
+			c.log.Warn("could not report draining status", zap.Error(err))
+		}
+	}
+}
+
+// Draining reports whether new dispatches must be rejected.
+func (c *Client) Draining() bool { return c.draining.Load() }
+
+// DrainCh closes when a drain is requested by the control plane.
+func (c *Client) DrainCh() <-chan struct{} { return c.drainCh }
+
+// Shutdown ends the control session after in-flight results have been reported.
+func (c *Client) Shutdown() { c.stopOnce.Do(func() { close(c.stopCh) }) }
 
 // Started records the attempt as active and sends task_accepted. It must succeed before execution begins.
 func (c *Client) Started(_ context.Context, taskID, attemptID, leaseID string) error {
@@ -225,11 +312,34 @@ func (c *Client) Started(_ context.Context, taskID, attemptID, leaseID string) e
 	return nil
 }
 
+// Rejected declines a dispatch without executing it. The orchestrator returns the task to pending.
+func (c *Client) Rejected(_ context.Context, taskID, attemptID, leaseID string,
+	reason workerv1.TaskRejectionReason, message string) error {
+	c.mu.Lock()
+	stream := c.stream
+	c.mu.Unlock()
+	if stream == nil {
+		return errors.New("control stream is not connected")
+	}
+	return c.send(stream, &workerv1.WorkerMessage{Body: &workerv1.WorkerMessage_TaskRejected{
+		TaskRejected: &workerv1.TaskRejected{
+			TaskId: taskID, AttemptId: attemptID, LeaseId: leaseID, Reason: reason, Message: message,
+		},
+	}})
+}
+
 // Done removes an attempt from the heartbeat set.
 func (c *Client) Done(taskID string) {
 	c.mu.Lock()
 	delete(c.active, taskID)
 	c.mu.Unlock()
+}
+
+// ActiveCount is the number of attempts this process still owns.
+func (c *Client) ActiveCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.active)
 }
 
 // ReportTaskResult adds the worker identity and performs the fenced result RPC.
@@ -245,15 +355,18 @@ func (c *Client) ReportTaskResult(ctx context.Context,
 	return client.ReportTaskResult(ctx, req)
 }
 
-// Connected reports whether a session is registered and ready to accept work.
+// Connected reports whether a session is registered.
 func (c *Client) Connected() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.connected
 }
 
-// Check is the readiness probe for the worker session.
+// Check is the readiness probe: a draining worker is alive but no longer ready for new work.
 func (c *Client) Check(_ context.Context) error {
+	if c.Draining() {
+		return errors.New("worker is draining")
+	}
 	if !c.Connected() {
 		return errors.New("worker control stream is not connected")
 	}
@@ -261,6 +374,7 @@ func (c *Client) Check(_ context.Context) error {
 }
 
 func (c *Client) sendHeartbeat(stream workerv1.WorkerControl_ConnectClient) error {
+	usage := c.sampler.Sample()
 	c.mu.Lock()
 	renewals := make([]*workerv1.ActiveAttempt, 0, len(c.active))
 	for _, active := range c.active {
@@ -273,13 +387,21 @@ func (c *Client) sendHeartbeat(stream workerv1.WorkerControl_ConnectClient) erro
 	if available < 0 {
 		available = 0
 	}
+	status := workerv1.WorkerStatus_WORKER_STATUS_AVAILABLE
+	if c.draining.Load() {
+		status = workerv1.WorkerStatus_WORKER_STATUS_DRAINING
+	} else if available == 0 {
+		status = workerv1.WorkerStatus_WORKER_STATUS_BUSY
+	}
 	return c.send(stream, &workerv1.WorkerMessage{Body: &workerv1.WorkerMessage_Heartbeat{
 		Heartbeat: &workerv1.Heartbeat{
-			SentAt:         timestamppb.Now(),
-			ActiveAttempts: renewals,
-			Capacity: &workerv1.Capacity{
-				MaxConcurrency: clampInt32(c.cfg.MaxConcurrency), AvailableSlots: clampInt32(available),
-			},
+			SentAt:          timestamppb.Now(),
+			ActiveAttempts:  renewals,
+			Capacity:        &workerv1.Capacity{MaxConcurrency: clampInt32(c.cfg.MaxConcurrency), AvailableSlots: clampInt32(available)},
+			CpuUsagePercent: usage.CPUPercent,
+			MemoryUsedMb:    usage.MemoryMB,
+			Status:          status,
+			RuntimeVersion:  c.cfg.RuntimeVersion,
 		},
 	}})
 }

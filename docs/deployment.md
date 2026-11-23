@@ -183,6 +183,14 @@ docker compose exec -T postgres pg_dump -U postgres -Fc agent_platform > "agent_
 - Set `ORCHESTRATOR_ADMIN_TOKEN` to a strong random value if operator status/redrive is needed. The orchestrator
   port is removed from the host by the VPS override, so the surface is reachable only inside the Compose network;
   leave the token empty to disable both routes. Worker IDs must match `^wrk_[A-Za-z0-9_-]{8,64}$`.
+- Workers advertise `WORKER_RUNTIME`, `WORKER_CAPABILITIES`, CPU cores and memory. The scheduler only assigns a
+  node to a worker whose pool, capability and runtime ABI/digest match. Scale workers by adding replicas with
+  distinct `WORKER_ID` values; a shared worker ID intentionally replaces the previous boot.
+- `docker compose stop worker` sends `SIGTERM`, so the worker drains for up to `WORKER_SHUTDOWN_GRACE_SECONDS`
+  before exiting. `docker compose kill worker` bypasses that grace; leases expire and the reaper retries the work.
+- Set `ORCHESTRATOR_MAX_ACTIVE_TASKS_PER_TENANT`, `ORCHESTRATOR_PROVIDER_CONCURRENCY` and
+  `ORCHESTRATOR_TOOL_CONCURRENCY` to bound noisy-neighbour and upstream-provider load. They are advisory
+  admission caps derived from committed active task rows.
 - Worker control-plane gRPC is plaintext inside the private Compose network in this phase. Terminate TLS at the
   network boundary or add mTLS before running workers across hosts.
 
@@ -201,7 +209,7 @@ docker compose exec -T postgres pg_dump -U postgres -Fc agent_platform > "agent_
 | Liveness | `curl -fsS localhost:8080/healthz` |
 | Readiness (database) | `curl -fsS localhost:8080/readyz` |
 | Orchestrator dependencies | `curl -fsS localhost:8081/readyz` |
-| Worker NATS and control session | `curl -fsS localhost:8082/readyz` |
+| Worker NATS and control session | `curl -fsS localhost:8082/readyz` and `/v1/consumer` |
 | Service state | `docker compose ps` |
 | Logs | `docker compose logs -f --tail=100` |
 

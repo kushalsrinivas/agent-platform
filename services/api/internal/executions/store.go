@@ -33,6 +33,7 @@ type Execution struct {
 	WorkflowVersion   int        `json:"workflow_version"`
 	State             string     `json:"state"`
 	StateVersion      int64      `json:"state_version"`
+	Priority          int        `json:"priority"`
 	Counts            Counts     `json:"counts"`
 	InputDigest       string     `json:"input_digest"`
 	CreatedBy         string     `json:"created_by"`
@@ -52,6 +53,7 @@ type Task struct {
 	NodeType       string     `json:"node_type"`
 	State          string     `json:"state"`
 	StateVersion   int64      `json:"state_version"`
+	Priority       int        `json:"priority"`
 	AttemptCount   int        `json:"attempt_count"`
 	MaxAttempts    int        `json:"max_attempts"`
 	AgentVersionID *string    `json:"agent_version_id"`
@@ -118,7 +120,7 @@ func NewStore(db *database.DB) *Store {
 
 const executionSelect = `
 	SELECT e.id, e.org_id, e.project_id, e.workflow_id, e.workflow_version_id,
-	       COALESCE(wv.version, 0), e.state, e.state_version, e.input_digest, e.created_by,
+	       COALESCE(wv.version, 0), e.state, e.state_version, e.priority, e.input_digest, e.created_by,
 	       e.created_at, e.started_at, e.ended_at, e.deadline_at, e.cancel_reason,
 	       e.failure_code, e.failure_detail, COALESCE(c.counts, '{}'::jsonb)
 	FROM execution.executions e
@@ -142,7 +144,7 @@ func (s *Store) Get(ctx context.Context, orgID, projectID, executionID string) (
 			orgID, projectID, executionID).
 			Scan(&execution.ID, &execution.OrgID, &execution.ProjectID, &execution.WorkflowID,
 				&execution.WorkflowVersionID, &execution.WorkflowVersion, &execution.State,
-				&execution.StateVersion, &execution.InputDigest, &execution.CreatedBy,
+				&execution.StateVersion, &execution.Priority, &execution.InputDigest, &execution.CreatedBy,
 				&execution.CreatedAt, &execution.StartedAt, &execution.EndedAt, &execution.DeadlineAt,
 				&execution.CancelReason, &execution.FailureCode, &execution.FailureDetail, &counts)
 	})
@@ -191,7 +193,7 @@ func (s *Store) List(ctx context.Context, orgID, projectID string, limit int, cu
 			var counts []byte
 			if err := rows.Scan(&execution.ID, &execution.OrgID, &execution.ProjectID, &execution.WorkflowID,
 				&execution.WorkflowVersionID, &execution.WorkflowVersion, &execution.State,
-				&execution.StateVersion, &execution.InputDigest, &execution.CreatedBy,
+				&execution.StateVersion, &execution.Priority, &execution.InputDigest, &execution.CreatedBy,
 				&execution.CreatedAt, &execution.StartedAt, &execution.EndedAt, &execution.DeadlineAt,
 				&execution.CancelReason, &execution.FailureCode, &execution.FailureDetail, &counts); err != nil {
 				return err
@@ -217,7 +219,7 @@ func (s *Store) ListTasks(ctx context.Context, orgID, projectID, executionID, st
 	err := s.db.WithTenant(ctx, orgID, func(tx pgx.Tx) error {
 		query := `
 			SELECT t.id, t.execution_id, t.node_id, t.node_type, t.state, t.state_version,
-			       t.attempt_count, t.max_attempts, t.agent_version_id, t.tool_version_id,
+			       t.priority, t.attempt_count, t.max_attempts, t.agent_version_id, t.tool_version_id,
 			       t.skip_reason, t.created_at, t.started_at, t.ended_at
 			FROM execution.execution_tasks t
 			JOIN execution.executions e ON e.id = t.execution_id
@@ -238,7 +240,7 @@ func (s *Store) ListTasks(ctx context.Context, orgID, projectID, executionID, st
 		for rows.Next() {
 			var task Task
 			if err := rows.Scan(&task.ID, &task.ExecutionID, &task.NodeID, &task.NodeType,
-				&task.State, &task.StateVersion, &task.AttemptCount, &task.MaxAttempts,
+				&task.State, &task.StateVersion, &task.Priority, &task.AttemptCount, &task.MaxAttempts,
 				&task.AgentVersionID, &task.ToolVersionID, &task.SkipReason,
 				&task.CreatedAt, &task.StartedAt, &task.EndedAt); err != nil {
 				return err
@@ -255,7 +257,7 @@ func (s *Store) GetTask(ctx context.Context, orgID, projectID, executionID, task
 	err := s.db.WithTenant(ctx, orgID, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT t.id, t.execution_id, t.node_id, t.node_type, t.state, t.state_version,
-			       t.attempt_count, t.max_attempts, t.agent_version_id, t.tool_version_id,
+			       t.priority, t.attempt_count, t.max_attempts, t.agent_version_id, t.tool_version_id,
 			       t.skip_reason, t.created_at, t.started_at, t.ended_at
 			FROM execution.execution_tasks t
 			JOIN execution.executions e ON e.id = t.execution_id

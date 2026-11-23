@@ -111,13 +111,17 @@ Contract: [`proto/worker/v1/worker.proto`](../proto/worker/v1/worker.proto). Pac
 ### Session rules
 
 - The worker opens `Connect` with `Hello{worker_id, boot_id, pool, labels, capacity, runtime_abis,
-  runtime_digests, binary_version, join_token}`. The orchestrator returns `HelloAck{session_id, heartbeat_interval_ms=5000, lease_ttl_ms=30000,
+  runtime_digests, binary_version, join_token, runtime, runtime_version, capabilities, resources{cpu_cores,
+  memory_mb}}`. The orchestrator returns `HelloAck{session_id, heartbeat_interval_ms=5000, lease_ttl_ms=30000,
   server_time}`. `boot_id` is stable for the lifetime of the worker process and changes on restart.
-- The worker sends `Heartbeat` every 5s with every active `(task_id, attempt_id, lease_id)` and its current
-  `Capacity`. Receiving a heartbeat renews those leases **only if** the orchestrator's current assignment matches,
-  the lease is still unexpired, and the execution is still `pending`/`running`. An expired lease is never revived.
-  Renewal stops once the execution is `cancel_requested` or `failing`; lease expiry is the bounded backstop for
-  cancellation.
+- A worker restart with the same `worker_id` and a new `boot_id` immediately closes that worker's open attempts as
+  `lease_expired` and returns the tasks to the scheduler; it does not wait for the lease TTL.
+- The worker sends `Heartbeat` every 5s with every active `(task_id, attempt_id, lease_id)`, its current
+  `Capacity`, CPU percentage, memory used, runtime version and status (`starting`, `available`, `busy`, `draining`,
+  `unhealthy`, `terminated`). Receiving a heartbeat renews those leases **only if** the orchestrator's current
+  assignment matches, the lease is still unexpired (`lease_expires_at > now()`), and the execution is still
+  `pending`/`running`. An expired lease is never revived. Renewal stops once the execution is
+  `cancel_requested` or `failing`; lease expiry is the bounded backstop for cancellation.
 - `task_accepted` transitions the task `assigned → running` if the fence matches and the lease is live.
 - `task_progress` is advisory telemetry (step, percentage, message). It is never a state transition, may be
   dropped, and is not persisted as an execution event. Progress is not a lease renewal; the heartbeat is.
@@ -133,10 +137,11 @@ Contract: [`proto/worker/v1/worker.proto`](../proto/worker/v1/worker.proto). Pac
 
 ### Result RPC semantics
 
-- Request fields: `task_id`, `attempt_id`, `lease_id`, `outcome ∈ {SUCCEEDED, FAILED, CANCELLED}`, inline `output`
-  object (required for success, may be empty, ≤64 KiB), optional `output_artifact` for bulk data (never a substitute
-  for the inline output), optional `checkpoint` reference, `failure{code, message, classification, effect_uncertain}`,
-  `metrics`, timestamps, runtime version.
+- Request fields: `task_id`, `attempt_id`, `lease_id`, `attempt_number` (monotonic generation; rejected if it does
+  not match), `outcome ∈ {SUCCEEDED, FAILED, CANCELLED}`, inline `output` object (required for success, may be
+  empty, ≤64 KiB), optional `output_artifact` for bulk data (never a substitute for the inline output), optional
+  `checkpoint` reference, `failure{code, message, classification, effect_uncertain}`, `metrics`, timestamps,
+  runtime version.
 - Response `status ∈ {ACCEPTED, ALREADY_FINISHED, STALE_LEASE, VALIDATION_FAILED, RETRY_LATER}`. `ACCEPTED` means
   the transition committed. `STALE_LEASE`/`ALREADY_FINISHED` mean stop and discard. `RETRY_LATER` is only for
   transient orchestrator/database unavailability and must be retried within the current lease; the worker must not

@@ -82,6 +82,15 @@ func (h *Handler) Handle(ctx context.Context, msg jetstream.Msg) error {
 	runCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 
+	if h.Client.Draining() {
+		if err := h.Client.Rejected(ctx, dispatch.TaskID, dispatch.AttemptID, dispatch.LeaseID,
+			workerv1.TaskRejectionReason_TASK_REJECTION_REASON_SHUTTING_DOWN,
+			"worker is draining"); err != nil {
+			return fmt.Errorf("reject dispatch while draining: %w", err)
+		}
+		return nil
+	}
+
 	// Extend the broker ack deadline while the attempt runs. Leases are renewed by the control heartbeat; this
 	// prevents a long task from being redelivered mid-execution with the same lease.
 	progressDone := make(chan struct{})
