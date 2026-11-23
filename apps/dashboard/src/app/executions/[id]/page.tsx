@@ -51,7 +51,7 @@ export default function ExecutionDetailPage({ params }: { params: Promise<{ id: 
         actions={
           <>
             <StatusIndicator status={execution.status} />
-            <Button variant="outline" size="sm" disabled title="Wired in Phase 04">
+            <Button variant="outline" size="sm" disabled title="Wired in Phase 05">
               <Ban className="size-3.5" aria-hidden="true" />
               Cancel
             </Button>

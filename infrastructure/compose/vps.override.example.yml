@@ -28,6 +28,11 @@ services:
   api:
     environment:
       API_CORS_ORIGINS: ${PUBLIC_DASHBOARD_ORIGIN:-http://localhost:3000}
+      # Force OIDC on an exposed host. The API refuses to start without a real identity provider.
+      AUTH_MODE: oidc
+      AUTH_DEV_SECRET: ""
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:?set OIDC_ISSUER_URL for the VPS deployment}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?set OIDC_CLIENT_ID for the VPS deployment}
   dashboard:
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"

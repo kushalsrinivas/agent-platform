@@ -10,7 +10,7 @@ import {
 } from "@/lib/schemas";
 
 /**
- * Phase 03 dashboard data. Everything on screen is labelled as demo data; Phase 04 replaces these exports with
+ * Demo dashboard data. Everything on screen is labelled as demo data; Phase 05 replaces these exports with
  * TanStack Query calls against the API. Keeping the fixtures validated by the same Zod schemas the API will
  * satisfy means the UI cannot drift into a shape the API never promised.
  */

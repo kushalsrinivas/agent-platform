@@ -20,6 +20,12 @@ linters:
     paths:
       - gen
       - third_party
+    rules:
+      # Internal API packages intentionally do not carry a doc comment on every handler and store method.
+      - path: services/api/internal/
+        linters:
+          - revive
+        text: "^exported:"
 
 formatters:
   enable:

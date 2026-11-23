@@ -3,9 +3,9 @@
 This describes a **test or initial deployment** on one host. It is the same images and configuration as local
 development, with datastore ports closed and credentials rotated.
 
-It is not a production hardening guide: authentication, TLS termination, secrets management, backups and
-observability are still the operator's responsibility. The API has no authentication yet (Phase 03), so do not
-expose it to untrusted users.
+It is not a production hardening guide: TLS termination, secrets management, backups and observability are still the
+operator's responsibility. The API authenticates OIDC bearer tokens, but it has no browser session flow, API keys or
+fine-grained project ACLs yet. Do not expose a development-auth deployment to untrusted users.
 
 ## What gets deployed
 
@@ -44,6 +44,12 @@ Change at minimum:
 - `POSTGRES_PASSWORD` — used by the Postgres image **only when the volume is first created**.
 - `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`.
 - `PUBLIC_DASHBOARD_ORIGIN` (used by the VPS override's CORS setting), for example `https://app.example.com`.
+- `AUTH_MODE=oidc`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`.
+
+The VPS override sets `AUTH_MODE=oidc` and clears the dev secret. Without a valid OIDC issuer/client the API refuses
+to start, which is deliberate: a development token endpoint on a public host lets anyone mint a token for any
+principal. For a temporary non-OIDC test host, use `AUTH_MODE=dev` only behind a firewall and with a rotated
+`AUTH_DEV_SECRET`; never leave it on an exposed interface.
 
 Application role passwords (`app_api`, `app_orchestrator`) are created by the bootstrap migration with
 development defaults. Rotate them **after the first start** with [the steps below](#5-credentials) and restart the
@@ -65,8 +71,9 @@ docker compose \
 ```
 
 The override uses Compose's `!reset` to remove host port mappings for Postgres, NATS, Redis, object storage, the
-orchestrator and the worker. Only the dashboard (`3000`) and API (`8080`) remain published. This matters because
-Docker-published ports bypass UFW; closing ports with a firewall alone is not enough.
+orchestrator and the worker. With the default `.env` ports, only the dashboard (`3000`) and API (`8080`) remain
+published. This matters because Docker-published ports bypass UFW; closing ports with a firewall alone is not
+enough.
 
 Verify:
 
@@ -99,6 +106,14 @@ api.example.com {
 
 Set `PUBLIC_DASHBOARD_ORIGIN=https://app.example.com` in `.env` before starting, or update
 `API_CORS_ORIGINS` in the override and restart `api`.
+
+The API accepts `Authorization: Bearer <OIDC JWT>` only. The dashboard does not yet perform an OIDC login or send
+cookies; browser session cookies and CSRF are deferred. Test API calls with a token from your IdP:
+
+```bash
+curl -fsS https://api.example.com/v1/orgs \
+  -H "Authorization: Bearer $OIDC_ACCESS_TOKEN"
+```
 
 Restrict inbound traffic at the provider firewall and on the host. Keep SSH open, and expose only the proxy's
 `80`/`443`; the two container ports can be bound to loopback in the override if the proxy runs on the same host.
@@ -160,8 +175,8 @@ docker compose exec -T postgres pg_dump -U postgres -Fc agent_platform > "agent_
 ```
 
 - Restore with `pg_restore` into an empty database.
-- Object storage becomes authoritative for checkpoints and artifacts in Phase 03; back up the bucket (volume
-  snapshot or `mc mirror`) once it is used.
+- Object storage becomes authoritative for checkpoints and artifacts when the worker/runtime slice lands; back up
+  the bucket (volume snapshot or `mc mirror`) once it is used.
 - NATS and Redis hold no authoritative state; do not back them up.
 
 ## 8. Updating images and base images
@@ -189,7 +204,7 @@ Readiness returns `503` with a dependency error; liveness only proves the proces
 
 - Single host, single Postgres, no high availability. Losing the host loses availability; restores come from
   backups.
-- No authentication or tenant resolution in the API yet. Treat the deployment as a trusted-network test bed.
-- The dashboard renders fixtures until Phase 03.
+- OIDC is the only production authentication path. There are no API keys, browser sessions or CSRF handling yet.
+- The dashboard renders fixtures until the Phase 05 API wiring.
 - No TLS, rate limiting or WAF inside the stack; the reverse proxy owns those.
 - Development credentials exist in the bootstrap migration as a fallback. Rotate them as above.

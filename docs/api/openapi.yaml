@@ -6,9 +6,13 @@ info:
   description: |
     Normative initial API contract for Phase 01.
 
-    **Authentication.** Programmatic clients send `Authorization: Bearer <OIDC JWT>`. Browser clients use the
-    dashboard's HttpOnly session cookie and must send the CSRF token header on mutations. The server derives the
-    caller's organisations from membership rows; an `org_id` in a path is verified, never trusted.
+    **Authentication.** Programmatic clients send `Authorization: Bearer <OIDC JWT>`. The server derives the
+    caller's organisations from membership rows; an `org_id` in a path is verified, never trusted. Browser session
+    cookies are not implemented in Phase 04; use a bearer token.
+
+    **Development authentication.** When the API runs with `AUTH_MODE=dev` (local development only),
+    `POST /v1/dev/token` issues a short-lived bearer token for a principal. That endpoint is never mounted in
+    OIDC mode; it is not part of the production contract.
 
     **Tenancy.** Every path below includes the organisation. Cross-tenant IDs return `404`, not `403`, to avoid
     leaking existence.
@@ -32,10 +36,9 @@ servers:
     description: Local development
 security:
   - oidcBearer: []
-  - sessionCookie: []
 tags:
   - name: Organizations
-    description: Organisations the caller belongs to. Organisations are provisioned by platform operators; there is no public create endpoint in Phase 1.
+    description: Organisations the caller belongs to. Authenticated users may create an organisation and become its owner; platform operators can also provision them.
   - name: Projects
     description: Projects within an organisation.
   - name: Agents
@@ -68,6 +71,100 @@ paths:
                     items: { $ref: '#/components/schemas/Organization' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/RateLimited' }
+    post:
+      tags: [Organizations]
+      operationId: createOrganization
+      summary: Create an organisation. The caller becomes its first owner.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrganizationCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Organization' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/orgs/{org_id}/members:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+    get:
+      tags: [Organizations]
+      operationId: listMembers
+      summary: List organisation members.
+      responses:
+        '200':
+          description: Members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Member' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Organizations]
+      operationId: addMember
+      summary: Add a member by principal ID. Owner only.
+      description: Invitation email flows are deferred; the principal must already exist at the identity provider.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemberCreate' }
+      responses:
+        '201':
+          description: Member added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Member' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /v1/orgs/{org_id}/members/{principal_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/PrincipalId'
+    patch:
+      tags: [Organizations]
+      operationId: updateMemberRole
+      summary: Change a member role. Owner only; the last owner cannot be demoted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MemberUpdate' }
+      responses:
+        '200':
+          description: Updated member.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Member' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+    delete:
+      tags: [Organizations]
+      operationId: removeMember
+      summary: Remove a member. Owner only; the last owner cannot be removed.
+      responses:
+        '204': { description: Removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /v1/orgs/{org_id}/projects:
     parameters:
       - $ref: '#/components/parameters/OrgId'
@@ -791,10 +888,6 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-    sessionCookie:
-      type: apiKey
-      in: cookie
-      name: __Host-session
   parameters:
     OrgId:
       name: org_id
@@ -832,6 +925,12 @@ components:
       required: true
       description: Monotonic integer version.
       schema: { type: integer, minimum: 1 }
+    PrincipalId:
+      name: principal_id
+      in: path
+      required: true
+      description: OIDC subject of the member.
+      schema: { type: string, minLength: 1, maxLength: 255 }
     Limit:
       name: limit
       in: query
@@ -907,6 +1006,36 @@ components:
         name: { type: string }
         slug: { type: string }
         created_at: { type: string, format: date-time }
+    OrganizationCreate:
+      type: object
+      required: [name, slug]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        slug: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+    Member:
+      type: object
+      required: [principal_id, role, created_at]
+      properties:
+        principal_id: { type: string }
+        role: { $ref: '#/components/schemas/MemberRole' }
+        created_at: { type: string, format: date-time }
+    MemberRole:
+      type: string
+      enum: [owner, operator, viewer]
+    MemberCreate:
+      type: object
+      required: [principal_id, role]
+      additionalProperties: false
+      properties:
+        principal_id: { type: string, minLength: 1, maxLength: 255 }
+        role: { $ref: '#/components/schemas/MemberRole' }
+    MemberUpdate:
+      type: object
+      required: [role]
+      additionalProperties: false
+      properties:
+        role: { $ref: '#/components/schemas/MemberRole' }
     Project:
       type: object
       required: [id, org_id, name, slug, created_at]

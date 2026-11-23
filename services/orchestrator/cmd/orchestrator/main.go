@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -28,6 +29,10 @@ type serviceConfig struct {
 	HTTPAddr    string `env:"ORCHESTRATOR_HTTP_ADDR" envDefault:":8081"`
 	DatabaseURL string `env:"ORCHESTRATOR_DATABASE_URL" envDefault:"postgres://app_orchestrator:dev_orchestrator_password@localhost:5432/agent_platform?sslmode=disable"`
 	NATSURL     string `env:"ORCHESTRATOR_NATS_URL" envDefault:"nats://localhost:4222"`
+
+	MaxActiveExecutions int `env:"ORCHESTRATOR_MAX_ACTIVE_EXECUTIONS" envDefault:"20"`
+	MaxQueuedExecutions int `env:"ORCHESTRATOR_MAX_QUEUED_EXECUTIONS" envDefault:"100"`
+	MaxExecutionSeconds int `env:"ORCHESTRATOR_MAX_EXECUTION_SECONDS" envDefault:"86400"`
 }
 
 func main() {
@@ -77,7 +82,11 @@ func main() {
 	if err != nil {
 		log.Fatal("grpc listen failed", zap.Error(err))
 	}
-	orchestratorv1.RegisterExecutionCommandsServer(grpcSrv.Server, commands.New(log))
+	orchestratorv1.RegisterExecutionCommandsServer(grpcSrv.Server, commands.New(log, pool, commands.Quotas{
+		MaxActive:            cfg.MaxActiveExecutions,
+		MaxQueued:            cfg.MaxQueuedExecutions,
+		MaxExecutionDuration: time.Duration(cfg.MaxExecutionSeconds) * time.Second,
+	}))
 
 	httpSrv := httpserver.New(httpserver.Options{
 		Addr:   cfg.HTTPAddr,
