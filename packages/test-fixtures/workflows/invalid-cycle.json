@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "workflow_id": "wf_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "name": "Cycle",
+  "nodes": [
+    { "id": "a", "type": "tool", "tool": { "tool_id": "tool_a", "version": 1 } },
+    { "id": "b", "type": "tool", "tool": { "tool_id": "tool_b", "version": 1 } }
+  ],
+  "edges": [
+    { "from": "a", "to": "b" },
+    { "from": "b", "to": "a" }
+  ]
+}

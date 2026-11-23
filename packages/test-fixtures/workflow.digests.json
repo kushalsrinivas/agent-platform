@@ -1,0 +1,5 @@
+{
+  "workflow": "workflows/research.json",
+  "graph_sha256": "sha256:944d377d6a3a21e24162141e78228f6810d18b911c8cb2033c5235b20e6c6bd9",
+  "document_sha256": "sha256:a8a9c725e4867086dfc8347acf4377c47da70c7e708d7f049a8cb9cb36e4122e"
+}

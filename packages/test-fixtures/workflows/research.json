@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "workflow_id": "wf_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "name": "Research Workflow",
+  "description": "Collect sources, plan questions, synthesize a brief and publish the artifact.",
+  "nodes": [
+    {
+      "id": "collect",
+      "type": "tool",
+      "tool": { "tool_id": "tool_web_search", "version": 1 },
+      "params": { "limit": 8, "freshness": "month" },
+      "timeout_seconds": 120,
+      "retry": {
+        "max_attempts": 3,
+        "retry_on": ["transient", "timeout"],
+        "backoff_base_ms": 500,
+        "backoff_max_ms": 30000
+      },
+      "side_effect_class": "read_only"
+    },
+    {
+      "id": "plan",
+      "type": "agent",
+      "agent": { "agent_id": "agt_01JQ9A0B1C2D3E4F5G6H7J8K", "version": 2 },
+      "input_from": ["collect"],
+      "params": { "depth": "standard" },
+      "timeout_seconds": 300,
+      "side_effect_class": "read_only"
+    },
+    {
+      "id": "synthesize",
+      "type": "agent",
+      "agent": { "agent_id": "agt_01JQ9A0B1C2D3E4F5G6H7J8K", "version": 2 },
+      "input_from": ["plan", "collect"],
+      "checkpoint_mode": "on_node_end",
+      "require_checkpoint": true,
+      "timeout_seconds": 600,
+      "side_effect_class": "read_only",
+      "output_schema": {
+        "type": "object",
+        "required": ["brief", "sources"],
+        "properties": {
+          "brief": { "type": "string" },
+          "sources": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    {
+      "id": "publish",
+      "type": "tool",
+      "tool": { "tool_id": "tool_artifact_write", "version": 1 },
+      "input_from": ["synthesize"],
+      "side_effect_class": "idempotent",
+      "idempotency_key": "sha256(execution_id + node_id)",
+      "timeout_seconds": 60
+    }
+  ],
+  "edges": [
+    { "from": "collect", "to": "plan" },
+    { "from": "plan", "to": "synthesize", "when": "outputs.plan.confidence > 0.5" },
+    { "from": "collect", "to": "synthesize" },
+    { "from": "synthesize", "to": "publish" }
+  ],
+  "policy": { "on_failure": "fail_fast" },
+  "input_schema": {
+    "type": "object",
+    "required": ["topic"],
+    "properties": {
+      "topic": { "type": "string", "minLength": 1 },
+      "depth": { "enum": ["quick", "standard", "deep"] }
+    }
+  }
+}

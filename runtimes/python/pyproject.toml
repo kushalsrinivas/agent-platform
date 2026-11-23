@@ -8,6 +8,7 @@ dependencies = [
     "httpx>=0.28",
     "langgraph>=1.0",
     "pydantic>=2.10",
+    "rfc8785>=0.1.4",
 ]
 
 [build-system]
@@ -18,6 +19,7 @@ build-backend = "hatchling.build"
 packages = [
     "src/agent_runtime",
     "src/checkpointing",
+    "src/contracts",
     "src/mcp",
     "src/model_providers",
     "src/tool_runtime",
@@ -25,6 +27,7 @@ packages = [
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.26.0",
     "mypy>=1.14",
     "pytest>=8.3",
     "pytest-asyncio>=0.25",

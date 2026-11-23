@@ -1,0 +1,27 @@
+{
+  "message_id": "msg_01JQ9A0B1C2D3E4F5G6H7J9K",
+  "message_type": "execution.state_changed",
+  "schema_version": 1,
+  "tenant_id": "org_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "project_id": "proj_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "execution_id": "exec_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "timestamp": "2026-11-23T10:00:01.000Z",
+  "correlation_id": "exec_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "payload": {
+    "seq": 2,
+    "from": "pending",
+    "to": "running",
+    "state_version": 2,
+    "reason": "first_attempt_accepted",
+    "counts": {
+      "total": 4,
+      "pending": 3,
+      "assigned": 0,
+      "running": 1,
+      "succeeded": 0,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0
+    }
+  }
+}

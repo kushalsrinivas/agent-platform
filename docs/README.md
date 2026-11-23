@@ -7,6 +7,7 @@ ADR wins and the document is a bug. Code written in later phases must cite and f
 |---|---|
 | [development.md](development.md) | How to set up, run, test, migrate and reset the local stack. |
 | [deployment.md](deployment.md) | Single-host/VPS deployment, credentials, backups and upgrades. |
+| [phase-03-contracts.md](phase-03-contracts.md) | Phase 03 schema, workflow/task/event contracts, outbox and brief mapping. |
 | [architecture.md](architecture.md) | What the system is, its boundaries, its invariants, and how the pieces cooperate. |
 | [service-responsibilities.md](service-responsibilities.md) | What each deployable does, reads, writes, and when it may become a separate service. |
 | [communication.md](communication.md) | External and internal protocols, envelope, subjects, delivery guarantees, versioning. |

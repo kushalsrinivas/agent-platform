@@ -39,7 +39,7 @@ export default function OverviewPage() {
       <PageHeader
         title="Overview"
         description="Execution health, recent runs and the status of the local stack. Values on this page come from fixtures until the API is wired."
-        actions={<Badge variant="outline">Phase 02 shell</Badge>}
+        actions={<Badge variant="outline">Phase 03 contracts</Badge>}
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

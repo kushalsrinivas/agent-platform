@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "workflow_id": "wf_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "name": "Bad version",
+  "nodes": [
+    {
+      "id": "research",
+      "type": "agent",
+      "agent": { "agent_id": "agt_01JQ9A0B1C2D3E4F5G6H7J8K", "version": 0 }
+    }
+  ],
+  "edges": []
+}

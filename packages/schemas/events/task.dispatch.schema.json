@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-platform.example/schemas/events/task.dispatch/v1.json",
+  "title": "task.dispatch payload v1",
+  "description": "The bus carries only this pointer; the worker fetches the pinned spec, inputs and credentials over gRPC after acceptance.",
+  "type": "object",
+  "required": ["attempt_number", "node_id", "node_type", "spec_digest", "deadline", "lease_expires_at"],
+  "additionalProperties": false,
+  "properties": {
+    "attempt_number": { "type": "integer", "minimum": 1 },
+    "node_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+    "node_type": { "enum": ["agent", "tool"] },
+    "agent_version_id": { "type": "string", "pattern": "^agtv_[A-Za-z0-9_-]{8,64}$" },
+    "tool_version_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "spec_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "deadline": { "type": "string", "format": "date-time" },
+    "lease_expires_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "node_type": { "const": "agent" } }, "required": ["node_type"] },
+      "then": { "required": ["agent_version_id"], "not": { "required": ["tool_version_id"] } }
+    },
+    {
+      "if": { "properties": { "node_type": { "const": "tool" } }, "required": ["node_type"] },
+      "then": { "required": ["tool_version_id"], "not": { "required": ["agent_version_id"] } }
+    }
+  ]
+}

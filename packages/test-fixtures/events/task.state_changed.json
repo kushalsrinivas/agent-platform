@@ -1,0 +1,23 @@
+{
+  "message_id": "msg_01JQ9A0B1C2D3E4F5G6H7JAK",
+  "message_type": "task.state_changed",
+  "schema_version": 1,
+  "tenant_id": "org_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "project_id": "proj_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "execution_id": "exec_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "task_id": "task_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "attempt_id": "att_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "timestamp": "2026-11-23T10:00:00.500Z",
+  "correlation_id": "exec_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "causation_id": "evt_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "payload": {
+    "seq": 3,
+    "task_id": "task_01JQ9A0B1C2D3E4F5G6H7J8K",
+    "node_id": "collect",
+    "from": "pending",
+    "to": "assigned",
+    "state_version": 2,
+    "reason": "scheduler_assigned",
+    "attempt_id": "att_01JQ9A0B1C2D3E4F5G6H7J8K"
+  }
+}

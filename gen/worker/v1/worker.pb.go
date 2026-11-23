@@ -323,6 +323,7 @@ type WorkerMessage struct {
 	//	*WorkerMessage_TaskAccepted
 	//	*WorkerMessage_TaskRejected
 	//	*WorkerMessage_Goodbye
+	//	*WorkerMessage_TaskProgress
 	Body          isWorkerMessage_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -410,6 +411,15 @@ func (x *WorkerMessage) GetGoodbye() *Goodbye {
 	return nil
 }
 
+func (x *WorkerMessage) GetTaskProgress() *TaskProgress {
+	if x != nil {
+		if x, ok := x.Body.(*WorkerMessage_TaskProgress); ok {
+			return x.TaskProgress
+		}
+	}
+	return nil
+}
+
 type isWorkerMessage_Body interface {
 	isWorkerMessage_Body()
 }
@@ -434,6 +444,10 @@ type WorkerMessage_Goodbye struct {
 	Goodbye *Goodbye `protobuf:"bytes,5,opt,name=goodbye,proto3,oneof"`
 }
 
+type WorkerMessage_TaskProgress struct {
+	TaskProgress *TaskProgress `protobuf:"bytes,6,opt,name=task_progress,json=taskProgress,proto3,oneof"`
+}
+
 func (*WorkerMessage_Hello) isWorkerMessage_Body() {}
 
 func (*WorkerMessage_Heartbeat) isWorkerMessage_Body() {}
@@ -443,6 +457,8 @@ func (*WorkerMessage_TaskAccepted) isWorkerMessage_Body() {}
 func (*WorkerMessage_TaskRejected) isWorkerMessage_Body() {}
 
 func (*WorkerMessage_Goodbye) isWorkerMessage_Body() {}
+
+func (*WorkerMessage_TaskProgress) isWorkerMessage_Body() {}
 
 type OrchestratorMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -935,6 +951,101 @@ func (x *TaskAccepted) GetStartedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+// TaskProgress is advisory telemetry. It never transitions state and may be dropped without affecting the attempt.
+type TaskProgress struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	TaskId    string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	AttemptId string                 `protobuf:"bytes,2,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	LeaseId   string                 `protobuf:"bytes,3,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	// Best-effort completion percentage, 0..100. Workers may omit it.
+	Percent int32 `protobuf:"varint,4,opt,name=percent,proto3" json:"percent,omitempty"`
+	// Monotonic step/turn counter within the attempt.
+	Step          int64                  `protobuf:"varint,5,opt,name=step,proto3" json:"step,omitempty"`
+	Message       string                 `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
+	ReportedAt    *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=reported_at,json=reportedAt,proto3" json:"reported_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskProgress) Reset() {
+	*x = TaskProgress{}
+	mi := &file_worker_v1_worker_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskProgress) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskProgress) ProtoMessage() {}
+
+func (x *TaskProgress) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskProgress.ProtoReflect.Descriptor instead.
+func (*TaskProgress) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *TaskProgress) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *TaskProgress) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *TaskProgress) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
+}
+
+func (x *TaskProgress) GetPercent() int32 {
+	if x != nil {
+		return x.Percent
+	}
+	return 0
+}
+
+func (x *TaskProgress) GetStep() int64 {
+	if x != nil {
+		return x.Step
+	}
+	return 0
+}
+
+func (x *TaskProgress) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *TaskProgress) GetReportedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReportedAt
+	}
+	return nil
+}
+
 type TaskRejected struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
@@ -948,7 +1059,7 @@ type TaskRejected struct {
 
 func (x *TaskRejected) Reset() {
 	*x = TaskRejected{}
-	mi := &file_worker_v1_worker_proto_msgTypes[7]
+	mi := &file_worker_v1_worker_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -960,7 +1071,7 @@ func (x *TaskRejected) String() string {
 func (*TaskRejected) ProtoMessage() {}
 
 func (x *TaskRejected) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[7]
+	mi := &file_worker_v1_worker_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -973,7 +1084,7 @@ func (x *TaskRejected) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskRejected.ProtoReflect.Descriptor instead.
 func (*TaskRejected) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{7}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *TaskRejected) GetTaskId() string {
@@ -1024,7 +1135,7 @@ type CancelTask struct {
 
 func (x *CancelTask) Reset() {
 	*x = CancelTask{}
-	mi := &file_worker_v1_worker_proto_msgTypes[8]
+	mi := &file_worker_v1_worker_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1036,7 +1147,7 @@ func (x *CancelTask) String() string {
 func (*CancelTask) ProtoMessage() {}
 
 func (x *CancelTask) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[8]
+	mi := &file_worker_v1_worker_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1049,7 +1160,7 @@ func (x *CancelTask) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelTask.ProtoReflect.Descriptor instead.
 func (*CancelTask) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{8}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CancelTask) GetTaskId() string {
@@ -1097,7 +1208,7 @@ type DrainWorker struct {
 
 func (x *DrainWorker) Reset() {
 	*x = DrainWorker{}
-	mi := &file_worker_v1_worker_proto_msgTypes[9]
+	mi := &file_worker_v1_worker_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1109,7 +1220,7 @@ func (x *DrainWorker) String() string {
 func (*DrainWorker) ProtoMessage() {}
 
 func (x *DrainWorker) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[9]
+	mi := &file_worker_v1_worker_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1122,7 +1233,7 @@ func (x *DrainWorker) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DrainWorker.ProtoReflect.Descriptor instead.
 func (*DrainWorker) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{9}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DrainWorker) GetReason() string {
@@ -1148,7 +1259,7 @@ type Goodbye struct {
 
 func (x *Goodbye) Reset() {
 	*x = Goodbye{}
-	mi := &file_worker_v1_worker_proto_msgTypes[10]
+	mi := &file_worker_v1_worker_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1160,7 +1271,7 @@ func (x *Goodbye) String() string {
 func (*Goodbye) ProtoMessage() {}
 
 func (x *Goodbye) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[10]
+	mi := &file_worker_v1_worker_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1173,7 +1284,7 @@ func (x *Goodbye) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Goodbye.ProtoReflect.Descriptor instead.
 func (*Goodbye) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{10}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Goodbye) GetReason() string {
@@ -1194,7 +1305,7 @@ type ControlError struct {
 
 func (x *ControlError) Reset() {
 	*x = ControlError{}
-	mi := &file_worker_v1_worker_proto_msgTypes[11]
+	mi := &file_worker_v1_worker_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1206,7 +1317,7 @@ func (x *ControlError) String() string {
 func (*ControlError) ProtoMessage() {}
 
 func (x *ControlError) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[11]
+	mi := &file_worker_v1_worker_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1219,7 +1330,7 @@ func (x *ControlError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlError.ProtoReflect.Descriptor instead.
 func (*ControlError) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{11}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ControlError) GetCode() string {
@@ -1253,7 +1364,7 @@ type Capacity struct {
 
 func (x *Capacity) Reset() {
 	*x = Capacity{}
-	mi := &file_worker_v1_worker_proto_msgTypes[12]
+	mi := &file_worker_v1_worker_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1265,7 +1376,7 @@ func (x *Capacity) String() string {
 func (*Capacity) ProtoMessage() {}
 
 func (x *Capacity) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[12]
+	mi := &file_worker_v1_worker_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1278,7 +1389,7 @@ func (x *Capacity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Capacity.ProtoReflect.Descriptor instead.
 func (*Capacity) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{12}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Capacity) GetMaxConcurrency() int32 {
@@ -1316,7 +1427,7 @@ type ReportTaskResultRequest struct {
 
 func (x *ReportTaskResultRequest) Reset() {
 	*x = ReportTaskResultRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[13]
+	mi := &file_worker_v1_worker_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1328,7 +1439,7 @@ func (x *ReportTaskResultRequest) String() string {
 func (*ReportTaskResultRequest) ProtoMessage() {}
 
 func (x *ReportTaskResultRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[13]
+	mi := &file_worker_v1_worker_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1341,7 +1452,7 @@ func (x *ReportTaskResultRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportTaskResultRequest.ProtoReflect.Descriptor instead.
 func (*ReportTaskResultRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{13}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ReportTaskResultRequest) GetTaskId() string {
@@ -1441,7 +1552,7 @@ type TaskFailure struct {
 
 func (x *TaskFailure) Reset() {
 	*x = TaskFailure{}
-	mi := &file_worker_v1_worker_proto_msgTypes[14]
+	mi := &file_worker_v1_worker_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1453,7 +1564,7 @@ func (x *TaskFailure) String() string {
 func (*TaskFailure) ProtoMessage() {}
 
 func (x *TaskFailure) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[14]
+	mi := &file_worker_v1_worker_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1466,7 +1577,7 @@ func (x *TaskFailure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskFailure.ProtoReflect.Descriptor instead.
 func (*TaskFailure) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{14}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *TaskFailure) GetCode() string {
@@ -1511,7 +1622,7 @@ type ArtifactRef struct {
 
 func (x *ArtifactRef) Reset() {
 	*x = ArtifactRef{}
-	mi := &file_worker_v1_worker_proto_msgTypes[15]
+	mi := &file_worker_v1_worker_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1523,7 +1634,7 @@ func (x *ArtifactRef) String() string {
 func (*ArtifactRef) ProtoMessage() {}
 
 func (x *ArtifactRef) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[15]
+	mi := &file_worker_v1_worker_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1536,7 +1647,7 @@ func (x *ArtifactRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArtifactRef.ProtoReflect.Descriptor instead.
 func (*ArtifactRef) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{15}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ArtifactRef) GetObjectKey() string {
@@ -1586,7 +1697,7 @@ type AttemptMetrics struct {
 
 func (x *AttemptMetrics) Reset() {
 	*x = AttemptMetrics{}
-	mi := &file_worker_v1_worker_proto_msgTypes[16]
+	mi := &file_worker_v1_worker_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1598,7 +1709,7 @@ func (x *AttemptMetrics) String() string {
 func (*AttemptMetrics) ProtoMessage() {}
 
 func (x *AttemptMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[16]
+	mi := &file_worker_v1_worker_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1611,7 +1722,7 @@ func (x *AttemptMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttemptMetrics.ProtoReflect.Descriptor instead.
 func (*AttemptMetrics) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{16}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *AttemptMetrics) GetDurationMs() int64 {
@@ -1653,7 +1764,7 @@ type ReportTaskResultResponse struct {
 
 func (x *ReportTaskResultResponse) Reset() {
 	*x = ReportTaskResultResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[17]
+	mi := &file_worker_v1_worker_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1665,7 +1776,7 @@ func (x *ReportTaskResultResponse) String() string {
 func (*ReportTaskResultResponse) ProtoMessage() {}
 
 func (x *ReportTaskResultResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[17]
+	mi := &file_worker_v1_worker_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1678,7 +1789,7 @@ func (x *ReportTaskResultResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportTaskResultResponse.ProtoReflect.Descriptor instead.
 func (*ReportTaskResultResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{17}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ReportTaskResultResponse) GetStatus() ResultStatus {
@@ -1717,7 +1828,7 @@ type CreateArtifactUploadRequest struct {
 
 func (x *CreateArtifactUploadRequest) Reset() {
 	*x = CreateArtifactUploadRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[18]
+	mi := &file_worker_v1_worker_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1729,7 +1840,7 @@ func (x *CreateArtifactUploadRequest) String() string {
 func (*CreateArtifactUploadRequest) ProtoMessage() {}
 
 func (x *CreateArtifactUploadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[18]
+	mi := &file_worker_v1_worker_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1742,7 +1853,7 @@ func (x *CreateArtifactUploadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateArtifactUploadRequest.ProtoReflect.Descriptor instead.
 func (*CreateArtifactUploadRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{18}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *CreateArtifactUploadRequest) GetTaskId() string {
@@ -1807,7 +1918,7 @@ type CreateArtifactUploadResponse struct {
 
 func (x *CreateArtifactUploadResponse) Reset() {
 	*x = CreateArtifactUploadResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[19]
+	mi := &file_worker_v1_worker_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1819,7 +1930,7 @@ func (x *CreateArtifactUploadResponse) String() string {
 func (*CreateArtifactUploadResponse) ProtoMessage() {}
 
 func (x *CreateArtifactUploadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[19]
+	mi := &file_worker_v1_worker_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1832,7 +1943,7 @@ func (x *CreateArtifactUploadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateArtifactUploadResponse.ProtoReflect.Descriptor instead.
 func (*CreateArtifactUploadResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{19}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *CreateArtifactUploadResponse) GetUploadUrl() string {
@@ -1882,7 +1993,7 @@ type CreateArtifactDownloadRequest struct {
 
 func (x *CreateArtifactDownloadRequest) Reset() {
 	*x = CreateArtifactDownloadRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[20]
+	mi := &file_worker_v1_worker_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1894,7 +2005,7 @@ func (x *CreateArtifactDownloadRequest) String() string {
 func (*CreateArtifactDownloadRequest) ProtoMessage() {}
 
 func (x *CreateArtifactDownloadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[20]
+	mi := &file_worker_v1_worker_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1907,7 +2018,7 @@ func (x *CreateArtifactDownloadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateArtifactDownloadRequest.ProtoReflect.Descriptor instead.
 func (*CreateArtifactDownloadRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{20}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *CreateArtifactDownloadRequest) GetCheckpointId() string {
@@ -1950,7 +2061,7 @@ type CreateArtifactDownloadResponse struct {
 
 func (x *CreateArtifactDownloadResponse) Reset() {
 	*x = CreateArtifactDownloadResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[21]
+	mi := &file_worker_v1_worker_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1962,7 +2073,7 @@ func (x *CreateArtifactDownloadResponse) String() string {
 func (*CreateArtifactDownloadResponse) ProtoMessage() {}
 
 func (x *CreateArtifactDownloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[21]
+	mi := &file_worker_v1_worker_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1975,7 +2086,7 @@ func (x *CreateArtifactDownloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateArtifactDownloadResponse.ProtoReflect.Descriptor instead.
 func (*CreateArtifactDownloadResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{21}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *CreateArtifactDownloadResponse) GetDownloadUrl() string {
@@ -2017,7 +2128,7 @@ type GetTaskContextRequest struct {
 
 func (x *GetTaskContextRequest) Reset() {
 	*x = GetTaskContextRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[22]
+	mi := &file_worker_v1_worker_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2029,7 +2140,7 @@ func (x *GetTaskContextRequest) String() string {
 func (*GetTaskContextRequest) ProtoMessage() {}
 
 func (x *GetTaskContextRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[22]
+	mi := &file_worker_v1_worker_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2042,7 +2153,7 @@ func (x *GetTaskContextRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskContextRequest.ProtoReflect.Descriptor instead.
 func (*GetTaskContextRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{22}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *GetTaskContextRequest) GetTaskId() string {
@@ -2089,7 +2200,7 @@ type GetTaskContextResponse struct {
 
 func (x *GetTaskContextResponse) Reset() {
 	*x = GetTaskContextResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[23]
+	mi := &file_worker_v1_worker_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2101,7 +2212,7 @@ func (x *GetTaskContextResponse) String() string {
 func (*GetTaskContextResponse) ProtoMessage() {}
 
 func (x *GetTaskContextResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[23]
+	mi := &file_worker_v1_worker_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2114,7 +2225,7 @@ func (x *GetTaskContextResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskContextResponse.ProtoReflect.Descriptor instead.
 func (*GetTaskContextResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{23}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *GetTaskContextResponse) GetOrgId() string {
@@ -2229,7 +2340,7 @@ type CheckpointRef struct {
 
 func (x *CheckpointRef) Reset() {
 	*x = CheckpointRef{}
-	mi := &file_worker_v1_worker_proto_msgTypes[24]
+	mi := &file_worker_v1_worker_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2241,7 +2352,7 @@ func (x *CheckpointRef) String() string {
 func (*CheckpointRef) ProtoMessage() {}
 
 func (x *CheckpointRef) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[24]
+	mi := &file_worker_v1_worker_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2254,7 +2365,7 @@ func (x *CheckpointRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointRef.ProtoReflect.Descriptor instead.
 func (*CheckpointRef) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{24}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *CheckpointRef) GetCheckpointId() string {
@@ -2311,7 +2422,7 @@ type GetTaskCredentialsRequest struct {
 
 func (x *GetTaskCredentialsRequest) Reset() {
 	*x = GetTaskCredentialsRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[25]
+	mi := &file_worker_v1_worker_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2323,7 +2434,7 @@ func (x *GetTaskCredentialsRequest) String() string {
 func (*GetTaskCredentialsRequest) ProtoMessage() {}
 
 func (x *GetTaskCredentialsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[25]
+	mi := &file_worker_v1_worker_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2336,7 +2447,7 @@ func (x *GetTaskCredentialsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskCredentialsRequest.ProtoReflect.Descriptor instead.
 func (*GetTaskCredentialsRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{25}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *GetTaskCredentialsRequest) GetTaskId() string {
@@ -2377,7 +2488,7 @@ type GetTaskCredentialsResponse struct {
 
 func (x *GetTaskCredentialsResponse) Reset() {
 	*x = GetTaskCredentialsResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[26]
+	mi := &file_worker_v1_worker_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2389,7 +2500,7 @@ func (x *GetTaskCredentialsResponse) String() string {
 func (*GetTaskCredentialsResponse) ProtoMessage() {}
 
 func (x *GetTaskCredentialsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[26]
+	mi := &file_worker_v1_worker_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2402,7 +2513,7 @@ func (x *GetTaskCredentialsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskCredentialsResponse.ProtoReflect.Descriptor instead.
 func (*GetTaskCredentialsResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{26}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *GetTaskCredentialsResponse) GetValues() map[string]string {
@@ -2423,13 +2534,14 @@ var File_worker_v1_worker_proto protoreflect.FileDescriptor
 
 const file_worker_v1_worker_proto_rawDesc = "" +
 	"\n" +
-	"\x16worker/v1/worker.proto\x12\x12platform.worker.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd4\x02\n" +
+	"\x16worker/v1/worker.proto\x12\x12platform.worker.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x9d\x03\n" +
 	"\rWorkerMessage\x121\n" +
 	"\x05hello\x18\x01 \x01(\v2\x19.platform.worker.v1.HelloH\x00R\x05hello\x12=\n" +
 	"\theartbeat\x18\x02 \x01(\v2\x1d.platform.worker.v1.HeartbeatH\x00R\theartbeat\x12G\n" +
 	"\rtask_accepted\x18\x03 \x01(\v2 .platform.worker.v1.TaskAcceptedH\x00R\ftaskAccepted\x12G\n" +
 	"\rtask_rejected\x18\x04 \x01(\v2 .platform.worker.v1.TaskRejectedH\x00R\ftaskRejected\x127\n" +
-	"\agoodbye\x18\x05 \x01(\v2\x1b.platform.worker.v1.GoodbyeH\x00R\agoodbyeB\x06\n" +
+	"\agoodbye\x18\x05 \x01(\v2\x1b.platform.worker.v1.GoodbyeH\x00R\agoodbye\x12G\n" +
+	"\rtask_progress\x18\x06 \x01(\v2 .platform.worker.v1.TaskProgressH\x00R\ftaskProgressB\x06\n" +
 	"\x04body\"\x90\x02\n" +
 	"\x13OrchestratorMessage\x12;\n" +
 	"\thello_ack\x18\x01 \x01(\v2\x1c.platform.worker.v1.HelloAckH\x00R\bhelloAck\x12A\n" +
@@ -2477,7 +2589,17 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12\x19\n" +
 	"\blease_id\x18\x03 \x01(\tR\aleaseId\x129\n" +
 	"\n" +
-	"started_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\"\xbc\x01\n" +
+	"started_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\"\xe6\x01\n" +
+	"\fTaskProgress\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12\x19\n" +
+	"\blease_id\x18\x03 \x01(\tR\aleaseId\x12\x18\n" +
+	"\apercent\x18\x04 \x01(\x05R\apercent\x12\x12\n" +
+	"\x04step\x18\x05 \x01(\x03R\x04step\x12\x18\n" +
+	"\amessage\x18\x06 \x01(\tR\amessage\x12;\n" +
+	"\vreported_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"reportedAt\"\xbc\x01\n" +
 	"\fTaskRejected\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
 	"\n" +
@@ -2686,7 +2808,7 @@ func file_worker_v1_worker_proto_rawDescGZIP() []byte {
 }
 
 var file_worker_v1_worker_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_worker_v1_worker_proto_goTypes = []any{
 	(TaskRejectionReason)(0),               // 0: platform.worker.v1.TaskRejectionReason
 	(TaskOutcome)(0),                       // 1: platform.worker.v1.TaskOutcome
@@ -2700,92 +2822,95 @@ var file_worker_v1_worker_proto_goTypes = []any{
 	(*Heartbeat)(nil),                      // 9: platform.worker.v1.Heartbeat
 	(*ActiveAttempt)(nil),                  // 10: platform.worker.v1.ActiveAttempt
 	(*TaskAccepted)(nil),                   // 11: platform.worker.v1.TaskAccepted
-	(*TaskRejected)(nil),                   // 12: platform.worker.v1.TaskRejected
-	(*CancelTask)(nil),                     // 13: platform.worker.v1.CancelTask
-	(*DrainWorker)(nil),                    // 14: platform.worker.v1.DrainWorker
-	(*Goodbye)(nil),                        // 15: platform.worker.v1.Goodbye
-	(*ControlError)(nil),                   // 16: platform.worker.v1.ControlError
-	(*Capacity)(nil),                       // 17: platform.worker.v1.Capacity
-	(*ReportTaskResultRequest)(nil),        // 18: platform.worker.v1.ReportTaskResultRequest
-	(*TaskFailure)(nil),                    // 19: platform.worker.v1.TaskFailure
-	(*ArtifactRef)(nil),                    // 20: platform.worker.v1.ArtifactRef
-	(*AttemptMetrics)(nil),                 // 21: platform.worker.v1.AttemptMetrics
-	(*ReportTaskResultResponse)(nil),       // 22: platform.worker.v1.ReportTaskResultResponse
-	(*CreateArtifactUploadRequest)(nil),    // 23: platform.worker.v1.CreateArtifactUploadRequest
-	(*CreateArtifactUploadResponse)(nil),   // 24: platform.worker.v1.CreateArtifactUploadResponse
-	(*CreateArtifactDownloadRequest)(nil),  // 25: platform.worker.v1.CreateArtifactDownloadRequest
-	(*CreateArtifactDownloadResponse)(nil), // 26: platform.worker.v1.CreateArtifactDownloadResponse
-	(*GetTaskContextRequest)(nil),          // 27: platform.worker.v1.GetTaskContextRequest
-	(*GetTaskContextResponse)(nil),         // 28: platform.worker.v1.GetTaskContextResponse
-	(*CheckpointRef)(nil),                  // 29: platform.worker.v1.CheckpointRef
-	(*GetTaskCredentialsRequest)(nil),      // 30: platform.worker.v1.GetTaskCredentialsRequest
-	(*GetTaskCredentialsResponse)(nil),     // 31: platform.worker.v1.GetTaskCredentialsResponse
-	nil,                                    // 32: platform.worker.v1.Hello.LabelsEntry
-	nil,                                    // 33: platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
-	nil,                                    // 34: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
-	nil,                                    // 35: platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
-	(*timestamppb.Timestamp)(nil),          // 36: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),                // 37: google.protobuf.Struct
+	(*TaskProgress)(nil),                   // 12: platform.worker.v1.TaskProgress
+	(*TaskRejected)(nil),                   // 13: platform.worker.v1.TaskRejected
+	(*CancelTask)(nil),                     // 14: platform.worker.v1.CancelTask
+	(*DrainWorker)(nil),                    // 15: platform.worker.v1.DrainWorker
+	(*Goodbye)(nil),                        // 16: platform.worker.v1.Goodbye
+	(*ControlError)(nil),                   // 17: platform.worker.v1.ControlError
+	(*Capacity)(nil),                       // 18: platform.worker.v1.Capacity
+	(*ReportTaskResultRequest)(nil),        // 19: platform.worker.v1.ReportTaskResultRequest
+	(*TaskFailure)(nil),                    // 20: platform.worker.v1.TaskFailure
+	(*ArtifactRef)(nil),                    // 21: platform.worker.v1.ArtifactRef
+	(*AttemptMetrics)(nil),                 // 22: platform.worker.v1.AttemptMetrics
+	(*ReportTaskResultResponse)(nil),       // 23: platform.worker.v1.ReportTaskResultResponse
+	(*CreateArtifactUploadRequest)(nil),    // 24: platform.worker.v1.CreateArtifactUploadRequest
+	(*CreateArtifactUploadResponse)(nil),   // 25: platform.worker.v1.CreateArtifactUploadResponse
+	(*CreateArtifactDownloadRequest)(nil),  // 26: platform.worker.v1.CreateArtifactDownloadRequest
+	(*CreateArtifactDownloadResponse)(nil), // 27: platform.worker.v1.CreateArtifactDownloadResponse
+	(*GetTaskContextRequest)(nil),          // 28: platform.worker.v1.GetTaskContextRequest
+	(*GetTaskContextResponse)(nil),         // 29: platform.worker.v1.GetTaskContextResponse
+	(*CheckpointRef)(nil),                  // 30: platform.worker.v1.CheckpointRef
+	(*GetTaskCredentialsRequest)(nil),      // 31: platform.worker.v1.GetTaskCredentialsRequest
+	(*GetTaskCredentialsResponse)(nil),     // 32: platform.worker.v1.GetTaskCredentialsResponse
+	nil,                                    // 33: platform.worker.v1.Hello.LabelsEntry
+	nil,                                    // 34: platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
+	nil,                                    // 35: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
+	nil,                                    // 36: platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
+	(*timestamppb.Timestamp)(nil),          // 37: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                // 38: google.protobuf.Struct
 }
 var file_worker_v1_worker_proto_depIdxs = []int32{
 	7,  // 0: platform.worker.v1.WorkerMessage.hello:type_name -> platform.worker.v1.Hello
 	9,  // 1: platform.worker.v1.WorkerMessage.heartbeat:type_name -> platform.worker.v1.Heartbeat
 	11, // 2: platform.worker.v1.WorkerMessage.task_accepted:type_name -> platform.worker.v1.TaskAccepted
-	12, // 3: platform.worker.v1.WorkerMessage.task_rejected:type_name -> platform.worker.v1.TaskRejected
-	15, // 4: platform.worker.v1.WorkerMessage.goodbye:type_name -> platform.worker.v1.Goodbye
-	8,  // 5: platform.worker.v1.OrchestratorMessage.hello_ack:type_name -> platform.worker.v1.HelloAck
-	13, // 6: platform.worker.v1.OrchestratorMessage.cancel_task:type_name -> platform.worker.v1.CancelTask
-	14, // 7: platform.worker.v1.OrchestratorMessage.drain:type_name -> platform.worker.v1.DrainWorker
-	16, // 8: platform.worker.v1.OrchestratorMessage.error:type_name -> platform.worker.v1.ControlError
-	32, // 9: platform.worker.v1.Hello.labels:type_name -> platform.worker.v1.Hello.LabelsEntry
-	17, // 10: platform.worker.v1.Hello.capacity:type_name -> platform.worker.v1.Capacity
-	36, // 11: platform.worker.v1.HelloAck.server_time:type_name -> google.protobuf.Timestamp
-	36, // 12: platform.worker.v1.Heartbeat.sent_at:type_name -> google.protobuf.Timestamp
-	10, // 13: platform.worker.v1.Heartbeat.active_attempts:type_name -> platform.worker.v1.ActiveAttempt
-	17, // 14: platform.worker.v1.Heartbeat.capacity:type_name -> platform.worker.v1.Capacity
-	36, // 15: platform.worker.v1.TaskAccepted.started_at:type_name -> google.protobuf.Timestamp
-	0,  // 16: platform.worker.v1.TaskRejected.reason:type_name -> platform.worker.v1.TaskRejectionReason
-	1,  // 17: platform.worker.v1.ReportTaskResultRequest.outcome:type_name -> platform.worker.v1.TaskOutcome
-	37, // 18: platform.worker.v1.ReportTaskResultRequest.output:type_name -> google.protobuf.Struct
-	20, // 19: platform.worker.v1.ReportTaskResultRequest.output_artifact:type_name -> platform.worker.v1.ArtifactRef
-	20, // 20: platform.worker.v1.ReportTaskResultRequest.checkpoint:type_name -> platform.worker.v1.ArtifactRef
-	19, // 21: platform.worker.v1.ReportTaskResultRequest.failure:type_name -> platform.worker.v1.TaskFailure
-	21, // 22: platform.worker.v1.ReportTaskResultRequest.metrics:type_name -> platform.worker.v1.AttemptMetrics
-	36, // 23: platform.worker.v1.ReportTaskResultRequest.started_at:type_name -> google.protobuf.Timestamp
-	36, // 24: platform.worker.v1.ReportTaskResultRequest.finished_at:type_name -> google.protobuf.Timestamp
-	2,  // 25: platform.worker.v1.TaskFailure.classification:type_name -> platform.worker.v1.FailureClassification
-	37, // 26: platform.worker.v1.AttemptMetrics.extra:type_name -> google.protobuf.Struct
-	3,  // 27: platform.worker.v1.ReportTaskResultResponse.status:type_name -> platform.worker.v1.ResultStatus
-	4,  // 28: platform.worker.v1.CreateArtifactUploadRequest.kind:type_name -> platform.worker.v1.ArtifactKind
-	33, // 29: platform.worker.v1.CreateArtifactUploadResponse.headers:type_name -> platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
-	36, // 30: platform.worker.v1.CreateArtifactUploadResponse.expires_at:type_name -> google.protobuf.Timestamp
-	36, // 31: platform.worker.v1.CreateArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
-	37, // 32: platform.worker.v1.GetTaskContextResponse.version_spec:type_name -> google.protobuf.Struct
-	37, // 33: platform.worker.v1.GetTaskContextResponse.execution_input:type_name -> google.protobuf.Struct
-	37, // 34: platform.worker.v1.GetTaskContextResponse.node_params:type_name -> google.protobuf.Struct
-	34, // 35: platform.worker.v1.GetTaskContextResponse.upstream_outputs:type_name -> platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
-	29, // 36: platform.worker.v1.GetTaskContextResponse.resume_checkpoint:type_name -> platform.worker.v1.CheckpointRef
-	36, // 37: platform.worker.v1.GetTaskContextResponse.deadline:type_name -> google.protobuf.Timestamp
-	35, // 38: platform.worker.v1.GetTaskCredentialsResponse.values:type_name -> platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
-	36, // 39: platform.worker.v1.GetTaskCredentialsResponse.expires_at:type_name -> google.protobuf.Timestamp
-	37, // 40: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
-	5,  // 41: platform.worker.v1.WorkerControl.Connect:input_type -> platform.worker.v1.WorkerMessage
-	18, // 42: platform.worker.v1.WorkerControl.ReportTaskResult:input_type -> platform.worker.v1.ReportTaskResultRequest
-	23, // 43: platform.worker.v1.WorkerControl.CreateArtifactUpload:input_type -> platform.worker.v1.CreateArtifactUploadRequest
-	25, // 44: platform.worker.v1.WorkerControl.CreateArtifactDownload:input_type -> platform.worker.v1.CreateArtifactDownloadRequest
-	27, // 45: platform.worker.v1.WorkerControl.GetTaskContext:input_type -> platform.worker.v1.GetTaskContextRequest
-	30, // 46: platform.worker.v1.WorkerControl.GetTaskCredentials:input_type -> platform.worker.v1.GetTaskCredentialsRequest
-	6,  // 47: platform.worker.v1.WorkerControl.Connect:output_type -> platform.worker.v1.OrchestratorMessage
-	22, // 48: platform.worker.v1.WorkerControl.ReportTaskResult:output_type -> platform.worker.v1.ReportTaskResultResponse
-	24, // 49: platform.worker.v1.WorkerControl.CreateArtifactUpload:output_type -> platform.worker.v1.CreateArtifactUploadResponse
-	26, // 50: platform.worker.v1.WorkerControl.CreateArtifactDownload:output_type -> platform.worker.v1.CreateArtifactDownloadResponse
-	28, // 51: platform.worker.v1.WorkerControl.GetTaskContext:output_type -> platform.worker.v1.GetTaskContextResponse
-	31, // 52: platform.worker.v1.WorkerControl.GetTaskCredentials:output_type -> platform.worker.v1.GetTaskCredentialsResponse
-	47, // [47:53] is the sub-list for method output_type
-	41, // [41:47] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	13, // 3: platform.worker.v1.WorkerMessage.task_rejected:type_name -> platform.worker.v1.TaskRejected
+	16, // 4: platform.worker.v1.WorkerMessage.goodbye:type_name -> platform.worker.v1.Goodbye
+	12, // 5: platform.worker.v1.WorkerMessage.task_progress:type_name -> platform.worker.v1.TaskProgress
+	8,  // 6: platform.worker.v1.OrchestratorMessage.hello_ack:type_name -> platform.worker.v1.HelloAck
+	14, // 7: platform.worker.v1.OrchestratorMessage.cancel_task:type_name -> platform.worker.v1.CancelTask
+	15, // 8: platform.worker.v1.OrchestratorMessage.drain:type_name -> platform.worker.v1.DrainWorker
+	17, // 9: platform.worker.v1.OrchestratorMessage.error:type_name -> platform.worker.v1.ControlError
+	33, // 10: platform.worker.v1.Hello.labels:type_name -> platform.worker.v1.Hello.LabelsEntry
+	18, // 11: platform.worker.v1.Hello.capacity:type_name -> platform.worker.v1.Capacity
+	37, // 12: platform.worker.v1.HelloAck.server_time:type_name -> google.protobuf.Timestamp
+	37, // 13: platform.worker.v1.Heartbeat.sent_at:type_name -> google.protobuf.Timestamp
+	10, // 14: platform.worker.v1.Heartbeat.active_attempts:type_name -> platform.worker.v1.ActiveAttempt
+	18, // 15: platform.worker.v1.Heartbeat.capacity:type_name -> platform.worker.v1.Capacity
+	37, // 16: platform.worker.v1.TaskAccepted.started_at:type_name -> google.protobuf.Timestamp
+	37, // 17: platform.worker.v1.TaskProgress.reported_at:type_name -> google.protobuf.Timestamp
+	0,  // 18: platform.worker.v1.TaskRejected.reason:type_name -> platform.worker.v1.TaskRejectionReason
+	1,  // 19: platform.worker.v1.ReportTaskResultRequest.outcome:type_name -> platform.worker.v1.TaskOutcome
+	38, // 20: platform.worker.v1.ReportTaskResultRequest.output:type_name -> google.protobuf.Struct
+	21, // 21: platform.worker.v1.ReportTaskResultRequest.output_artifact:type_name -> platform.worker.v1.ArtifactRef
+	21, // 22: platform.worker.v1.ReportTaskResultRequest.checkpoint:type_name -> platform.worker.v1.ArtifactRef
+	20, // 23: platform.worker.v1.ReportTaskResultRequest.failure:type_name -> platform.worker.v1.TaskFailure
+	22, // 24: platform.worker.v1.ReportTaskResultRequest.metrics:type_name -> platform.worker.v1.AttemptMetrics
+	37, // 25: platform.worker.v1.ReportTaskResultRequest.started_at:type_name -> google.protobuf.Timestamp
+	37, // 26: platform.worker.v1.ReportTaskResultRequest.finished_at:type_name -> google.protobuf.Timestamp
+	2,  // 27: platform.worker.v1.TaskFailure.classification:type_name -> platform.worker.v1.FailureClassification
+	38, // 28: platform.worker.v1.AttemptMetrics.extra:type_name -> google.protobuf.Struct
+	3,  // 29: platform.worker.v1.ReportTaskResultResponse.status:type_name -> platform.worker.v1.ResultStatus
+	4,  // 30: platform.worker.v1.CreateArtifactUploadRequest.kind:type_name -> platform.worker.v1.ArtifactKind
+	34, // 31: platform.worker.v1.CreateArtifactUploadResponse.headers:type_name -> platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
+	37, // 32: platform.worker.v1.CreateArtifactUploadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	37, // 33: platform.worker.v1.CreateArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	38, // 34: platform.worker.v1.GetTaskContextResponse.version_spec:type_name -> google.protobuf.Struct
+	38, // 35: platform.worker.v1.GetTaskContextResponse.execution_input:type_name -> google.protobuf.Struct
+	38, // 36: platform.worker.v1.GetTaskContextResponse.node_params:type_name -> google.protobuf.Struct
+	35, // 37: platform.worker.v1.GetTaskContextResponse.upstream_outputs:type_name -> platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
+	30, // 38: platform.worker.v1.GetTaskContextResponse.resume_checkpoint:type_name -> platform.worker.v1.CheckpointRef
+	37, // 39: platform.worker.v1.GetTaskContextResponse.deadline:type_name -> google.protobuf.Timestamp
+	36, // 40: platform.worker.v1.GetTaskCredentialsResponse.values:type_name -> platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
+	37, // 41: platform.worker.v1.GetTaskCredentialsResponse.expires_at:type_name -> google.protobuf.Timestamp
+	38, // 42: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
+	5,  // 43: platform.worker.v1.WorkerControl.Connect:input_type -> platform.worker.v1.WorkerMessage
+	19, // 44: platform.worker.v1.WorkerControl.ReportTaskResult:input_type -> platform.worker.v1.ReportTaskResultRequest
+	24, // 45: platform.worker.v1.WorkerControl.CreateArtifactUpload:input_type -> platform.worker.v1.CreateArtifactUploadRequest
+	26, // 46: platform.worker.v1.WorkerControl.CreateArtifactDownload:input_type -> platform.worker.v1.CreateArtifactDownloadRequest
+	28, // 47: platform.worker.v1.WorkerControl.GetTaskContext:input_type -> platform.worker.v1.GetTaskContextRequest
+	31, // 48: platform.worker.v1.WorkerControl.GetTaskCredentials:input_type -> platform.worker.v1.GetTaskCredentialsRequest
+	6,  // 49: platform.worker.v1.WorkerControl.Connect:output_type -> platform.worker.v1.OrchestratorMessage
+	23, // 50: platform.worker.v1.WorkerControl.ReportTaskResult:output_type -> platform.worker.v1.ReportTaskResultResponse
+	25, // 51: platform.worker.v1.WorkerControl.CreateArtifactUpload:output_type -> platform.worker.v1.CreateArtifactUploadResponse
+	27, // 52: platform.worker.v1.WorkerControl.CreateArtifactDownload:output_type -> platform.worker.v1.CreateArtifactDownloadResponse
+	29, // 53: platform.worker.v1.WorkerControl.GetTaskContext:output_type -> platform.worker.v1.GetTaskContextResponse
+	32, // 54: platform.worker.v1.WorkerControl.GetTaskCredentials:output_type -> platform.worker.v1.GetTaskCredentialsResponse
+	49, // [49:55] is the sub-list for method output_type
+	43, // [43:49] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_worker_v1_worker_proto_init() }
@@ -2799,6 +2924,7 @@ func file_worker_v1_worker_proto_init() {
 		(*WorkerMessage_TaskAccepted)(nil),
 		(*WorkerMessage_TaskRejected)(nil),
 		(*WorkerMessage_Goodbye)(nil),
+		(*WorkerMessage_TaskProgress)(nil),
 	}
 	file_worker_v1_worker_proto_msgTypes[1].OneofWrappers = []any{
 		(*OrchestratorMessage_HelloAck)(nil),
@@ -2812,7 +2938,7 @@ func file_worker_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_v1_worker_proto_rawDesc), len(file_worker_v1_worker_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   31,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

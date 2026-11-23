@@ -82,7 +82,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <span>API</span>
           <span className="font-mono text-[11px]">:8080</span>
         </div>
-        <p className="pt-1 leading-relaxed">Demo data. Live API wiring lands in Phase 03.</p>
+        <p className="pt-1 leading-relaxed">Demo data. Live API wiring lands in Phase 04.</p>
       </div>
     </div>
   );

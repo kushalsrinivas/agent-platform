@@ -94,6 +94,9 @@ jobs:
     env:
       # Avoid collisions with anything preinstalled on the runner.
       POSTGRES_PORT: 55432
+      API_DATABASE_URL: postgres://app_api:dev_api_password@localhost:55432/agent_platform?sslmode=disable
+      ORCHESTRATOR_DATABASE_URL: postgres://app_orchestrator:dev_orchestrator_password@localhost:55432/agent_platform?sslmode=disable
+      POSTGRES_DATABASE_URL: postgres://postgres:postgres@localhost:55432/agent_platform?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -113,8 +116,6 @@ jobs:
           echo "NATS did not become healthy" >&2
           exit 1
       - name: Run integration tests
-        env:
-          API_DATABASE_URL: postgres://app_api:dev_api_password@localhost:55432/agent_platform?sslmode=disable
         run: go test -tags=integration -count=1 ./tests/integration/...
       - name: Collect logs on failure
         if: failure()

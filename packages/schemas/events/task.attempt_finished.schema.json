@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-platform.example/schemas/events/task.attempt_finished/v1.json",
+  "title": "task.attempt_finished payload v1",
+  "type": "object",
+  "required": ["seq", "attempt_id", "attempt_number", "worker_id", "outcome", "effect_uncertain"],
+  "additionalProperties": false,
+  "properties": {
+    "seq": { "type": "integer", "minimum": 1 },
+    "attempt_id": { "type": "string", "pattern": "^att_[A-Za-z0-9_-]{8,64}$" },
+    "attempt_number": { "type": "integer", "minimum": 1 },
+    "worker_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "outcome": { "enum": ["succeeded", "failed", "cancelled", "lease_expired", "incomplete"] },
+    "error_code": { "type": "string", "maxLength": 128 },
+    "effect_uncertain": { "type": "boolean" },
+    "duration_ms": { "type": "integer", "minimum": 0 }
+  }
+}

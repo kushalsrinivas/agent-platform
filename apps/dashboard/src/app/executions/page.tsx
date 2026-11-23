@@ -22,7 +22,7 @@ export default function ExecutionsPage() {
           <div>
             <CardTitle>All executions</CardTitle>
             <CardDescription>
-              Demo fixtures. The list endpoint and SSE stream arrive with the API in Phase 03.
+              Demo fixtures. The list endpoint and SSE stream arrive with the API in Phase 04.
             </CardDescription>
           </div>
           {selectedId ? (

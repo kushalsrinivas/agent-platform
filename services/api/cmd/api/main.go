@@ -46,7 +46,7 @@ func main() {
 
 	ctx := run.SignalContext()
 
-	pool, err := postgres.Connect(ctx, postgres.Config{URL: cfg.DatabaseURL, MaxConns: 20})
+	pool, err := postgres.Connect(ctx, postgres.Config{URL: cfg.DatabaseURL, MaxConns: 20, Logger: log})
 	if err != nil {
 		log.Fatal("database unavailable", zap.Error(err))
 	}

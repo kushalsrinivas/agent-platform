@@ -119,6 +119,8 @@ Contract: [`proto/worker/v1/worker.proto`](../proto/worker/v1/worker.proto). Pac
   Renewal stops once the execution is `cancel_requested` or `failing`; lease expiry is the bounded backstop for
   cancellation.
 - `task_accepted` transitions the task `assigned → running` if the fence matches and the lease is live.
+- `task_progress` is advisory telemetry (step, percentage, message). It is never a state transition, may be
+  dropped, and is not persisted as an execution event. Progress is not a lease renewal; the heartbeat is.
 - `cancel` tells the worker to terminate an attempt. Cancellation is also enforced by lease expiry if the worker is
   unreachable.
 - A session is invalid when the stream closes. The worker reconnects with exponential backoff (1s..30s) and
