@@ -114,6 +114,7 @@ type TaskAttemptFinishedPayload struct {
 // TaskDispatchPayload is the bus pointer for a committed assignment.
 type TaskDispatchPayload struct {
 	AttemptNumber  int              `json:"attempt_number"`
+	LeaseID        string           `json:"lease_id"`
 	NodeID         string           `json:"node_id"`
 	NodeType       WorkflowNodeType `json:"node_type"`
 	AgentVersionID *string          `json:"agent_version_id,omitempty"`
@@ -353,6 +354,9 @@ func (p *TaskDispatchPayload) Validate() error {
 	v := &validator{}
 	if p.AttemptNumber < 1 {
 		v.addf("attempt_number must be at least 1")
+	}
+	if !validateUUID("lease_id", p.LeaseID) {
+		v.addf("lease_id must be a UUID")
 	}
 	v.pattern("node_id", p.NodeID, nodeIDPattern)
 	if p.NodeType != NodeTypeAgent && p.NodeType != NodeTypeTool {

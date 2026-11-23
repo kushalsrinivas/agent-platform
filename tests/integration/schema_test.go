@@ -418,7 +418,7 @@ func TestOutboxContract(t *testing.T) {
 
 	newMessage := func(t *testing.T, subject string) outbox.Message {
 		t.Helper()
-		msg, err := outbox.NewMessage(s.orgID, subject, "execution.created", &s.executionID,
+		msg, err := outbox.NewMessage(s.orgID, s.projectID, subject, "execution.created", &s.executionID,
 			map[string]any{"seq": 1}, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -439,6 +439,18 @@ func TestOutboxContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert outbox: %v", err)
 	}
+	// Keep the live publisher out of this org's rows until a subtest explicitly makes them due.
+	if _, err := orchestrator.Exec(ctx,
+		`UPDATE execution.outbox SET available_at = now() + interval '1 hour' WHERE org_id = $1`, s.orgID); err != nil {
+		t.Fatal(err)
+	}
+	makeDue := func(t *testing.T, tx pgx.Tx) {
+		t.Helper()
+		if _, err := tx.Exec(ctx,
+			`UPDATE execution.outbox SET available_at = now() WHERE org_id = $1 AND published_at IS NULL`, s.orgID); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	t.Run("skip locked", func(t *testing.T) {
 		tx1, err := orchestrator.Begin(ctx)
@@ -446,6 +458,7 @@ func TestOutboxContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { _ = tx1.Rollback(ctx) }()
+		makeDue(t, tx1)
 		tx2, err := orchestrator.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -470,21 +483,35 @@ func TestOutboxContract(t *testing.T) {
 	})
 
 	t.Run("failure reschedules", func(t *testing.T) {
-		publisher := &fakePublisher{err: errors.New("broker unavailable")}
-		// Only msg2 is still unpublished; msg1 is still unpublished too. Dispatch with limit 1 claims the
-		// oldest message. A failure must reschedule it rather than mark it published.
-		published, err := outbox.NewStore(orchestrator).DispatchOnceForOrg(ctx, publisher, s.orgID, 10, time.Millisecond)
-		if err == nil {
-			t.Fatal("dispatch with a failing publisher must return an error")
+		tx, err := orchestrator.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if published != 0 {
-			t.Fatalf("published = %d, want 0", published)
+		defer func() { _ = tx.Rollback(ctx) }()
+		makeDue(t, tx)
+
+		store := outbox.NewStore(orchestrator)
+		claimed, err := store.ClaimForOrg(ctx, tx, s.orgID, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(claimed) != 2 {
+			t.Fatalf("claim returned %d messages, want 2", len(claimed))
+		}
+		publisher := &fakePublisher{err: errors.New("broker unavailable")}
+		for _, message := range claimed {
+			if err := publisher.Publish(ctx, message); err == nil {
+				t.Fatal("the fake publisher was configured to fail")
+			}
+			if err := store.MarkFailed(ctx, tx, message.ID, time.Millisecond, "broker unavailable"); err != nil {
+				t.Fatal(err)
+			}
 		}
 
 		var attempts int
 		var lastError pgtype.Text
 		var publishedAt pgtype.Timestamptz
-		if err := admin.QueryRow(ctx, `SELECT attempts, last_error, published_at
+		if err := tx.QueryRow(ctx, `SELECT attempts, last_error, published_at
 			FROM execution.outbox WHERE message_id = $1`, msg1.MessageID).Scan(&attempts, &lastError, &publishedAt); err != nil {
 			t.Fatal(err)
 		}
@@ -494,21 +521,41 @@ func TestOutboxContract(t *testing.T) {
 	})
 
 	t.Run("success marks published", func(t *testing.T) {
-		publisher := &fakePublisher{}
-		published, err := outbox.NewStore(orchestrator).DispatchOnceForOrg(ctx, publisher, s.orgID, 10, time.Millisecond)
+		tx, err := orchestrator.Begin(ctx)
 		if err != nil {
-			t.Fatalf("dispatch: %v", err)
-		}
-		if published != 2 || len(publisher.messages) != 2 {
-			t.Fatalf("published=%d delivered=%d, want 2/2", published, len(publisher.messages))
-		}
-		var remaining int
-		if err := admin.QueryRow(ctx, `SELECT count(*) FROM execution.outbox
-			WHERE org_id = $1 AND published_at IS NULL`, s.orgID).Scan(&remaining); err != nil {
 			t.Fatal(err)
 		}
-		if remaining != 0 {
-			t.Fatalf("%d outbox rows remain unpublished", remaining)
+		makeDue(t, tx)
+
+		store := outbox.NewStore(orchestrator)
+		claimed, err := store.ClaimForOrg(ctx, tx, s.orgID, 10)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		publisher := &fakePublisher{}
+		for _, message := range claimed {
+			if err := publisher.Publish(ctx, message); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.MarkPublished(ctx, tx, message.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if len(claimed) != 2 || len(publisher.messages) != 2 {
+			t.Fatalf("published=%d delivered=%d, want 2/2", len(claimed), len(publisher.messages))
+		}
+		var unpublished int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM execution.outbox
+			WHERE org_id = $1 AND published_at IS NULL`, s.orgID).Scan(&unpublished); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		if unpublished != 0 {
+			t.Fatalf("%d outbox rows remain unpublished", unpublished)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
 		}
 	})
 }

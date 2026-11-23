@@ -19,6 +19,8 @@ NATS_PORT ?= $(or $(shell sed -n 's/^NATS_PORT=//p' .env 2>/dev/null | tail -1),
 NATS_URL ?= nats://localhost:$(NATS_PORT)
 API_PORT ?= $(or $(shell sed -n 's/^API_PORT=//p' .env 2>/dev/null | tail -1),8080)
 API_URL ?= http://localhost:$(API_PORT)
+ORCHESTRATOR_GRPC_PORT ?= $(or $(shell sed -n 's/^ORCHESTRATOR_GRPC_PORT=//p' .env 2>/dev/null | tail -1),9090)
+ORCHESTRATOR_GRPC_ADDR ?= localhost:$(ORCHESTRATOR_GRPC_PORT)
 LDFLAGS := -s -w \
 	-X $(GO_PKG)/internal/platform/buildinfo.Version=$(VERSION) \
 	-X $(GO_PKG)/internal/platform/buildinfo.Commit=$(COMMIT) \
@@ -132,7 +134,7 @@ build-go: ## Build Go binaries into bin/
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/platformctl ./cli/cmd/platformctl
 
 integration-test: ## Run integration tests against the Docker stack
-	POSTGRES_PORT=$(POSTGRES_PORT) $(COMPOSE) up -d --build postgres nats redis minio minio-init api orchestrator
+	POSTGRES_PORT=$(POSTGRES_PORT) $(COMPOSE) up -d --build postgres nats redis minio minio-init api orchestrator worker
 	@echo "Waiting for the API..."
 	@for i in $$(seq 1 60); do \
 		if curl -fsS "$(API_URL)/healthz" >/dev/null 2>&1; then break; fi; \
@@ -144,6 +146,7 @@ integration-test: ## Run integration tests against the Docker stack
 	ORCHESTRATOR_DATABASE_URL="$(ORCHESTRATOR_DATABASE_URL)" \
 	POSTGRES_DATABASE_URL="$(POSTGRES_DATABASE_URL)" \
 	ORCHESTRATOR_NATS_URL="$(NATS_URL)" \
+	ORCHESTRATOR_GRPC_ADDR="$(ORCHESTRATOR_GRPC_ADDR)" \
 	$(GO) test -tags=integration -count=1 ./tests/integration/...
 
 proto: ## Regenerate Go code from proto/ (requires protoc and plugins)

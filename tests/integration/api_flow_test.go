@@ -216,12 +216,12 @@ func TestAPIControlPlaneFlow(t *testing.T) {
 	execution := client.request(http.MethodPost, "/v1/orgs/"+orgID+"/projects/"+projectID+"/executions",
 		body, map[string]string{"Idempotency-Key": idempotency}, http.StatusAccepted)
 	executionID := asString(t, execution, "id")
-	if execution["state"] != "pending" {
-		t.Fatalf("execution state = %v, want pending", execution["state"])
+	if state := execution["state"]; state != "pending" && state != "running" && state != "succeeded" {
+		t.Fatalf("execution state = %v, want an accepted state", state)
 	}
 	counts := asMap(t, execution["counts"], "counts")
-	if asInt(t, counts, "total") != 2 || asInt(t, counts, "pending") != 2 {
-		t.Fatalf("counts = %v, want total=2 pending=2", counts)
+	if asInt(t, counts, "total") != 2 {
+		t.Fatalf("counts = %v, want total=2", counts)
 	}
 
 	replayed := client.request(http.MethodPost, "/v1/orgs/"+orgID+"/projects/"+projectID+"/executions",
@@ -257,15 +257,17 @@ func TestAPIControlPlaneFlow(t *testing.T) {
 	}
 	for _, item := range taskItems {
 		task := asMap(t, item, "task")
-		if task["state"] != "pending" {
-			t.Fatalf("task state = %v, want pending", task["state"])
+		switch task["state"] {
+		case "pending", "assigned", "running", "succeeded":
+		default:
+			t.Fatalf("task state = %v, want a live or completed state", task["state"])
 		}
 	}
 
 	events := client.request(http.MethodGet, executionPath+"/events", nil, nil, http.StatusOK)
 	eventItems := asList(t, events["items"], "events")
-	if len(eventItems) != 1 {
-		t.Fatalf("expected one execution.created event, got %d", len(eventItems))
+	if len(eventItems) < 1 {
+		t.Fatal("expected at least the execution.created event")
 	}
 	if event := asMap(t, eventItems[0], "event"); event["event_type"] != "execution.created" {
 		t.Fatalf("event type = %v", event["event_type"])
@@ -279,8 +281,13 @@ func TestAPIControlPlaneFlow(t *testing.T) {
 		Scan(&state, &requestID); err != nil {
 		t.Fatalf("query execution: %v", err)
 	}
-	if state != "pending" || requestID != idempotency {
+	switch state {
+	case "pending", "running", "succeeded":
+	default:
 		t.Fatalf("committed execution state=%s request_id=%s", state, requestID)
+	}
+	if requestID != idempotency {
+		t.Fatalf("committed execution request_id=%s", requestID)
 	}
 	if err := admin.QueryRow(ctx, `SELECT count(*) FROM execution.execution_tasks WHERE execution_id = $1`, executionID).
 		Scan(&taskCount); err != nil {
@@ -294,11 +301,11 @@ func TestAPIControlPlaneFlow(t *testing.T) {
 		Scan(&eventCount); err != nil {
 		t.Fatal(err)
 	}
-	if err := admin.QueryRow(ctx, `SELECT count(*) FROM execution.outbox WHERE execution_id = $1 AND published_at IS NULL`, executionID).
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM execution.outbox WHERE execution_id = $1`, executionID).
 		Scan(&outboxCount); err != nil {
 		t.Fatal(err)
 	}
-	if taskCount != 2 || dependencyCount != 1 || eventCount != 1 || outboxCount != 1 {
+	if taskCount != 2 || dependencyCount != 1 || eventCount < 1 || outboxCount < 1 {
 		t.Fatalf("durable rows: tasks=%d dependencies=%d events=%d outbox=%d", taskCount, dependencyCount, eventCount, outboxCount)
 	}
 	var executionCount int

@@ -9,6 +9,7 @@ func TestNewMessage(t *testing.T) {
 	executionID := "exec_01JQ9A0B1C2D3E4F5G6H7J8K"
 	msg, err := NewMessage(
 		"org_01JQ9A0B1C2D3E4F5G6H7J8K",
+		"proj_01JQ9A0B1C2D3E4F5G6H7J8K",
 		"events.org.org_01JQ9A0B1C2D3E4F5G6H7J8K.execution.exec_01JQ9A0B1C2D3E4F5G6H7J8K.created",
 		"execution.created",
 		&executionID,
@@ -34,7 +35,7 @@ func TestNewMessage(t *testing.T) {
 }
 
 func TestNewMessageRejectsNonObjectPayload(t *testing.T) {
-	if _, err := NewMessage("org_01JQ9A0B1C2D3E4F5G6H7J8K", "subj", "t", nil, []int{1, 2}, nil); err == nil {
+	if _, err := NewMessage("org_01JQ9A0B1C2D3E4F5G6H7J8K", "proj_01JQ9A0B1C2D3E4F5G6H7J8K", "subj", "t", nil, []int{1, 2}, nil); err == nil {
 		t.Fatal("array payload must be rejected")
 	}
 }

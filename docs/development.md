@@ -27,11 +27,11 @@ That is the entire path. `make dev` is the single documented command once depend
 
 | Service | URL | Notes |
 |---|---|---|
-| Dashboard | http://localhost:3000 | Demo data until Phase 05 |
+| Dashboard | http://localhost:3000 | Demo data until the dashboard wiring phase |
 | API | http://localhost:8080 | `/healthz`, `/readyz`, `/v1/meta` |
 | Orchestrator gRPC | localhost:9090 | reflection enabled in development |
-| Orchestrator HTTP | http://localhost:8081 | health and version |
-| Worker HTTP | http://localhost:8082 | health and version |
+| Orchestrator HTTP | http://localhost:8081 | health, version, operator messaging status/redrive |
+| Worker HTTP | http://localhost:8082 | health, version, `/v1/consumer` delivery counters |
 | PostgreSQL | localhost:5432 | `agent_platform`, user `postgres`/`postgres` |
 | NATS | localhost:4222 / 8222 | JetStream enabled; 8222 is monitoring |
 | Redis | localhost:6379 | |
@@ -39,8 +39,9 @@ That is the entire path. `make dev` is the single documented command once depend
 
 The ports above are defaults. Every published port is configurable in `.env` (`POSTGRES_PORT`, `NATS_PORT`,
 `REDIS_PORT`, `MINIO_API_PORT`, `API_PORT`, `ORCHESTRATOR_GRPC_PORT`, `ORCHESTRATOR_HTTP_PORT`, `WORKER_PORT`,
-`DASHBOARD_PORT`). `make integration-test` derives `API_URL`, database URLs and the NATS URL from the same values,
-so a remapped local stack still runs the full suite.
+`DASHBOARD_PORT`). `make integration-test` derives `API_URL`, database URLs, the NATS URL and the orchestrator
+gRPC address from the same values (including `ORCHESTRATOR_GRPC_PORT`), so a remapped local stack still runs the
+full suite.
 
 Migration order is `control` then `execution`; the one-shot `migrate` service enforces it. Application containers
 wait for it with `depends_on: service_completed_successfully`.
@@ -211,7 +212,7 @@ These are the places where the project chose the smaller option on purpose. Revi
 | HTTP/2 gRPC contracts generated, no Python stubs | Python speaks to the worker over a UDS; generating stubs before the runtime ABI exists adds dead code. | Runtime ABI implementation. |
 | `apps/docs` deferred | Authored docs are reviewed as Markdown in `/docs`; a docs site is packaging, not content. | Docs need search/versioning/interactive API reference. |
 | `tests/e2e`, `tests/load`, `tests/chaos` placeholders | Their targets (API, execution lifecycle, fault injection) do not exist yet. | The first vertical slice and the scheduler land. |
-| Dashboard fixture data | The API exists, but the dashboard still renders fixtures. | Phase 05 API wiring (list + SSE). |
+| Dashboard fixture data | The API exists, but the dashboard still renders fixtures. | The dashboard wiring phase (list + SSE). |
 
 ## CI
 
@@ -221,8 +222,8 @@ These are the places where the project chose the smaller option on purpose. Revi
 2. Python: Ruff, format check, mypy and pytest for both projects.
 3. Dashboard: Biome, `tsc`, production build.
 4. Compose: validates `docker-compose.yml`.
-5. Integration: builds and starts the API/orchestrator, applies migrations, then runs the infrastructure,
-   schema/RLS/immutability, outbox and full API flow suites.
+5. Integration: builds and starts the API, orchestrator and worker, applies migrations, then runs the
+   infrastructure, schema/RLS/immutability, outbox, API flow, redelivery/duplicate and DLQ/redrive suites.
 
 No job needs secrets. External model providers are never called by tests.
 
@@ -237,7 +238,18 @@ The non-Docker database/NATS URLs are derived by `make integration-test`; when r
 **`schema "control" is missing`** — migrations have not run: `make migrate`.
 
 **A service is unhealthy but the container runs** — check `make logs`. `/readyz` fails when a dependency is
-down; `/healthz` only proves the process is alive.
+down; `/healthz` only proves the process is alive. The worker's `/readyz` also requires a registered control
+session, so an orchestrator outage makes the worker unready while its consumer drains.
+
+**Operator messaging endpoints** — set `ORCHESTRATOR_ADMIN_TOKEN` to use `GET /v1/messaging/status` and
+`POST /v1/messaging/dlq/redrive` on the orchestrator HTTP port. The routes return 404 when the token is empty.
+For a quick redrive:
+
+```bash
+curl -H "Authorization: Bearer $ORCHESTRATOR_ADMIN_TOKEN" \
+  -X POST http://localhost:8081/v1/messaging/dlq/redrive \
+  -d '{"worker_id":"wrk_worker_01","limit":10}'
+```
 
 **Image pull failure for object storage** — see [Object storage](#object-storage) above; the image is pinned and
 must exist in the registry.

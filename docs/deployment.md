@@ -177,7 +177,14 @@ docker compose exec -T postgres pg_dump -U postgres -Fc agent_platform > "agent_
 - Restore with `pg_restore` into an empty database.
 - Object storage becomes authoritative for checkpoints and artifacts when the worker/runtime slice lands; back up
   the bucket (volume snapshot or `mc mirror`) once it is used.
-- NATS and Redis hold no authoritative state; do not back them up.
+- NATS and Redis hold no authoritative state; do not back them up. `TASK_DISPATCH` is a work-queue stream,
+  `EVENTS` retains 72 hours and `TASK_DLQ` retains dead letters for 7 days. Setting
+  `ORCHESTRATOR_STREAM_REPLICAS=3` requires a three-node NATS cluster; do not raise it on a single node.
+- Set `ORCHESTRATOR_ADMIN_TOKEN` to a strong random value if operator status/redrive is needed. The orchestrator
+  port is removed from the host by the VPS override, so the surface is reachable only inside the Compose network;
+  leave the token empty to disable both routes. Worker IDs must match `^wrk_[A-Za-z0-9_-]{8,64}$`.
+- Worker control-plane gRPC is plaintext inside the private Compose network in this phase. Terminate TLS at the
+  network boundary or add mTLS before running workers across hosts.
 
 ## 8. Updating images and base images
 
@@ -194,7 +201,7 @@ docker compose exec -T postgres pg_dump -U postgres -Fc agent_platform > "agent_
 | Liveness | `curl -fsS localhost:8080/healthz` |
 | Readiness (database) | `curl -fsS localhost:8080/readyz` |
 | Orchestrator dependencies | `curl -fsS localhost:8081/readyz` |
-| Worker NATS connection | `curl -fsS localhost:8082/readyz` |
+| Worker NATS and control session | `curl -fsS localhost:8082/readyz` |
 | Service state | `docker compose ps` |
 | Logs | `docker compose logs -f --tail=100` |
 

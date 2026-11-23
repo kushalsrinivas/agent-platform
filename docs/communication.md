@@ -172,6 +172,7 @@ database/NATS credentials.
 |---|---|---|---|
 | `TASK_DISPATCH` | `tasks.dispatch.<worker_id>` | `workqueue`, max age 24h, max bytes 4 GiB, duplicate window 2m | Durable hand-off of a committed attempt to one worker. |
 | `EVENTS` | `events.>` | `limits`, max age 72h, max bytes 2 GiB, duplicate window 2m | Live UI fan-out of execution lifecycle events. Never read for correctness. |
+| `TASK_DLQ` | `tasks.dlq.<worker_id>` | `limits`, max age 7 days, max bytes 1 GiB | Dead-lettered dispatch messages with the original envelope, delivery count, error and execution context for inspection and controlled redrive. |
 
 Event subject schema:
 
@@ -195,8 +196,9 @@ Each worker creates one durable pull consumer on `TASK_DISPATCH`:
 
 - `durable = "worker-<worker_id>"`, `filter_subject = "tasks.dispatch.<worker_id>"`, explicit ack,
   `ack_wait = 60s`, `max_deliver = 5`, exponential backoff, `max_ack_pending = capacity`.
-- It fetches a batch no larger than free capacity. A message is acked only after the worker has either received
-  `task_accepted` from the orchestrator or determined the attempt is stale/foreign and dropped it. If the worker
+- It fetches a batch no larger than free capacity. A message is acknowledged only after the worker has either
+  committed the attempt result through the orchestrator (`ReportTaskResult`) or determined the attempt is
+  stale/foreign and dropped it. Acceptance alone is not enough: a broker ack is not task completion. If the worker
   crashes first, redelivery happens, but the lease is the real recovery mechanism.
 - If redelivery exhausts `max_deliver`, the message is dead-lettered to `tasks.dlq.<worker_id>` with the original
   envelope and a failure reason. This is an alert, not a state transition; the reaper still owns the task.
@@ -210,6 +212,21 @@ The API uses an ephemeral consumer with `deliver_policy = new` per SSE connectio
 Events are decoded only if `schema_version` is supported; unknown message types are ignored and counted. Consumers
 never assume NATS ordering across subjects; per-execution ordering comes from the event `seq` field.
 
+### Dead letters and redrive
+
+- A handler may classify a failure as permanent (malformed payload, wrong worker, invalid result) or transient.
+  Permanent failures are published to `tasks.dlq.<worker_id>` immediately; transient failures are `Nak`ed with
+  exponential backoff and dead-lettered after `max_deliver` attempts.
+- The DLQ envelope preserves the original message bytes, subject, message ID, tenant/project/execution/task/attempt
+  identifiers, delivery count, error text and failure time. It is an alert and an audit record, never a state
+  transition; the reaper still owns the task.
+- The consumer acknowledges the original only after the DLQ publish succeeds, so a failed DLQ publish cannot lose
+  the message.
+- Operators redrive with `POST /v1/messaging/dlq/redrive` on the orchestrator's operator surface
+  (`ORCHESTRATOR_ADMIN_TOKEN`). Redrive republishes the original envelope to its original subject and acknowledges
+  the DLQ row only after the republish succeeds. Normal fencing still applies: a redriven message whose task is
+  already terminal is acknowledged as a duplicate.
+
 ### Deduplication
 
 - Outbox `message_id` is sent as the `Nats-Msg-Id` header. The broker suppresses duplicate publishes inside the
@@ -217,6 +234,8 @@ never assume NATS ordering across subjects; per-execution ordering comes from th
 - Beyond the window, duplicates are still harmless because every consumer is either idempotent (SSE dedupes by
   `seq`) or fenced (worker results). No consumer may use "message was seen" as the only idempotency mechanism for a
   logical transition.
+- Task results are reported over gRPC, not NATS. The result transaction is the durable completion; the broker ack
+  follows it.
 
 ## 7. Message envelope
 
@@ -260,7 +279,7 @@ Every NATS message uses this envelope. Normative JSON Schema: [`api/envelope.sch
 
 | `message_type` | Produced by | Payload (v1) |
 |---|---|---|
-| `task.dispatch` | orchestrator publisher | `attempt_id`, `attempt_number`, `task_id`, `node_id`, node type, pinned `agent_version_id`/`tool_version_id`, spec digest, `deadline`, `lease_expires_at`. The worker fetches the full pinned spec, inputs and credentials over gRPC (`GetTaskContext`, `GetTaskCredentials`) after acceptance, so the bus stays small and no secrets or blobs travel on it. |
+| `task.dispatch` | orchestrator publisher | `attempt_id` (envelope), `attempt_number`, `lease_id`, `task_id` (envelope), `node_id`, node type, pinned `agent_version_id`/`tool_version_id`, spec digest, `deadline`, `lease_expires_at`. The worker fetches the full pinned spec, inputs and credentials over gRPC (`GetTaskContext`, `GetTaskCredentials`) after acceptance, so the bus stays small and no secrets or blobs travel on it. |
 | `execution.created` | orchestrator publisher | `seq`, `workflow_version_id`, `state`, `state_version`, `counts`. Enables early UI display; catch-up remains REST. |
 | `execution.state_changed` | orchestrator publisher | `seq`, `from`, `to`, `state_version`, `reason`, `failure_code?`, `counts`. |
 | `task.state_changed` | orchestrator publisher | `seq`, `task_id`, `node_id`, `from`, `to`, `reason`, `attempt_id?`, `skip_reason?`, `state_version`. |

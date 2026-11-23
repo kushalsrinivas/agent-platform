@@ -289,10 +289,12 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 		}
 
 		subject := fmt.Sprintf("events.org.%s.execution.%s.created", req.OrgId, executionID)
-		message, err := outbox.NewMessage(req.OrgId, subject, "execution.created", &executionID, eventPayload, nil)
+		message, err := outbox.NewMessage(req.OrgId, req.ProjectId, subject, "execution.created", &executionID, eventPayload, nil)
 		if err != nil {
 			return err
 		}
+		message.CorrelationID = &executionID
+		message.Traceparent = nullableString(req.Traceparent)
 		store := outbox.NewStore(s.pool)
 		if err := store.Insert(ctx, tx, message); err != nil {
 			return err

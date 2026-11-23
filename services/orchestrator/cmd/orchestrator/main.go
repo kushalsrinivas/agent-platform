@@ -11,6 +11,9 @@ import (
 	"go.uber.org/zap"
 
 	orchestratorv1 "github.com/agent-platform/agent-platform/gen/orchestrator/v1"
+	workerv1 "github.com/agent-platform/agent-platform/gen/worker/v1"
+	"github.com/agent-platform/agent-platform/internal/messaging"
+	"github.com/agent-platform/agent-platform/internal/outbox"
 	"github.com/agent-platform/agent-platform/internal/platform/buildinfo"
 	"github.com/agent-platform/agent-platform/internal/platform/config"
 	"github.com/agent-platform/agent-platform/internal/platform/grpcserver"
@@ -19,7 +22,9 @@ import (
 	"github.com/agent-platform/agent-platform/internal/platform/natsconn"
 	"github.com/agent-platform/agent-platform/internal/platform/postgres"
 	"github.com/agent-platform/agent-platform/internal/platform/run"
+	"github.com/agent-platform/agent-platform/services/orchestrator/internal/admin"
 	"github.com/agent-platform/agent-platform/services/orchestrator/internal/commands"
+	"github.com/agent-platform/agent-platform/services/orchestrator/internal/lifecycle"
 )
 
 type serviceConfig struct {
@@ -33,6 +38,14 @@ type serviceConfig struct {
 	MaxActiveExecutions int `env:"ORCHESTRATOR_MAX_ACTIVE_EXECUTIONS" envDefault:"20"`
 	MaxQueuedExecutions int `env:"ORCHESTRATOR_MAX_QUEUED_EXECUTIONS" envDefault:"100"`
 	MaxExecutionSeconds int `env:"ORCHESTRATOR_MAX_EXECUTION_SECONDS" envDefault:"86400"`
+
+	StreamReplicas    int    `env:"ORCHESTRATOR_STREAM_REPLICAS" envDefault:"1"`
+	AdminToken        string `env:"ORCHESTRATOR_ADMIN_TOKEN"`
+	DispatcherMillis  int    `env:"ORCHESTRATOR_DISPATCH_INTERVAL_MS" envDefault:"500"`
+	ReaperMillis      int    `env:"ORCHESTRATOR_REAPER_INTERVAL_MS" envDefault:"2000"`
+	PublisherMillis   int    `env:"ORCHESTRATOR_OUTBOX_INTERVAL_MS" envDefault:"250"`
+	PublisherBatch    int    `env:"ORCHESTRATOR_OUTBOX_BATCH" envDefault:"50"`
+	PublisherRetrySec int    `env:"ORCHESTRATOR_OUTBOX_RETRY_SECONDS" envDefault:"5"`
 }
 
 func main() {
@@ -77,7 +90,10 @@ func main() {
 	}
 	log.Info("jetstream ready", zap.Int("streams", account.Streams), zap.Int("consumers", account.Consumers))
 
-	// The API calls this service. Unimplemented handlers return codes.Unimplemented until Phase 03.
+	if err := messaging.EnsureStreams(ctx, js, messaging.StreamsConfig{Replicas: cfg.StreamReplicas}, log); err != nil {
+		log.Fatal("nats streams unavailable", zap.Error(err))
+	}
+
 	grpcSrv, err := grpcserver.New(cfg.GRPCAddr, cfg.Environment, log)
 	if err != nil {
 		log.Fatal("grpc listen failed", zap.Error(err))
@@ -87,6 +103,16 @@ func main() {
 		MaxQueued:            cfg.MaxQueuedExecutions,
 		MaxExecutionDuration: time.Duration(cfg.MaxExecutionSeconds) * time.Second,
 	}))
+
+	lifecycleService := lifecycle.New(pool, log)
+	workerv1.RegisterWorkerControlServer(grpcSrv.Server, lifecycle.NewWorkerServer(lifecycleService, log))
+	publisher := messaging.NewPublisherLoop(outbox.NewStore(pool),
+		messaging.NewNATSPublisher(js, log), log,
+		time.Duration(cfg.PublisherMillis)*time.Millisecond,
+		cfg.PublisherBatch,
+		time.Duration(cfg.PublisherRetrySec)*time.Second,
+	)
+	adminHandler := admin.New(lifecycleService, js, cfg.AdminToken, log)
 
 	httpSrv := httpserver.New(httpserver.Options{
 		Addr:   cfg.HTTPAddr,
@@ -99,10 +125,24 @@ func main() {
 	httpSrv.Router().Get("/v1/version", func(w http.ResponseWriter, _ *http.Request) {
 		httpserver.WriteJSON(w, http.StatusOK, buildinfo.Info())
 	})
+	adminHandler.Routes(httpSrv.Router())
 
-	log.Info("starting orchestrator")
+	log.Info("starting orchestrator",
+		zap.Int("stream_replicas", cfg.StreamReplicas),
+		zap.Bool("operator_api", cfg.AdminToken != ""),
+	)
 
-	if err := run.Group(ctx, grpcSrv.Start, httpSrv.Start); err != nil {
+	if err := run.Group(ctx,
+		grpcSrv.Start,
+		httpSrv.Start,
+		publisher.Run,
+		func(ctx context.Context) error {
+			return lifecycleService.RunDispatcher(ctx, time.Duration(cfg.DispatcherMillis)*time.Millisecond)
+		},
+		func(ctx context.Context) error {
+			return lifecycleService.RunReaper(ctx, time.Duration(cfg.ReaperMillis)*time.Millisecond)
+		},
+	); err != nil {
 		log.Fatal("orchestrator stopped", zap.Error(err))
 	}
 	log.Info("orchestrator stopped cleanly")
