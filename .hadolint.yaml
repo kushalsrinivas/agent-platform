@@ -1,0 +1,5 @@
+# Base images are pinned by tag; listing exact distro package versions would break builds whenever a mirror
+# prunes an old package. Revisit with digest pinning + a rebuild cadence before production.
+ignored:
+  - DL3008 # apt-get install without version pin
+  - DL3018 # apk add without version pin

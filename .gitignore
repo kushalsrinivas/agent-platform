@@ -1,0 +1,34 @@
+# Secrets and local overrides
+.env
+.env.local
+*.local
+
+# Go
+/bin/
+/dist/
+*.test
+*.out
+coverage/
+
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.npm/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+
+# Local data and tool artifacts
+.data/
+tmp/
+.DS_Store
+*.log

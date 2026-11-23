@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify modules
+        run: go mod tidy && git diff --exit-code -- go.mod go.sum
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race -count=1 ./...
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: [runtimes/python, sdk/python]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        working-directory: ${{ matrix.project }}
+        run: uv sync --frozen
+      - name: Lint
+        working-directory: ${{ matrix.project }}
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Type check
+        working-directory: ${{ matrix.project }}
+        run: uv run mypy
+      - name: Test
+        working-directory: ${{ matrix.project }}
+        run: uv run pytest
+
+  web:
+    name: Dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+      - name: Install
+        working-directory: apps/dashboard
+        run: npm ci
+      - name: Lint and type check
+        working-directory: apps/dashboard
+        run: npm run lint
+      - name: Build
+        working-directory: apps/dashboard
+        run: npm run build
+
+  compose:
+    name: Compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+
+  integration:
+    name: Integration (infrastructure)
+    runs-on: ubuntu-latest
+    needs: [go]
+    env:
+      # Avoid collisions with anything preinstalled on the runner.
+      POSTGRES_PORT: 55432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start data stores
+        run: docker compose up -d postgres nats redis minio minio-init
+      - name: Apply migrations
+        run: docker compose run --rm migrate
+      - name: Wait for NATS
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8222/healthz >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          echo "NATS did not become healthy" >&2
+          exit 1
+      - name: Run integration tests
+        env:
+          API_DATABASE_URL: postgres://app_api:dev_api_password@localhost:55432/agent_platform?sslmode=disable
+        run: go test -tags=integration -count=1 ./tests/integration/...
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Stop
+        if: always()
+        run: docker compose down -v --remove-orphans

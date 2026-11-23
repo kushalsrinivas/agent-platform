@@ -1,0 +1,227 @@
+name: agent-platform
+
+x-go-build: &go-build
+  context: .
+  dockerfile: infrastructure/docker/go-service.Dockerfile
+
+x-go-env: &go-env
+  ENVIRONMENT: development
+  LOG_LEVEL: info
+  LOG_FORMAT: json
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: agent_platform
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agent_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.15-alpine
+    command: ["-js", "-m", "8222", "--store_dir", "/data"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz | grep -q ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Official MinIO images were withdrawn from Docker Hub in September 2026. Silo is a maintained,
+  # S3-compatible drop-in built from the MinIO codebase; it is local development infrastructure only.
+  # Production uses any S3-compatible store. See docs/development.md#object-storage.
+  minio:
+    image: pgsty/silo:RELEASE.2026-11-12T00-00-00Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  minio-init:
+    image: pgsty/mc:RELEASE.2026-11-12T00-00-00Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin123} &&
+        mc mb --ignore-existing local/agent-platform &&
+        mc anonymous set none local/agent-platform
+    restart: "no"
+
+  # Migrations are a one-shot job. Services wait for successful completion.
+  migrate:
+    image: migrate/migrate:v4.20.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        migrate -path /migrations/control \
+          -database "$$CONTROL_DATABASE_URL" up &&
+        migrate -path /migrations/execution \
+          -database "$$EXECUTION_DATABASE_URL" up
+    environment:
+      CONTROL_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/agent_platform?sslmode=disable&x-migrations-table=control_schema_migrations
+      EXECUTION_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/agent_platform?sslmode=disable&x-migrations-table=execution_schema_migrations
+    volumes:
+      - ./migrations/control:/migrations/control:ro
+      - ./migrations/execution:/migrations/execution:ro
+    restart: "no"
+
+  api:
+    build:
+      <<: *go-build
+      args:
+        SERVICE: api
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    environment:
+      <<: *go-env
+      API_HTTP_ADDR: ":8080"
+      API_DATABASE_URL: postgres://app_api:dev_api_password@postgres:5432/agent_platform?sslmode=disable
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      <<: *go-build
+      args:
+        SERVICE: orchestrator
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    environment:
+      <<: *go-env
+      ORCHESTRATOR_GRPC_ADDR: ":9090"
+      ORCHESTRATOR_HTTP_ADDR: ":8081"
+      ORCHESTRATOR_DATABASE_URL: postgres://app_orchestrator:dev_orchestrator_password@postgres:5432/agent_platform?sslmode=disable
+      ORCHESTRATOR_NATS_URL: nats://nats:4222
+    ports:
+      - "9090:9090"
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/readyz >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build:
+      <<: *go-build
+      args:
+        SERVICE: worker
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    environment:
+      <<: *go-env
+      WORKER_ID: worker-01
+      WORKER_HTTP_ADDR: ":8082"
+      WORKER_NATS_URL: nats://nats:4222
+      WORKER_ORCHESTRATOR_GRPC_ADDR: orchestrator:9090
+      WORKER_POOL: default
+      WORKER_MAX_CONCURRENCY: "4"
+    ports:
+      - "8082:8082"
+    depends_on:
+      nats:
+        condition: service_healthy
+      orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/readyz >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/dashboard.Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      # localhost can resolve to ::1 while the Next standalone server binds IPv4 only.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  nats-data:
+  redis-data:
+  minio-data:
