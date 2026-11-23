@@ -1,0 +1,124 @@
+// Worker <-> Python runtime contract.
+//
+// Transport: gRPC over a per-attempt Unix domain socket. The worker owns the process lifecycle; the runtime has no
+// database, NATS or object-store credentials. Cancellation is delivered by the worker cancelling the RPC and then
+// terminating the process group (SIGTERM, grace, SIGKILL); the runtime must not rely on cooperative cancellation
+// alone.
+//
+// Versioning: package v1 is additive-only. Never reuse field numbers. See docs/communication.md §8 and ADR 0008.
+syntax = "proto3";
+
+package platform.runtime.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/agent-platform/agent-platform/gen/runtime/v1;runtimev1";
+
+// One sandbox process exposes both services. Agent nodes call ToolRuntime in-process or over the same UDS;
+// tool nodes call ToolRuntime directly. Tool calls inside an agent loop are not platform tasks.
+service AgentRuntime {
+  rpc ExecuteNode(ExecuteNodeRequest) returns (ExecuteNodeResponse);
+}
+
+service ToolRuntime {
+  rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+}
+
+message AgentTaskContext {
+  string org_id = 1;
+  string project_id = 2;
+  string execution_id = 3;
+  string task_id = 4;
+  string attempt_id = 5;
+  string node_id = 6;
+  string agent_version_id = 7;
+  // Immutable agent version spec, already validated by the control plane/orchestrator.
+  google.protobuf.Struct version_spec = 8;
+  google.protobuf.Struct execution_input = 9;
+  google.protobuf.Struct node_params = 10;
+  map<string, google.protobuf.Struct> upstream_outputs = 11;
+  google.protobuf.Timestamp deadline = 12;
+  string traceparent = 13;
+  // Short-lived; never log, persist or include in output/checkpoint.
+  map<string, string> credentials = 14;
+}
+
+message ExecuteNodeRequest {
+  AgentTaskContext context = 1;
+  // Checkpoint bytes fetched by the worker. Empty means start from the beginning.
+  bytes resume_checkpoint = 2;
+  int32 checkpoint_schema_version = 3;
+  int32 runtime_abi = 4;
+}
+
+message ExecuteNodeResponse {
+  RuntimeOutcome outcome = 1;
+  google.protobuf.Struct output = 2;
+  // Serialized agent state. Limited to 32 MiB. Empty when checkpointing is disabled.
+  bytes checkpoint = 3;
+  int32 checkpoint_schema_version = 4;
+  RuntimeMetrics metrics = 5;
+  RuntimeFailure failure = 6;
+  string runtime_version = 7;
+}
+
+message ToolTaskContext {
+  string org_id = 1;
+  string project_id = 2;
+  string execution_id = 3;
+  string task_id = 4;
+  string attempt_id = 5;
+  string node_id = 6;
+  string tool_id = 7;
+  int32 tool_version = 8;
+  google.protobuf.Struct version_spec = 9;
+  google.protobuf.Struct arguments = 10;
+  google.protobuf.Timestamp deadline = 11;
+  string traceparent = 12;
+  map<string, string> credentials = 13;
+}
+
+message ExecuteToolRequest {
+  ToolTaskContext context = 1;
+}
+
+message ExecuteToolResponse {
+  RuntimeOutcome outcome = 1;
+  google.protobuf.Struct output = 2;
+  RuntimeMetrics metrics = 3;
+  RuntimeFailure failure = 4;
+  string runtime_version = 5;
+}
+
+enum RuntimeOutcome {
+  RUNTIME_OUTCOME_UNSPECIFIED = 0;
+  RUNTIME_OUTCOME_SUCCEEDED = 1;
+  RUNTIME_OUTCOME_FAILED = 2;
+  RUNTIME_OUTCOME_CANCELLED = 3;
+}
+
+message RuntimeFailure {
+  string code = 1;
+  string message = 2;
+  RuntimeFailureClassification classification = 3;
+  // True when the runtime cannot rule out that an external side effect occurred before failing.
+  bool effect_uncertain = 4;
+}
+
+enum RuntimeFailureClassification {
+  RUNTIME_FAILURE_CLASSIFICATION_UNSPECIFIED = 0;
+  RUNTIME_FAILURE_CLASSIFICATION_TRANSIENT = 1;
+  RUNTIME_FAILURE_CLASSIFICATION_PERMANENT = 2;
+  RUNTIME_FAILURE_CLASSIFICATION_TIMEOUT = 3;
+  RUNTIME_FAILURE_CLASSIFICATION_CANCELLED = 4;
+  RUNTIME_FAILURE_CLASSIFICATION_RUNTIME_ERROR = 5;
+}
+
+message RuntimeMetrics {
+  int64 duration_ms = 1;
+  int64 tokens_in = 2;
+  int64 tokens_out = 3;
+  int32 steps = 4;
+  google.protobuf.Struct extra = 5;
+}

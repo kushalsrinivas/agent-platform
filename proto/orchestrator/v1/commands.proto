@@ -1,0 +1,81 @@
+// API <-> orchestrator command contract.
+//
+// Transport: gRPC over TLS inside the control-plane network. The API is the only caller; the orchestrator is the
+// only writer of execution state. Every command carries the authenticated principal and is idempotent by request ID
+// or by execution state.
+//
+// Versioning: package v1 is additive-only. Never reuse field numbers. See docs/communication.md §8.
+syntax = "proto3";
+
+package platform.orchestrator.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/agent-platform/agent-platform/gen/orchestrator/v1;orchestratorv1";
+
+service ExecutionCommands {
+  // Validates the published workflow version, materialises tasks and commits the execution before returning.
+  rpc SubmitExecution(SubmitExecutionRequest) returns (SubmitExecutionResponse);
+
+  // Idempotent while non-terminal; records cancel_reason and starts propagation.
+  rpc CancelExecution(CancelExecutionRequest) returns (CancelExecutionResponse);
+
+  // Platform operator action relayed by the API. Idempotent.
+  rpc DrainWorker(DrainWorkerRequest) returns (DrainWorkerResponse);
+}
+
+message SubmitExecutionRequest {
+  string org_id = 1;
+  string project_id = 2;
+  string workflow_id = 3;
+  int32 workflow_version = 4;
+  google.protobuf.Struct input = 5;
+  // Stable across retries; the unique key for execution deduplication.
+  string request_id = 6;
+  string requested_by = 7;
+  google.protobuf.Timestamp deadline_at = 8;
+  string traceparent = 9;
+}
+
+message SubmitExecutionResponse {
+  string execution_id = 1;
+  string state = 2;
+  int64 state_version = 3;
+  // True when an existing execution was returned for the same request_id.
+  bool replayed = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message CancelExecutionRequest {
+  string org_id = 1;
+  string execution_id = 2;
+  string requested_by = 3;
+  string reason = 4;
+  // Caller-supplied idempotency token for logs; state itself makes the operation idempotent.
+  string request_id = 5;
+  string traceparent = 6;
+}
+
+message CancelExecutionResponse {
+  string execution_id = 1;
+  string state = 2;
+  int64 state_version = 3;
+  int32 cancel_epoch = 4;
+  // False when the execution was already terminal/failing and no transition occurred.
+  bool accepted = 5;
+}
+
+message DrainWorkerRequest {
+  string worker_id = 1;
+  string requested_by = 2;
+  string reason = 3;
+  int32 grace_period_seconds = 4;
+  string traceparent = 5;
+}
+
+message DrainWorkerResponse {
+  string worker_id = 1;
+  string status = 2;
+  bool accepted = 3;
+}

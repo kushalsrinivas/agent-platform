@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-platform.example/schemas/envelope/v1.json",
+  "title": "Internal message envelope v1",
+  "description": "Envelope for every NATS message. Payload is validated separately per message_type and schema_version. Consumers must ignore unknown fields and unknown message types; adding optional fields is not a version bump. Removal, type change or semantic change requires a new envelope version (ADR: communication.md §8).",
+  "type": "object",
+  "required": [
+    "message_id",
+    "message_type",
+    "schema_version",
+    "timestamp",
+    "payload"
+  ],
+  "properties": {
+    "message_id": {
+      "type": "string",
+      "pattern": "^msg_[0-9A-Za-z_-]{8,64}$",
+      "description": "Unique and stable across retries. Sent as the Nats-Msg-Id header."
+    },
+    "message_type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+      "description": "Canonical type, e.g. task.dispatch. Selects the payload contract. Unknown types are ignored by consumers."
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Version of the payload contract for this message_type, independent of the envelope version."
+    },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^org_[0-9A-Za-z_-]{8,64}$",
+      "description": "Required for tenant-scoped message types. Consumers reject a foreign or missing tenant."
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^proj_[0-9A-Za-z_-]{8,64}$"
+    },
+    "execution_id": {
+      "type": "string",
+      "pattern": "^exec_[0-9A-Za-z_-]{8,64}$"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^task_[0-9A-Za-z_-]{8,64}$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^att_[0-9A-Za-z_-]{8,64}$"
+    },
+    "worker_id": {
+      "type": "string",
+      "pattern": "^wrk_[0-9A-Za-z_-]{8,64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Producer time, UTC. Diagnostic only; never used for ordering or leases."
+    },
+    "correlation_id": {
+      "type": "string",
+      "description": "Root correlation ID. Defaults to execution_id."
+    },
+    "causation_id": {
+      "type": "string",
+      "description": "The event or command that caused this message."
+    },
+    "traceparent": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+      "description": "W3C Trace Context traceparent."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Message-type-specific payload. Never contains secrets or blobs over 64 KiB. Shape is validated against the type's schema/version."
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "message_id": "msg_01J8Z6R5T9K3M2V7Q4W8X1Y0Z6",
+      "message_type": "task.dispatch",
+      "schema_version": 1,
+      "tenant_id": "org_01J8Z6R5T9K3M2V7Q4W8",
+      "project_id": "proj_01J8Z6R5T9K3M2V7Q4W8",
+      "execution_id": "exec_01J8Z6R5T9K3M2V7Q4W8",
+      "task_id": "task_01J8Z6R5T9K3M2V7Q4W8",
+      "attempt_id": "att_01J8Z6R5T9K3M2V7Q4W8",
+      "worker_id": "wrk_01J8Z6R5T9K3M2V7Q4W8",
+      "timestamp": "2026-11-22T12:00:00.000Z",
+      "correlation_id": "exec_01J8Z6R5T9K3M2V7Q4W8",
+      "causation_id": "evt_01J8Z6R5T9K3M2V7Q4W8",
+      "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+      "payload": {
+        "attempt_number": 1,
+        "node_id": "research",
+        "node_type": "agent",
+        "agent_version_id": "agtv_01J8Z6R5T9K3M2V7Q4W8",
+        "spec_digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "deadline": "2026-11-22T12:10:00.000Z",
+        "lease_expires_at": "2026-11-22T12:00:30.000Z"
+      }
+    },
+    {
+      "message_id": "msg_01J8Z6R5T9K3M2V7Q4W8X1Y0Z7",
+      "message_type": "execution.state_changed",
+      "schema_version": 1,
+      "tenant_id": "org_01J8Z6R5T9K3M2V7Q4W8",
+      "project_id": "proj_01J8Z6R5T9K3M2V7Q4W8",
+      "execution_id": "exec_01J8Z6R5T9K3M2V7Q4W8",
+      "timestamp": "2026-11-22T12:00:01.000Z",
+      "correlation_id": "exec_01J8Z6R5T9K3M2V7Q4W8",
+      "payload": {
+        "seq": 2,
+        "from": "pending",
+        "to": "running",
+        "state_version": 2,
+        "reason": "first_attempt_accepted",
+        "counts": {
+          "total": 3,
+          "pending": 2,
+          "assigned": 0,
+          "running": 1,
+          "succeeded": 0,
+          "failed": 0,
+          "cancelled": 0,
+          "skipped": 0
+        }
+      }
+    }
+  ]
+}

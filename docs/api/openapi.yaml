@@ -1,0 +1,1372 @@
+openapi: 3.1.0
+info:
+  title: Agent Platform API
+  version: 1.0.0
+  summary: External REST and SSE contract for the agent platform.
+  description: |
+    Normative initial API contract for Phase 01.
+
+    **Authentication.** Programmatic clients send `Authorization: Bearer <OIDC JWT>`. Browser clients use the
+    dashboard's HttpOnly session cookie and must send the CSRF token header on mutations. The server derives the
+    caller's organisations from membership rows; an `org_id` in a path is verified, never trusted.
+
+    **Tenancy.** Every path below includes the organisation. Cross-tenant IDs return `404`, not `403`, to avoid
+    leaking existence.
+
+    **Idempotency.** `POST .../executions` requires `Idempotency-Key`. Repeating the same key with the same body
+    returns the original execution with `202`; a different body with the same key returns `409`.
+
+    **Execution state is server state.** This API never exposes a "set state" operation. Cancellation is the only
+    execution transition a caller may request. State changes arrive via SSE or polling.
+
+    **Versioning.** `/v1` is additive-only. Breaking changes move to `/v2`.
+  contact:
+    name: Platform Team
+  license:
+    name: Proprietary
+    identifier: UNLICENSED
+servers:
+  - url: https://api.example.com
+    description: Production
+  - url: http://localhost:8080
+    description: Local development
+security:
+  - oidcBearer: []
+  - sessionCookie: []
+tags:
+  - name: Organizations
+    description: Organisations the caller belongs to. Organisations are provisioned by platform operators; there is no public create endpoint in Phase 1.
+  - name: Projects
+    description: Projects within an organisation.
+  - name: Agents
+    description: Agent definitions and immutable versions.
+  - name: Workflows
+    description: Workflow graphs and immutable published versions.
+  - name: Executions
+    description: Execution submission, state, tasks and live events.
+  - name: Workers
+    description: Platform-operator view of the worker fleet. Requires the identity provider's platform-operator role, not an organisation membership.
+  - name: Credentials
+    description: Write-only project credentials referenced by agent versions.
+paths:
+  /v1/orgs:
+    get:
+      tags: [Organizations]
+      operationId: listOrganizations
+      summary: List organisations the caller belongs to.
+      responses:
+        '200':
+          description: Organisations visible to the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Organization' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/orgs/{org_id}/projects:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      summary: List projects in an organisation.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Projects.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Project' }
+                  next_cursor:
+                    type: [string, 'null']
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Create a project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/orgs/{org_id}/projects/{project_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Projects]
+      operationId: getProject
+      summary: Get a project.
+      responses:
+        '200':
+          description: Project.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{org_id}/projects/{project_id}/agents:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Agents]
+      operationId: listAgents
+      summary: List agents.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Agents.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Agent' }
+                  next_cursor:
+                    type: [string, 'null']
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Agents]
+      operationId: createAgent
+      summary: Create an agent with an initial draft version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/AgentId'
+    get:
+      tags: [Agents]
+      operationId: getAgent
+      summary: Get an agent.
+      responses:
+        '200':
+          description: Agent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}/versions:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/AgentId'
+    get:
+      tags: [Agents]
+      operationId: listAgentVersions
+      summary: List versions, newest first.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Versions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AgentVersion' }
+                  next_cursor:
+                    type: [string, 'null']
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Agents]
+      operationId: createAgentVersion
+      summary: Create an immutable agent version.
+      description: |
+        Versions are insert-only. A version may be created as `draft`, then published once; content is immutable
+        from creation. Editing an agent requires creating a new version. `runtime.image_digest` must be a digest,
+        not a tag.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentVersionCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}/versions/{version}:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/AgentId'
+      - $ref: '#/components/parameters/VersionInt'
+    get:
+      tags: [Agents]
+      operationId: getAgentVersion
+      summary: Get one agent version.
+      responses:
+        '200':
+          description: Version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}/versions/{version}:publish:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/AgentId'
+      - $ref: '#/components/parameters/VersionInt'
+    post:
+      tags: [Agents]
+      operationId: publishAgentVersion
+      summary: Publish a draft agent version.
+      description: One-way `draft -> published`. Repeating on a published version returns `200` unchanged.
+      responses:
+        '200':
+          description: Published version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /v1/orgs/{org_id}/projects/{project_id}/workflows:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Workflows]
+      operationId: listWorkflows
+      summary: List workflows.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Workflows.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Workflow' }
+                  next_cursor:
+                    type: [string, 'null']
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Workflows]
+      operationId: createWorkflow
+      summary: Create a workflow with an initial draft version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workflow' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/WorkflowId'
+    get:
+      tags: [Workflows]
+      operationId: getWorkflow
+      summary: Get a workflow.
+      responses:
+        '200':
+          description: Workflow.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workflow' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}/versions:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/WorkflowId'
+    get:
+      tags: [Workflows]
+      operationId: listWorkflowVersions
+      summary: List versions, newest first.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Versions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/WorkflowVersion' }
+                  next_cursor:
+                    type: [string, 'null']
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Workflows]
+      operationId: createWorkflowVersion
+      summary: Create an immutable draft workflow version.
+      description: |
+        Validates the DAG, compiles every CEL `when` expression, resolves exact agent/tool versions and their
+        runtime ABIs. Reference IDs are exact; `latest` is not accepted. A failed validation changes nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkflowVersionCreate' }
+      responses:
+        '201':
+          description: Created draft.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}/versions/{version}:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/WorkflowId'
+      - $ref: '#/components/parameters/VersionInt'
+    get:
+      tags: [Workflows]
+      operationId: getWorkflowVersion
+      summary: Get one workflow version.
+      responses:
+        '200':
+          description: Version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}/versions/{version}:publish:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/WorkflowId'
+      - $ref: '#/components/parameters/VersionInt'
+    post:
+      tags: [Workflows]
+      operationId: publishWorkflowVersion
+      summary: Publish a draft workflow version.
+      description: |
+        One-way `draft -> published`. All referenced agent/tool versions must be published (not deprecated). Once
+        published, the graph is immutable and can be used to start executions. Repeating on a published version
+        returns `200`.
+      responses:
+        '200':
+          description: Published version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkflowVersion' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /v1/orgs/{org_id}/projects/{project_id}/executions:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [Executions]
+      operationId: createExecution
+      summary: Start an execution of a published workflow version.
+      description: |
+        Commits the execution, materialised tasks and outbox before responding. `202` means accepted, not
+        finished. The `Idempotency-Key` is required; reuse with an identical body returns the same execution.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExecutionCreate' }
+      responses:
+        '202':
+          description: Accepted and durably committed.
+          headers:
+            Location:
+              description: Canonical execution URL.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Execution' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Idempotency key reuse with a different body.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    get:
+      tags: [Executions]
+      operationId: listExecutions
+      summary: List executions, newest first.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: state
+          in: query
+          description: Filter by execution state.
+          schema: { $ref: '#/components/schemas/ExecutionState' }
+        - name: workflow_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Executions summary list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Execution' }
+                  next_cursor:
+                    type: [string, 'null']
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+    get:
+      tags: [Executions]
+      operationId: getExecution
+      summary: Get execution state and counts.
+      responses:
+        '200':
+          description: Execution.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Execution' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}:cancel:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+    post:
+      tags: [Executions]
+      operationId: cancelExecution
+      summary: Request cancellation.
+      description: |
+        Idempotent while the execution is `pending`, `running`, `cancel_requested` or `cancelled`. Returns `409`
+        for `succeeded`, `failed` and `failing`. Cancellation is best effort: external side effects may already
+        have occurred. The execution ends `cancelled` when all tasks are terminal.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        '202':
+          description: Cancellation accepted or already in effect.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Execution' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+    get:
+      tags: [Executions]
+      operationId: listExecutionTasks
+      summary: List tasks of an execution.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: state
+          in: query
+          schema: { $ref: '#/components/schemas/TaskState' }
+      responses:
+        '200':
+          description: Tasks.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Task' }
+                  next_cursor:
+                    type: [string, 'null']
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/tasks/{task_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [Executions]
+      operationId: getExecutionTask
+      summary: Get a task with its attempt history.
+      responses:
+        '200':
+          description: Task with attempts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/events:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+    get:
+      tags: [Executions]
+      operationId: listExecutionEvents
+      summary: Read the audit event history.
+      description: Ascending by `seq`. Use `after` for catch-up after an SSE reconnect.
+      parameters:
+        - name: after
+          in: query
+          description: Return events with `seq` greater than this value.
+          schema: { type: integer, minimum: 0, default: 0 }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Events.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Event' }
+                  next_cursor:
+                    type: [string, 'null']
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/stream:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+    get:
+      tags: [Executions]
+      operationId: streamExecution
+      summary: Stream live execution events (SSE).
+      description: |
+        `text/event-stream`. Each event's `id` is the execution event `seq`. `event` is one of
+        `execution.created`, `execution.state_changed`, `task.state_changed`, `task.attempt_finished`.
+        `data` is a JSON object including `seq`. Reconnect with `Last-Event-ID`; clients must dedupe duplicate IDs.
+        The server sends a heartbeat comment every 15 seconds and closes the connection after 30 minutes.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Last processed event sequence, for replay.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE frames.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/orgs/{org_id}/projects/{project_id}/credentials:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Credentials]
+      operationId: listCredentials
+      summary: List credential names (values are never returned).
+      responses:
+        '200':
+          description: Credential metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Credential' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Credentials]
+      operationId: createCredential
+      summary: Create or rotate a write-only credential.
+      description: Value is encrypted server-side and never readable through any API.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CredentialCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Credential' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /v1/orgs/{org_id}/projects/{project_id}/credentials/{name}:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+    delete:
+      tags: [Credentials]
+      operationId: deleteCredential
+      summary: Delete a credential. Fails if a published agent version references it.
+      responses:
+        '204':
+          description: Deleted.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/workers:
+    get:
+      tags: [Workers]
+      operationId: listWorkers
+      summary: List workers in the fleet (platform operators).
+      description: Not tenant-scoped. Requires the platform operator role.
+      parameters:
+        - name: pool
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/WorkerStatus' }
+      responses:
+        '200':
+          description: Workers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Worker' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/workers/{worker_id}:drain:
+    parameters:
+      - name: worker_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Workers]
+      operationId: drainWorker
+      summary: Stop assigning new attempts and finish current ones.
+      description: Platform operator only. Idempotent.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '202':
+          description: Drain requested.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Worker' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+components:
+  securitySchemes:
+    oidcBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-session
+  parameters:
+    OrgId:
+      name: org_id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^org_' }
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^proj_' }
+    AgentId:
+      name: agent_id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^agt_' }
+    WorkflowId:
+      name: workflow_id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^wf_' }
+    ExecutionId:
+      name: execution_id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^exec_' }
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^task_' }
+    VersionInt:
+      name: version
+      in: path
+      required: true
+      description: Monotonic integer version.
+      schema: { type: integer, minimum: 1 }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Client-generated unique key, 8-128 visible ASCII characters, retained 24h after terminal.
+      schema: { type: string, minLength: 8, maxLength: 128 }
+  responses:
+    Unauthorized:
+      description: Missing or invalid authentication.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated but not permitted.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found in this tenant.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: State, uniqueness or idempotency conflict.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unprocessable:
+      description: Semantically invalid (graph, versions, schema, limits).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Rate limit exceeded.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable code, e.g. `execution_terminal`, `idempotency_conflict`, `invalid_graph`.
+            message: { type: string }
+            details:
+              type: object
+              additionalProperties: true
+            request_id: { type: string }
+    Organization:
+      type: object
+      required: [id, name, slug, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        slug: { type: string }
+        created_at: { type: string, format: date-time }
+    Project:
+      type: object
+      required: [id, org_id, name, slug, created_at]
+      properties:
+        id: { type: string }
+        org_id: { type: string }
+        name: { type: string }
+        slug: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ProjectCreate:
+      type: object
+      required: [name, slug]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        slug: { type: string, pattern: '^[a-z][a-z0-9-]{1,62}$' }
+    Agent:
+      type: object
+      required: [id, org_id, project_id, name, latest_version, created_at]
+      properties:
+        id: { type: string }
+        org_id: { type: string }
+        project_id: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        latest_version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AgentCreate:
+      type: object
+      required: [name, version]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        version: { $ref: '#/components/schemas/AgentVersionCreate' }
+    AgentVersion:
+      type: object
+      required: [id, agent_id, version, status, digest, spec, runtime_abi, created_at]
+      properties:
+        id: { type: string }
+        agent_id: { type: string }
+        version: { type: integer }
+        status: { $ref: '#/components/schemas/VersionStatus' }
+        digest: { type: string, description: 'sha256:<hex> over canonical JSON of the spec + runtime ABI.' }
+        spec: { $ref: '#/components/schemas/AgentSpec' }
+        runtime_abi: { type: integer, minimum: 1 }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        published_at: { type: [string, 'null'], format: date-time }
+    AgentVersionCreate:
+      type: object
+      required: [spec]
+      additionalProperties: false
+      properties:
+        spec: { $ref: '#/components/schemas/AgentSpec' }
+    AgentSpec:
+      type: object
+      required: [model, instructions, runtime]
+      additionalProperties: false
+      properties:
+        model:
+          type: object
+          required: [provider, name, credential_ref]
+          additionalProperties: false
+          properties:
+            provider: { type: string, minLength: 1 }
+            name: { type: string, minLength: 1 }
+            credential_ref: { type: string, description: Project credential name; never a secret value. }
+            parameters:
+              type: object
+              additionalProperties: true
+        instructions:
+          type: string
+          minLength: 1
+          maxLength: 200000
+        tools:
+          type: array
+          maxItems: 64
+          items: { $ref: '#/components/schemas/ToolBinding' }
+        runtime:
+          type: object
+          required: [abi_version, image_digest]
+          additionalProperties: false
+          properties:
+            abi_version: { type: integer, minimum: 1 }
+            image_digest: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
+        limits:
+          type: object
+          additionalProperties: false
+          properties:
+            max_turns: { type: integer, minimum: 1, maximum: 1000 }
+            timeout_seconds: { type: integer, minimum: 1, maximum: 86400 }
+        checkpoint:
+          type: object
+          additionalProperties: false
+          properties:
+            mode: { type: string, enum: [none, on_node_end], default: on_node_end }
+            require_checkpoint: { type: boolean }
+        output_schema:
+          type: object
+          additionalProperties: true
+          description: Optional JSON Schema for the node output.
+    ToolBinding:
+      type: object
+      required: [tool_id, version]
+      additionalProperties: false
+      properties:
+        tool_id: { type: string }
+        version: { type: integer, minimum: 1 }
+        config:
+          type: object
+          additionalProperties: true
+    Workflow:
+      type: object
+      required: [id, org_id, project_id, name, latest_version, created_at]
+      properties:
+        id: { type: string }
+        org_id: { type: string }
+        project_id: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        latest_version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    WorkflowCreate:
+      type: object
+      required: [name, version]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        version: { $ref: '#/components/schemas/WorkflowVersionCreate' }
+    WorkflowVersion:
+      type: object
+      required: [id, workflow_id, version, status, digest, graph, created_at]
+      properties:
+        id: { type: string }
+        workflow_id: { type: string }
+        version: { type: integer }
+        status: { $ref: '#/components/schemas/VersionStatus' }
+        digest: { type: string }
+        graph: { $ref: '#/components/schemas/WorkflowGraph' }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        published_at: { type: [string, 'null'], format: date-time }
+    WorkflowVersionCreate:
+      type: object
+      required: [graph]
+      additionalProperties: false
+      properties:
+        graph: { $ref: '#/components/schemas/WorkflowGraph' }
+    WorkflowGraph:
+      type: object
+      required: [nodes, edges]
+      additionalProperties: false
+      properties:
+        nodes:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items: { $ref: '#/components/schemas/WorkflowNode' }
+        edges:
+          type: array
+          maxItems: 2000
+          items: { $ref: '#/components/schemas/WorkflowEdge' }
+        policy:
+          type: object
+          additionalProperties: false
+          properties:
+            on_failure: { type: string, enum: [fail_fast, continue], default: fail_fast }
+        input_schema:
+          type: object
+          additionalProperties: true
+          description: Optional JSON Schema for execution input.
+    WorkflowNode:
+      type: object
+      required: [id, type]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,63}$'
+        type: { type: string, enum: [agent, tool] }
+        agent:
+          type: object
+          required: [agent_id, version]
+          additionalProperties: false
+          properties:
+            agent_id: { type: string, pattern: '^agt_' }
+            version: { type: integer, minimum: 1 }
+          description: Required when type=agent; exact version, no "latest".
+        tool:
+          type: object
+          required: [tool_id, version]
+          additionalProperties: false
+          properties:
+            tool_id: { type: string }
+            version: { type: integer, minimum: 1 }
+          description: Required when type=tool.
+        params:
+          type: object
+          additionalProperties: true
+        input_from:
+          type: array
+          uniqueItems: true
+          maxItems: 16
+          items: { type: string }
+          description: Upstream node IDs whose outputs are passed to this node (max 16, total inline context ≤2 MiB).
+        worker_pool: { type: [string, 'null'], description: Optional worker pool/placement constraint. }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 86400, default: 600 }
+        retry:
+          $ref: '#/components/schemas/RetryPolicy'
+        side_effect_class:
+          type: string
+          enum: [read_only, idempotent, non_idempotent]
+          default: read_only
+        idempotency_key:
+          type: string
+          description: Required for idempotent side effects unless the tool declares a default. CEL expression.
+        checkpoint_mode:
+          type: string
+          enum: [none, on_node_end, inherit]
+          default: inherit
+        require_checkpoint: { type: boolean, default: false }
+        output_schema:
+          type: object
+          additionalProperties: true
+    WorkflowEdge:
+      type: object
+      required: [from, to]
+      additionalProperties: false
+      properties:
+        from: { type: string }
+        to: { type: string }
+        when:
+          type: string
+          maxLength: 2000
+          description: Optional CEL boolean over `outputs`. Omitted means true.
+    RetryPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        max_attempts: { type: integer, minimum: 1, maximum: 10, default: 1 }
+        retry_on:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [transient, timeout, worker_lost, cancelled, any]
+          default: [transient, timeout, worker_lost]
+        backoff_base_ms: { type: integer, minimum: 100, maximum: 60000, default: 1000 }
+        backoff_max_ms: { type: integer, minimum: 100, maximum: 600000, default: 60000 }
+    VersionStatus:
+      type: string
+      enum: [draft, published, deprecated]
+    ExecutionState:
+      type: string
+      enum: [pending, running, failing, cancel_requested, succeeded, failed, cancelled]
+    TaskState:
+      type: string
+      enum: [pending, assigned, running, succeeded, failed, cancelled, skipped]
+    ExecutionCreate:
+      type: object
+      required: [workflow_id, workflow_version, input]
+      additionalProperties: false
+      properties:
+        workflow_id: { type: string, pattern: '^wf_' }
+        workflow_version: { type: integer, minimum: 1 }
+        input:
+          type: object
+          additionalProperties: true
+          description: Immutable execution input, max 256 KiB serialized.
+        deadline_at:
+          type: [string, 'null']
+          format: date-time
+          description: Optional absolute deadline. Omitted means no execution-level deadline.
+    Execution:
+      type: object
+      required: [id, org_id, project_id, workflow_id, workflow_version_id, workflow_version, state, state_version, counts, created_at]
+      properties:
+        id: { type: string }
+        org_id: { type: string }
+        project_id: { type: string }
+        workflow_id: { type: string }
+        workflow_version_id: { type: string }
+        workflow_version: { type: integer }
+        state: { $ref: '#/components/schemas/ExecutionState' }
+        state_version: { type: integer }
+        counts: { $ref: '#/components/schemas/ExecutionCounts' }
+        input_digest: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        ended_at: { type: [string, 'null'], format: date-time }
+        deadline_at: { type: [string, 'null'], format: date-time }
+        cancel_reason: { type: [string, 'null'], enum: [user, deadline, null] }
+        failure_code: { type: [string, 'null'] }
+        failure_detail: { type: [string, 'null'] }
+    ExecutionCounts:
+      type: object
+      required: [total, pending, assigned, running, succeeded, failed, cancelled, skipped]
+      properties:
+        total: { type: integer }
+        pending: { type: integer }
+        assigned: { type: integer }
+        running: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        cancelled: { type: integer }
+        skipped: { type: integer }
+    Task:
+      type: object
+      required: [id, execution_id, node_id, node_type, state, state_version, attempt_count, max_attempts, created_at]
+      properties:
+        id: { type: string }
+        execution_id: { type: string }
+        node_id: { type: string }
+        node_type: { type: string, enum: [agent, tool] }
+        state: { $ref: '#/components/schemas/TaskState' }
+        state_version: { type: integer }
+        attempt_count: { type: integer }
+        max_attempts: { type: integer }
+        agent_version_id: { type: [string, 'null'] }
+        tool_version_id: { type: [string, 'null'] }
+        skip_reason: { type: [string, 'null'], enum: [branch_not_taken, upstream_not_taken, dependency_failed, null] }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        ended_at: { type: [string, 'null'], format: date-time }
+    TaskDetail:
+      allOf:
+        - $ref: '#/components/schemas/Task'
+        - type: object
+          required: [attempts]
+          properties:
+            attempts:
+              type: array
+              items: { $ref: '#/components/schemas/TaskAttempt' }
+            result:
+              oneOf:
+                - $ref: '#/components/schemas/TaskResult'
+                - type: 'null'
+              description: Present for terminal tasks while the inline result is within retention. Large artifact bytes are not downloadable through this initial contract; metadata is returned.
+    TaskResult:
+      type: object
+      required: [outcome]
+      properties:
+        outcome: { type: string, enum: [succeeded, failed, cancelled] }
+        output:
+          type: [object, 'null']
+          additionalProperties: true
+          description: Inline output (required for success, may be empty) used by routing edges and the UI. Null after payload retention or for failed/cancelled attempts without output.
+        output_artifact:
+          oneOf:
+            - $ref: '#/components/schemas/ArtifactMeta'
+            - type: 'null'
+        checkpoint:
+          oneOf:
+            - $ref: '#/components/schemas/CheckpointMeta'
+            - type: 'null'
+        error_code: { type: [string, 'null'] }
+        error_message: { type: [string, 'null'] }
+    ArtifactMeta:
+      type: object
+      required: [sha256, size_bytes]
+      properties:
+        sha256: { type: string }
+        size_bytes: { type: integer }
+        content_type: { type: [string, 'null'] }
+    CheckpointMeta:
+      type: object
+      required: [id, sha256, size_bytes, created_at]
+      properties:
+        id: { type: string }
+        sha256: { type: string }
+        size_bytes: { type: integer }
+        checkpoint_schema_version: { type: integer }
+        created_at: { type: string, format: date-time }
+    TaskAttempt:
+      type: object
+      required: [id, task_id, attempt_number, worker_id, outcome, outcome_unknown, effect_uncertain, dispatched_at]
+      properties:
+        id: { type: string }
+        task_id: { type: string }
+        attempt_number: { type: integer }
+        worker_id: { type: string, description: Opaque worker identifier. Lease IDs are never exposed. }
+        outcome:
+          type: [string, 'null']
+          enum: [succeeded, failed, cancelled, lease_expired, incomplete, null]
+        outcome_unknown: { type: boolean }
+        effect_uncertain: { type: boolean }
+        error_code: { type: [string, 'null'] }
+        error_message: { type: [string, 'null'] }
+        dispatched_at: { type: string, format: date-time }
+        accepted_at: { type: [string, 'null'], format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        result_available: { type: boolean }
+        checkpoint_available: { type: boolean }
+    Event:
+      type: object
+      required: [seq, event_id, event_type, entity_type, entity_id, actor_type, actor_id, created_at]
+      properties:
+        seq: { type: integer, minimum: 1 }
+        event_id: { type: string }
+        event_type:
+          type: string
+          enum: [execution.created, execution.state_changed, task.state_changed, task.attempt_finished]
+        entity_type: { type: string, enum: [execution, task, attempt] }
+        entity_id: { type: string }
+        actor_type: { type: string, enum: [user, system, worker] }
+        actor_id: { type: string }
+        from_state: { type: [string, 'null'] }
+        to_state: { type: [string, 'null'] }
+        reason: { type: [string, 'null'] }
+        payload:
+          type: object
+          additionalProperties: true
+        created_at: { type: string, format: date-time }
+    WorkerStatus:
+      type: string
+      enum: [active, unhealthy, draining, offline]
+    Worker:
+      type: object
+      required: [id, pool, status, capacity, runtime_abis, binary_version, registered_at]
+      properties:
+        id: { type: string }
+        pool: { type: string }
+        status: { $ref: '#/components/schemas/WorkerStatus' }
+        capacity:
+          type: object
+          required: [max_concurrency, available_slots]
+          properties:
+            max_concurrency: { type: integer }
+            available_slots: { type: integer }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        runtime_abis:
+          type: array
+          items: { type: integer }
+        runtime_digests:
+          type: array
+          items: { type: string }
+        binary_version: { type: string }
+        registered_at: { type: string, format: date-time }
+        last_heartbeat_at: { type: [string, 'null'], format: date-time }
+        active_attempts: { type: integer }
+    Credential:
+      type: object
+      required: [name, created_at]
+      properties:
+        name: { type: string }
+        created_at: { type: string, format: date-time }
+        rotated_at: { type: [string, 'null'], format: date-time }
+    CredentialCreate:
+      type: object
+      required: [name, value]
+      additionalProperties: false
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        value: { type: string, minLength: 1, maxLength: 65536, writeOnly: true }

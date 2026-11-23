@@ -1,0 +1,315 @@
+// Worker <-> orchestrator control contract.
+//
+// Transport: gRPC over TLS (production: mTLS). The worker identity is bound to its certificate; every attempt
+// operation additionally carries (task_id, attempt_id, lease_id). The orchestrator is the only writer of state.
+//
+// Versioning: package v1 is additive-only. Never reuse field numbers. See docs/communication.md §8.
+syntax = "proto3";
+
+package platform.worker.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/agent-platform/agent-platform/gen/worker/v1;workerv1";
+
+service WorkerControl {
+  // One long-lived session per worker process. Registration, heartbeat, accept, cancel, drain.
+  rpc Connect(stream WorkerMessage) returns (stream OrchestratorMessage);
+
+  // Fenced, idempotent result report for one attempt.
+  rpc ReportTaskResult(ReportTaskResultRequest) returns (ReportTaskResultResponse);
+
+  // Presigned upload for checkpoints, large outputs and logs.
+  rpc CreateArtifactUpload(CreateArtifactUploadRequest) returns (CreateArtifactUploadResponse);
+
+  // Presigned download for a checkpoint the worker must resume from.
+  rpc CreateArtifactDownload(CreateArtifactDownloadRequest) returns (CreateArtifactDownloadResponse);
+
+  // Immutable pinned task/node/agent/tool context for an accepted attempt.
+  rpc GetTaskContext(GetTaskContextRequest) returns (GetTaskContextResponse);
+
+  // Short-lived, task-scoped credentials. Never cached on disk and never placed on the bus.
+  rpc GetTaskCredentials(GetTaskCredentialsRequest) returns (GetTaskCredentialsResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Control stream
+// ---------------------------------------------------------------------------
+
+message WorkerMessage {
+  oneof body {
+    Hello hello = 1;
+    Heartbeat heartbeat = 2;
+    TaskAccepted task_accepted = 3;
+    TaskRejected task_rejected = 4;
+    Goodbye goodbye = 5;
+  }
+}
+
+message OrchestratorMessage {
+  oneof body {
+    HelloAck hello_ack = 1;
+    CancelTask cancel_task = 2;
+    DrainWorker drain = 3;
+    ControlError error = 4;
+  }
+}
+
+message Hello {
+  string worker_id = 1;
+  // Stable for one worker process; changes on restart. A changed boot_id invalidates the previous
+  // process's open attempts immediately.
+  string boot_id = 2;
+  string pool = 3;
+  map<string, string> labels = 4;
+  Capacity capacity = 5;
+  repeated int32 runtime_abis = 6;
+  string binary_version = 7;
+  int32 protocol_version = 8;
+  // Local development only; production uses mTLS and leaves this empty.
+  string join_token = 9;
+  // Runtime image digests this worker can execute (AgentSpec.runtime.image_digest).
+  repeated string runtime_digests = 10;
+}
+
+message HelloAck {
+  string session_id = 1;
+  int32 heartbeat_interval_ms = 2;
+  int32 lease_ttl_ms = 3;
+  google.protobuf.Timestamp server_time = 4;
+}
+
+message Heartbeat {
+  google.protobuf.Timestamp sent_at = 1;
+  repeated ActiveAttempt active_attempts = 2;
+  // Latest observed capacity may shrink under memory pressure; the worker manager uses the newest value.
+  Capacity capacity = 3;
+}
+
+message ActiveAttempt {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+}
+
+message TaskAccepted {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  google.protobuf.Timestamp started_at = 4;
+}
+
+message TaskRejected {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  TaskRejectionReason reason = 4;
+  string message = 5;
+}
+
+enum TaskRejectionReason {
+  TASK_REJECTION_REASON_UNSPECIFIED = 0;
+  TASK_REJECTION_REASON_BUSY = 1;
+  TASK_REJECTION_REASON_WRONG_WORKER = 2;
+  TASK_REJECTION_REASON_INVALID_PAYLOAD = 3;
+  TASK_REJECTION_REASON_UNSUPPORTED_RUNTIME = 4;
+  TASK_REJECTION_REASON_SHUTTING_DOWN = 5;
+  TASK_REJECTION_REASON_ATTEMPT_NOT_OPEN = 6;
+}
+
+message CancelTask {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  string reason = 4;
+  int32 cancel_epoch = 5;
+}
+
+message DrainWorker {
+  string reason = 1;
+  int32 grace_period_seconds = 2;
+}
+
+message Goodbye {
+  string reason = 1;
+}
+
+message ControlError {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;
+}
+
+message Capacity {
+  int32 max_concurrency = 1;
+  int32 available_slots = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Result reporting
+// ---------------------------------------------------------------------------
+
+message ReportTaskResultRequest {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  TaskOutcome outcome = 4;
+  // Inline output is limited to 64 KiB serialized; larger outputs use output_artifact.
+  google.protobuf.Struct output = 5;
+  ArtifactRef output_artifact = 6;
+  ArtifactRef checkpoint = 7;
+  TaskFailure failure = 8;
+  AttemptMetrics metrics = 9;
+  google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp finished_at = 11;
+  string runtime_version = 12;
+}
+
+enum TaskOutcome {
+  TASK_OUTCOME_UNSPECIFIED = 0;
+  TASK_OUTCOME_SUCCEEDED = 1;
+  TASK_OUTCOME_FAILED = 2;
+  TASK_OUTCOME_CANCELLED = 3;
+}
+
+message TaskFailure {
+  string code = 1;
+  string message = 2;
+  FailureClassification classification = 3;
+  // True when the runtime cannot rule out an external side effect before failing.
+  bool effect_uncertain = 4;
+}
+
+enum FailureClassification {
+  FAILURE_CLASSIFICATION_UNSPECIFIED = 0;
+  FAILURE_CLASSIFICATION_TRANSIENT = 1;
+  FAILURE_CLASSIFICATION_PERMANENT = 2;
+  FAILURE_CLASSIFICATION_TIMEOUT = 3;
+  FAILURE_CLASSIFICATION_CANCELLED = 4;
+  FAILURE_CLASSIFICATION_WORKER_ERROR = 5;
+  FAILURE_CLASSIFICATION_RESULT_INVALID = 6;
+}
+
+message ArtifactRef {
+  string object_key = 1;
+  string sha256 = 2;
+  int64 size_bytes = 3;
+  string content_type = 4;
+  // Checkpoint envelope schema version; 0 for non-checkpoint artifacts.
+  int32 schema_version = 5;
+}
+
+message AttemptMetrics {
+  int64 duration_ms = 1;
+  int64 tokens_in = 2;
+  int64 tokens_out = 3;
+  google.protobuf.Struct extra = 4;
+}
+
+message ReportTaskResultResponse {
+  ResultStatus status = 1;
+  string current_task_state = 2;
+  string message = 3;
+}
+
+enum ResultStatus {
+  RESULT_STATUS_UNSPECIFIED = 0;
+  RESULT_STATUS_ACCEPTED = 1;
+  RESULT_STATUS_ALREADY_FINISHED = 2;
+  RESULT_STATUS_STALE_LEASE = 3;
+  RESULT_STATUS_VALIDATION_FAILED = 4;
+  RESULT_STATUS_RETRY_LATER = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Artifacts and checkpoints
+// ---------------------------------------------------------------------------
+
+message CreateArtifactUploadRequest {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  ArtifactKind kind = 4;
+  string sha256 = 5;
+  int64 size_bytes = 6;
+  string content_type = 7;
+}
+
+enum ArtifactKind {
+  ARTIFACT_KIND_UNSPECIFIED = 0;
+  ARTIFACT_KIND_CHECKPOINT = 1;
+  ARTIFACT_KIND_OUTPUT = 2;
+  ARTIFACT_KIND_LOG = 3;
+}
+
+message CreateArtifactUploadResponse {
+  string upload_url = 1;
+  string method = 2;
+  map<string, string> headers = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  string object_key = 5;
+}
+
+message CreateArtifactDownloadRequest {
+  string checkpoint_id = 1;
+  string task_id = 2;
+  string attempt_id = 3;
+  string lease_id = 4;
+}
+
+message CreateArtifactDownloadResponse {
+  string download_url = 1;
+  google.protobuf.Timestamp expires_at = 2;
+  string sha256 = 3;
+  int64 size_bytes = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Task context and credentials
+// ---------------------------------------------------------------------------
+
+message GetTaskContextRequest {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+}
+
+message GetTaskContextResponse {
+  string org_id = 1;
+  string project_id = 2;
+  string execution_id = 3;
+  string node_id = 4;
+  string node_type = 5;
+  string agent_version_id = 6;
+  string tool_version_id = 7;
+  // Pinned, immutable version spec as validated at execution creation.
+  google.protobuf.Struct version_spec = 8;
+  google.protobuf.Struct execution_input = 9;
+  google.protobuf.Struct node_params = 10;
+  map<string, google.protobuf.Struct> upstream_outputs = 11;
+  CheckpointRef resume_checkpoint = 12;
+  google.protobuf.Timestamp deadline = 13;
+  string traceparent = 14;
+}
+
+message CheckpointRef {
+  string checkpoint_id = 1;
+  string object_key = 2;
+  string sha256 = 3;
+  int64 size_bytes = 4;
+  int32 checkpoint_schema_version = 5;
+  int32 runtime_abi = 6;
+}
+
+message GetTaskCredentialsRequest {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  repeated string names = 4;
+}
+
+message GetTaskCredentialsResponse {
+  map<string, string> values = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
