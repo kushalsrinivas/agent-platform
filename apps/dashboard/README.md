@@ -38,7 +38,7 @@ Zod validates API-shaped fixtures and the new-execution form input.
 ## Phase status
 
 The shell renders fixture data from `src/lib/demo-data.ts`, labelled "demo data" in the UI. The REST/SSE wiring
-lands in Phase 03; no fake fetch layer exists to unwind.
+lands in Phase 04; no fake fetch layer exists to unwind.
 
 ```bash
 npm ci

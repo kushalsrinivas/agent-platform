@@ -9,6 +9,7 @@ One distribution (`agent-platform-runtime`) that exposes the packages the worker
 | `tool_runtime` | Versioned platform-provided tools and the executor the runtime calls. |
 | `mcp` | MCP server/tool descriptors and the client protocol. Transport lands with MCP support. |
 | `checkpointing` | Versioned, compressed, size-limited agent state serialisation. |
+| `contracts` | Workflow, task and event models mirroring `packages/contracts` (Go) and validated against the shared JSON Schemas. |
 
 Rules that the runtime must not break:
 

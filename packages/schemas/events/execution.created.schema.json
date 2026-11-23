@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-platform.example/schemas/events/execution.created/v1.json",
+  "title": "execution.created payload v1",
+  "type": "object",
+  "required": ["seq", "workflow_version_id", "state", "state_version", "counts"],
+  "additionalProperties": false,
+  "properties": {
+    "seq": { "type": "integer", "minimum": 1 },
+    "workflow_version_id": { "type": "string", "pattern": "^wfv_[A-Za-z0-9_-]{8,64}$" },
+    "state": { "enum": ["pending", "running", "failing", "cancel_requested", "succeeded", "failed", "cancelled"] },
+    "state_version": { "type": "integer", "minimum": 1 },
+    "counts": { "$ref": "#/$defs/counts" }
+  },
+  "$defs": {
+    "counts": {
+      "type": "object",
+      "required": ["total", "pending", "assigned", "running", "succeeded", "failed", "cancelled", "skipped"],
+      "additionalProperties": false,
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "pending": { "type": "integer", "minimum": 0 },
+        "assigned": { "type": "integer", "minimum": 0 },
+        "running": { "type": "integer", "minimum": 0 },
+        "succeeded": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "cancelled": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

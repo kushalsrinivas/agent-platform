@@ -1,0 +1,22 @@
+{
+  "message_id": "msg_01JQ9A0B1C2D3E4F5G6H7JBK",
+  "message_type": "task.attempt_finished",
+  "schema_version": 1,
+  "tenant_id": "org_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "project_id": "proj_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "execution_id": "exec_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "task_id": "task_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "attempt_id": "att_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "worker_id": "wrk_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "timestamp": "2026-11-23T10:00:02.000Z",
+  "correlation_id": "exec_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "payload": {
+    "seq": 4,
+    "attempt_id": "att_01JQ9A0B1C2D3E4F5G6H7J8K",
+    "attempt_number": 1,
+    "worker_id": "wrk_01JQ9A0B1C2D3E4F5G6H7J8K",
+    "outcome": "succeeded",
+    "effect_uncertain": false,
+    "duration_ms": 1234
+  }
+}

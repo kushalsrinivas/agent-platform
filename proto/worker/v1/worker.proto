@@ -44,6 +44,7 @@ message WorkerMessage {
     TaskAccepted task_accepted = 3;
     TaskRejected task_rejected = 4;
     Goodbye goodbye = 5;
+    TaskProgress task_progress = 6;
   }
 }
 
@@ -98,6 +99,19 @@ message TaskAccepted {
   string attempt_id = 2;
   string lease_id = 3;
   google.protobuf.Timestamp started_at = 4;
+}
+
+// TaskProgress is advisory telemetry. It never transitions state and may be dropped without affecting the attempt.
+message TaskProgress {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  // Best-effort completion percentage, 0..100. Workers may omit it.
+  int32 percent = 4;
+  // Monotonic step/turn counter within the attempt.
+  int64 step = 5;
+  string message = 6;
+  google.protobuf.Timestamp reported_at = 7;
 }
 
 message TaskRejected {

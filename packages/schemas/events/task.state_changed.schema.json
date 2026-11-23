@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-platform.example/schemas/events/task.state_changed/v1.json",
+  "title": "task.state_changed payload v1",
+  "type": "object",
+  "required": ["seq", "task_id", "node_id", "from", "to", "state_version"],
+  "additionalProperties": false,
+  "properties": {
+    "seq": { "type": "integer", "minimum": 1 },
+    "task_id": { "type": "string", "pattern": "^task_[A-Za-z0-9_-]{8,64}$" },
+    "node_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+    "from": { "enum": ["pending", "assigned", "running", "succeeded", "failed", "cancelled", "skipped"] },
+    "to": { "enum": ["pending", "assigned", "running", "succeeded", "failed", "cancelled", "skipped"] },
+    "state_version": { "type": "integer", "minimum": 1 },
+    "reason": { "type": "string", "maxLength": 500 },
+    "attempt_id": { "type": "string", "pattern": "^att_[A-Za-z0-9_-]{8,64}$" },
+    "skip_reason": { "enum": ["branch_not_taken", "upstream_not_taken", "dependency_failed"] }
+  }
+}

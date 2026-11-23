@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-platform.example/schemas/task-result/v1.json",
+  "title": "Task result contract v1",
+  "description": "Fenced attempt result reported by a worker. Success always carries an inline JSON object (may be empty); artifacts never replace it because routing edges evaluate over the inline output.",
+  "type": "object",
+  "required": ["schema_version", "task_id", "attempt_id", "lease_id", "outcome"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "task_id": { "type": "string", "pattern": "^task_[A-Za-z0-9_-]{8,64}$" },
+    "attempt_id": { "type": "string", "pattern": "^att_[A-Za-z0-9_-]{8,64}$" },
+    "lease_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "outcome": { "enum": ["succeeded", "failed", "cancelled"] },
+    "output": { "type": "object", "additionalProperties": true },
+    "output_artifact": { "$ref": "#/$defs/artifact" },
+    "checkpoint": { "$ref": "#/$defs/checkpoint" },
+    "failure": { "$ref": "#/$defs/failure" },
+    "metrics": { "$ref": "#/$defs/metrics" },
+    "runtime_version": { "type": "string", "maxLength": 128 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "const": "succeeded" } }, "required": ["outcome"] },
+      "then": { "required": ["output"], "not": { "required": ["failure"] } }
+    },
+    {
+      "if": { "properties": { "outcome": { "const": "failed" } }, "required": ["outcome"] },
+      "then": { "required": ["failure"] }
+    }
+  ],
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["object_key", "sha256", "size_bytes"],
+      "additionalProperties": false,
+      "properties": {
+        "object_key": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "content_type": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "checkpoint": {
+      "type": "object",
+      "required": ["object_key", "sha256", "size_bytes", "checkpoint_schema_version", "runtime_abi"],
+      "additionalProperties": false,
+      "properties": {
+        "object_key": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 1, "maximum": 33554432 },
+        "checkpoint_schema_version": { "type": "integer", "minimum": 1 },
+        "runtime_abi": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "required": ["code", "message", "classification", "effect_uncertain"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "message": { "type": "string", "maxLength": 4096 },
+        "classification": {
+          "enum": ["transient", "permanent", "timeout", "cancelled", "worker_error", "result_invalid"]
+        },
+        "effect_uncertain": { "type": "boolean" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "tokens_in": { "type": "integer", "minimum": 0 },
+        "tokens_out": { "type": "integer", "minimum": 0 },
+        "extra": { "type": "object", "additionalProperties": true }
+      }
+    }
+  }
+}

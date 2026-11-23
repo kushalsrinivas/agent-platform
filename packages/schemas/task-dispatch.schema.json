@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-platform.example/schemas/task-dispatch/v1.json",
+  "title": "Task dispatch contract v1",
+  "description": "Self-contained descriptor for one committed task attempt. The NATS envelope carries the same identifiers; this document is the worker-validated task contract.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "org_id",
+    "project_id",
+    "execution_id",
+    "task_id",
+    "attempt_id",
+    "lease_id",
+    "attempt_number",
+    "node_id",
+    "node_type",
+    "spec_digest",
+    "deadline",
+    "lease_expires_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "org_id": { "type": "string", "pattern": "^org_[A-Za-z0-9_-]{8,64}$" },
+    "project_id": { "type": "string", "pattern": "^proj_[A-Za-z0-9_-]{8,64}$" },
+    "execution_id": { "type": "string", "pattern": "^exec_[A-Za-z0-9_-]{8,64}$" },
+    "task_id": { "type": "string", "pattern": "^task_[A-Za-z0-9_-]{8,64}$" },
+    "attempt_id": { "type": "string", "pattern": "^att_[A-Za-z0-9_-]{8,64}$" },
+    "lease_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "attempt_number": { "type": "integer", "minimum": 1 },
+    "node_id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+    "node_type": { "enum": ["agent", "tool"] },
+    "agent_version_id": { "type": "string", "pattern": "^agtv_[A-Za-z0-9_-]{8,64}$" },
+    "tool_version_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "spec_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "deadline": { "type": "string", "format": "date-time" },
+    "lease_expires_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "node_type": { "const": "agent" } }, "required": ["node_type"] },
+      "then": { "required": ["agent_version_id"], "not": { "required": ["tool_version_id"] } }
+    },
+    {
+      "if": { "properties": { "node_type": { "const": "tool" } }, "required": ["node_type"] },
+      "then": { "required": ["tool_version_id"], "not": { "required": ["agent_version_id"] } }
+    }
+  ]
+}

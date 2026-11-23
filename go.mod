@@ -6,8 +6,11 @@ require (
 	github.com/caarlos0/env/v11 v11.4.2
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-chi/cors v1.2.2
+	github.com/google/uuid v1.6.0
+	github.com/gowebpki/jcs v1.0.2
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/nats-io/nats.go v1.56.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	go.uber.org/zap v1.28.0
 	golang.org/x/sync v0.25.0
 	google.golang.org/grpc v1.85.0

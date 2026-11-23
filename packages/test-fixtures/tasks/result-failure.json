@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "task_id": "task_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "attempt_id": "att_01JQ9A0B1C2D3E4F5G6H7J8K",
+  "lease_id": "8e4f3a2b-1c9d-4e8f-a0b1-c2d3e4f5a6b7",
+  "outcome": "failed",
+  "failure": {
+    "code": "TASK_TIMEOUT",
+    "message": "node exceeded its 120s deadline",
+    "classification": "timeout",
+    "effect_uncertain": false
+  },
+  "metrics": { "duration_ms": 120000 },
+  "runtime_version": "0.1.0",
+  "started_at": "2026-11-23T10:00:00.000Z",
+  "finished_at": "2026-11-23T10:02:00.000Z"
+}

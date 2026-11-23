@@ -27,7 +27,7 @@ That is the entire path. `make dev` is the single documented command once depend
 
 | Service | URL | Notes |
 |---|---|---|
-| Dashboard | http://localhost:3000 | Demo data until Phase 03 |
+| Dashboard | http://localhost:3000 | Demo data until Phase 04 |
 | API | http://localhost:8080 | `/healthz`, `/readyz`, `/v1/meta` |
 | Orchestrator gRPC | localhost:9090 | reflection enabled in development |
 | Orchestrator HTTP | http://localhost:8081 | health and version |
@@ -98,7 +98,9 @@ sdk/python/              Python client for the public API
 cli/                     platformctl operator CLI
 proto/                   Wire contracts (source of truth)
 gen/                     Generated Go code (committed; edit proto, then make proto)
-packages/                Shared contracts, schemas, fixtures (populated with Phase 03)
+packages/contracts/      Go workflow, task and event contracts + canonical digests
+packages/schemas/        Shared JSON Schemas (workflow, task, events)
+packages/test-fixtures/  Cross-language fixtures and golden digest oracle
 migrations/              control/ and execution/ migrations, applied in that order
 infrastructure/          Dockerfiles, compose, Kubernetes/Helm placeholders, monitoring
 tests/                   Integration, e2e, load and chaos suites
@@ -115,16 +117,40 @@ the dependency graph is small enough to read.
 
 ## Migrations
 
-- `migrations/control` creates the control schema, roles and grants.
-- `migrations/execution` creates the execution schema, roles and grants.
+- `migrations/control/0001` creates the schema, development roles and default privileges.
+- `migrations/control/0002` creates the nine control tables; `0003` adds RLS, immutability triggers, grants and
+  organisation discovery.
+- `migrations/execution/0001` creates the execution schema and roles; `0002` creates the eight execution tables,
+  indexes and outbox; `0003` adds RLS, append-only audit, attempt immutability and grants.
 - Both use golang-migrate and separate migration tables (`control_schema_migrations`,
   `execution_schema_migrations`) selected through the `x-migrations-table` URL parameter.
 - Local migrations run as the Postgres superuser. In production, DDL runs under dedicated migration roles; see
   [`data-ownership.md`](data-ownership.md).
-- Table definitions arrive in Phase 03. Until then the bootstrap only establishes schemas, roles and default
-  privileges.
+- Down migrations exist and are tested, but they are development-only. Production uses expand/contract and
+  roll-forward.
+- The schema contract, RLS model, indexes and brief-to-table mapping are documented in
+  [`phase-03-contracts.md`](phase-03-contracts.md).
 
 Add a migration by creating the next numbered `.up.sql` / `.down.sql` pair in the right directory.
+
+## Shared contracts
+
+Workflow, task and event contracts exist twice on purpose — once in Go and once in Python — and are proven
+equivalent against the same fixtures:
+
+- JSON Schemas: `packages/schemas` (Draft 2020-12).
+- Go models and semantic validation: `packages/contracts`.
+- Python models: `runtimes/python/src/contracts`.
+- Fixtures + golden digests: `packages/test-fixtures`.
+- Canonicalization: RFC 8785, digest `sha256:<hex>` over the workflow graph.
+
+```bash
+go test ./packages/contracts
+cd runtimes/python && uv run pytest tests/test_contracts_*.py
+```
+
+Changing a fixture changes the golden digest in `packages/test-fixtures/workflow.digests.json`; both language
+suites must pass before committing. Never update only one language.
 
 ## Proto generation
 
@@ -140,19 +166,21 @@ make proto
 
 ## Deliberate choices
 
-These are the places where Phase 02 chose the smaller option on purpose. Revisit them when their trigger fires.
+These are the places where the project chose the smaller option on purpose. Revisit them when their trigger fires.
 
 | Choice | Why | Revisit when |
 |---|---|---|
 | Environment-based config, no Viper | The config is flat, small and the same in every environment. `env` tags are typed and testable. | Config needs nested files, hot reload or multiple sources. |
 | One root Go module | Independent per-service builds without `go.work`, `replace` directives or version skew. | A service needs an independent release cadence. |
 | Manual constructor injection | Three binaries, one dependency graph each; a DI framework would hide wiring for no benefit. | The graph becomes large enough that startup wiring is unreadable. |
-| `sqlc` deferred | There are no tables or queries until Phase 03. A config with zero queries generates nothing. | The first `control`/`execution` tables land. |
-| `go-playground/validator` deferred | No request bodies exist yet. Add it with the first API resource. | Phase 03 request models. |
-| HTTP/2 gRPC contracts generated, no Python stubs | Python speaks to the worker over a UDS in Phase 03; generating stubs before that adds dead code. | Runtime ABI implementation. |
+| `sqlc` deferred | The tables exist, but there are no query-heavy repositories yet; the outbox uses hand-written SQL with explicit locking. | The first CRUD/scheduling repository in Phase 04. |
+| `go-playground/validator` deferred | No request bodies exist yet. Add it with the first API resource. | Phase 04 request models. |
+| Normalized workflow node/edge tables | The immutable graph is one JSONB value, validated by the shared contract; normalizing it would create a second source of truth. | Graph querying at scale or per-node permissions (requires an ADR). |
+| Deferred brief tables (`users`, `environments`, `api_keys`, `agent_deployments`, tool/MCP/approval/usage tables) | Each conflicts with a Phase 1 non-goal or lacks a design. The mapping and triggers are in [`phase-03-contracts.md`](phase-03-contracts.md). | The corresponding ADR/feature exists. |
+| HTTP/2 gRPC contracts generated, no Python stubs | Python speaks to the worker over a UDS; generating stubs before the runtime ABI exists adds dead code. | Runtime ABI implementation. |
 | `apps/docs` deferred | Authored docs are reviewed as Markdown in `/docs`; a docs site is packaging, not content. | Docs need search/versioning/interactive API reference. |
 | `tests/e2e`, `tests/load`, `tests/chaos` placeholders | Their targets (API, execution lifecycle, fault injection) do not exist yet. | The first vertical slice and the scheduler land. |
-| Dashboard fixture data | The API has no execution endpoints yet. Fixtures are Zod-validated and labelled in the UI. | Phase 03 list/SSE endpoints. |
+| Dashboard fixture data | The API has no execution endpoints yet. Fixtures are Zod-validated and labelled in the UI. | Phase 04 list/SSE endpoints. |
 
 ## CI
 
@@ -162,7 +190,7 @@ These are the places where Phase 02 chose the smaller option on purpose. Revisit
 2. Python: Ruff, format check, mypy and pytest for both projects.
 3. Dashboard: Biome, `tsc`, production build.
 4. Compose: validates `docker-compose.yml`.
-5. Integration: starts data stores, applies migrations, runs `make integration-test` equivalent.
+5. Integration: starts data stores, applies migrations, runs the infrastructure, schema/RLS and outbox suites.
 
 No job needs secrets. External model providers are never called by tests.
 

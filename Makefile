@@ -10,6 +10,12 @@ GO_PKG := github.com/agent-platform/agent-platform
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+POSTGRES_PORT ?= $(or $(shell sed -n 's/^POSTGRES_PORT=//p' .env 2>/dev/null | tail -1),5432)
+POSTGRES_PASSWORD ?= $(or $(shell sed -n 's/^POSTGRES_PASSWORD=//p' .env 2>/dev/null | tail -1),postgres)
+API_DATABASE_URL ?= postgres://app_api:dev_api_password@localhost:$(POSTGRES_PORT)/agent_platform?sslmode=disable
+ORCHESTRATOR_DATABASE_URL ?= postgres://app_orchestrator:dev_orchestrator_password@localhost:$(POSTGRES_PORT)/agent_platform?sslmode=disable
+POSTGRES_DATABASE_URL ?= postgres://postgres:$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/agent_platform?sslmode=disable
+NATS_URL ?= nats://localhost:4222
 LDFLAGS := -s -w \
 	-X $(GO_PKG)/internal/platform/buildinfo.Version=$(VERSION) \
 	-X $(GO_PKG)/internal/platform/buildinfo.Commit=$(COMMIT) \
@@ -123,8 +129,12 @@ build-go: ## Build Go binaries into bin/
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/platformctl ./cli/cmd/platformctl
 
 integration-test: ## Run integration tests against the Docker data stores
-	$(COMPOSE) up -d postgres nats redis minio minio-init
-	$(COMPOSE) run --rm migrate
+	POSTGRES_PORT=$(POSTGRES_PORT) $(COMPOSE) up -d postgres nats redis minio minio-init
+	POSTGRES_PORT=$(POSTGRES_PORT) $(COMPOSE) run --rm migrate
+	API_DATABASE_URL="$(API_DATABASE_URL)" \
+	ORCHESTRATOR_DATABASE_URL="$(ORCHESTRATOR_DATABASE_URL)" \
+	POSTGRES_DATABASE_URL="$(POSTGRES_DATABASE_URL)" \
+	ORCHESTRATOR_NATS_URL="$(NATS_URL)" \
 	$(GO) test -tags=integration -count=1 ./tests/integration/...
 
 proto: ## Regenerate Go code from proto/ (requires protoc and plugins)

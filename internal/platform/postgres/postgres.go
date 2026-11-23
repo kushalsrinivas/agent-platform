@@ -7,15 +7,18 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/zap"
 )
 
 // Config describes a connection pool. Zero values fall back to safe defaults.
 type Config struct {
-	URL             string
-	MaxConns        int32
-	MinConns        int32
-	MaxConnLifetime time.Duration
-	ConnectTimeout  time.Duration
+	URL                string
+	MaxConns           int32
+	MinConns           int32
+	MaxConnLifetime    time.Duration
+	ConnectTimeout     time.Duration
+	SlowQueryThreshold time.Duration
+	Logger             *zap.Logger
 }
 
 // Connect creates a pool and verifies it with a ping. It does not create schema; migrations own that.
@@ -36,6 +39,13 @@ func Connect(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
 	}
 	if cfg.ConnectTimeout > 0 {
 		poolCfg.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
+	}
+	if cfg.Logger != nil {
+		threshold := cfg.SlowQueryThreshold
+		if threshold <= 0 {
+			threshold = 200 * time.Millisecond
+		}
+		poolCfg.ConnConfig.Tracer = &queryTracer{log: cfg.Logger, slow: threshold}
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)

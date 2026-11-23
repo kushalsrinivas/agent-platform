@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS control.idempotency_keys;
+DROP TABLE IF EXISTS control.credentials;
+DROP TABLE IF EXISTS control.workflow_versions;
+DROP TABLE IF EXISTS control.workflows;
+DROP TABLE IF EXISTS control.agent_versions;
+DROP TABLE IF EXISTS control.agents;
+DROP TABLE IF EXISTS control.memberships;
+DROP TABLE IF EXISTS control.projects;
+DROP TABLE IF EXISTS control.organizations;
