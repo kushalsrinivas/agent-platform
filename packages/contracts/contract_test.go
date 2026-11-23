@@ -281,3 +281,19 @@ func TestDigestIsStableAcrossKeyOrder(t *testing.T) {
 		t.Fatalf("digest depends on key order: %s != %s", firstDigest, secondDigest)
 	}
 }
+
+func TestPendingTaskTransitionNeedsNoAttempt(t *testing.T) {
+	data := readFixture(t, "events/task.state_changed.json")
+	var envelope map[string]any
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	delete(envelope, "attempt_id")
+	modified, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseEvent(modified); err != nil {
+		t.Fatalf("a pending task transition without an attempt must be valid: %v", err)
+	}
+}

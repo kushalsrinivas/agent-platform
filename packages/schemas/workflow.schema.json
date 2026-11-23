@@ -109,7 +109,7 @@
         "retry_on": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "enum": ["transient", "timeout", "worker_lost", "cancelled", "any"] }
+          "items": { "enum": ["transient", "timeout", "worker_lost", "result_invalid", "cancelled", "any"] }
         },
         "backoff_base_ms": { "type": "integer", "minimum": 100, "maximum": 60000 },
         "backoff_max_ms": { "type": "integer", "minimum": 100, "maximum": 600000 }
@@ -119,7 +119,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "on_failure": { "enum": ["fail_fast", "continue"] }
+        "on_failure": { "enum": ["fail_fast", "continue"] },
+        "retry": { "$ref": "#/$defs/retryPolicy" }
       }
     }
   }

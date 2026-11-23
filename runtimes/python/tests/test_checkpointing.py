@@ -1,4 +1,7 @@
 from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
 
 from checkpointing import CheckpointError, decode, encode, sha256
 from checkpointing.codec import MAX_CHECKPOINT_BYTES, Checkpoint
@@ -54,3 +57,22 @@ def test_rejects_oversized_payload() -> None:
         assert "limit" in str(exc)
     else:
         raise AssertionError("expected CheckpointError")
+
+
+def test_sink_writes_ordered_atomic_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_RUNTIME_CHECKPOINT_DIR", str(tmp_path))
+    from checkpointing import CheckpointSink
+
+    sink = CheckpointSink.from_env("agtv_01")
+    assert sink is not None
+    first = sink.write({"messages": [], "steps": 1, "completed": False})
+    second = sink.write({"messages": [], "steps": 2, "completed": True})
+
+    names = sorted(path.name for path in tmp_path.iterdir())
+    assert names == [first, second]
+    assert names[0].startswith("ckpt-000001-")
+    assert names[1].startswith("ckpt-000002-")
+    assert not list(tmp_path.glob("*.tmp"))
+    data = (tmp_path / names[1]).read_bytes()
+    assert decode(data).state["completed"] is True
+    assert sha256(data) in names[1]

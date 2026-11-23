@@ -455,22 +455,24 @@ func (x *ExecuteNodeResponse) GetRuntimeVersion() string {
 }
 
 type ToolTaskContext struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	OrgId         string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
-	ProjectId     string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	ExecutionId   string                 `protobuf:"bytes,3,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
-	TaskId        string                 `protobuf:"bytes,4,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	AttemptId     string                 `protobuf:"bytes,5,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
-	NodeId        string                 `protobuf:"bytes,6,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	ToolId        string                 `protobuf:"bytes,7,opt,name=tool_id,json=toolId,proto3" json:"tool_id,omitempty"`
-	ToolVersion   int32                  `protobuf:"varint,8,opt,name=tool_version,json=toolVersion,proto3" json:"tool_version,omitempty"`
-	VersionSpec   *structpb.Struct       `protobuf:"bytes,9,opt,name=version_spec,json=versionSpec,proto3" json:"version_spec,omitempty"`
-	Arguments     *structpb.Struct       `protobuf:"bytes,10,opt,name=arguments,proto3" json:"arguments,omitempty"`
-	Deadline      *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=deadline,proto3" json:"deadline,omitempty"`
-	Traceparent   string                 `protobuf:"bytes,12,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
-	Credentials   map[string]string      `protobuf:"bytes,13,rep,name=credentials,proto3" json:"credentials,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	OrgId       string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	ProjectId   string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	ExecutionId string                 `protobuf:"bytes,3,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
+	TaskId      string                 `protobuf:"bytes,4,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	AttemptId   string                 `protobuf:"bytes,5,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	NodeId      string                 `protobuf:"bytes,6,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	ToolId      string                 `protobuf:"bytes,7,opt,name=tool_id,json=toolId,proto3" json:"tool_id,omitempty"`
+	ToolVersion int32                  `protobuf:"varint,8,opt,name=tool_version,json=toolVersion,proto3" json:"tool_version,omitempty"`
+	VersionSpec *structpb.Struct       `protobuf:"bytes,9,opt,name=version_spec,json=versionSpec,proto3" json:"version_spec,omitempty"`
+	Arguments   *structpb.Struct       `protobuf:"bytes,10,opt,name=arguments,proto3" json:"arguments,omitempty"`
+	Deadline    *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=deadline,proto3" json:"deadline,omitempty"`
+	Traceparent string                 `protobuf:"bytes,12,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
+	Credentials map[string]string      `protobuf:"bytes,13,rep,name=credentials,proto3" json:"credentials,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Stable across attempts of the same execution node. External side effects must deduplicate on it.
+	IdempotencyKey string `protobuf:"bytes,14,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ToolTaskContext) Reset() {
@@ -592,6 +594,13 @@ func (x *ToolTaskContext) GetCredentials() map[string]string {
 		return x.Credentials
 	}
 	return nil
+}
+
+func (x *ToolTaskContext) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
 }
 
 type ExecuteToolRequest struct {
@@ -904,7 +913,7 @@ const file_runtime_v1_runtime_proto_rawDesc = "" +
 	"\x19checkpoint_schema_version\x18\x04 \x01(\x05R\x17checkpointSchemaVersion\x12=\n" +
 	"\ametrics\x18\x05 \x01(\v2#.platform.runtime.v1.RuntimeMetricsR\ametrics\x12=\n" +
 	"\afailure\x18\x06 \x01(\v2#.platform.runtime.v1.RuntimeFailureR\afailure\x12'\n" +
-	"\x0fruntime_version\x18\a \x01(\tR\x0eruntimeVersion\"\xdd\x04\n" +
+	"\x0fruntime_version\x18\a \x01(\tR\x0eruntimeVersion\"\x86\x05\n" +
 	"\x0fToolTaskContext\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
@@ -921,7 +930,8 @@ const file_runtime_v1_runtime_proto_rawDesc = "" +
 	" \x01(\v2\x17.google.protobuf.StructR\targuments\x126\n" +
 	"\bdeadline\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\x12 \n" +
 	"\vtraceparent\x18\f \x01(\tR\vtraceparent\x12W\n" +
-	"\vcredentials\x18\r \x03(\v25.platform.runtime.v1.ToolTaskContext.CredentialsEntryR\vcredentials\x1a>\n" +
+	"\vcredentials\x18\r \x03(\v25.platform.runtime.v1.ToolTaskContext.CredentialsEntryR\vcredentials\x12'\n" +
+	"\x0fidempotency_key\x18\x0e \x01(\tR\x0eidempotencyKey\x1a>\n" +
 	"\x10CredentialsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"T\n" +

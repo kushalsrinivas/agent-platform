@@ -24,7 +24,7 @@ class Tool(Protocol):
     name: str
     version: str
 
-    async def run(self, arguments: dict[str, Any]) -> dict[str, Any]: ...
+    async def run(self, arguments: dict[str, Any], *, idempotency_key: str = "") -> dict[str, Any]: ...
 
 
 class ToolRegistry:
@@ -44,7 +44,7 @@ class ToolRegistry:
     def versions(self) -> dict[str, str]:
         return {name: tool.version for name, tool in self._tools.items()}
 
-    async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+    async def execute(self, name: str, arguments: dict[str, Any], *, idempotency_key: str = "") -> ToolResult:
         tool = self._tools.get(name)
         if tool is None:
             return ToolResult(
@@ -53,7 +53,7 @@ class ToolRegistry:
                 error_message=f"tool {name!r} is not available in this runtime image",
             )
         try:
-            output = await tool.run(arguments)
+            output = await tool.run(arguments, idempotency_key=idempotency_key)
         except (TypeError, ValueError) as exc:
             log.warning("tool rejected input", extra={"tool": name, "error": str(exc)})
             return ToolResult(ok=False, error_code="invalid_arguments", error_message=str(exc))

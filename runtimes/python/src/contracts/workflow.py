@@ -11,7 +11,7 @@ from contracts.canonical import canonicalize, digest, graph_payload
 NodeType = Literal["agent", "tool"]
 SideEffectClass = Literal["read_only", "idempotent", "non_idempotent"]
 CheckpointMode = Literal["none", "on_node_end", "inherit"]
-RetryOn = Literal["transient", "timeout", "worker_lost", "cancelled", "any"]
+RetryOn = Literal["transient", "timeout", "worker_lost", "result_invalid", "cancelled", "any"]
 
 NODE_ID_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
 AGENT_ID_PATTERN = r"^agt_[A-Za-z0-9_-]{8,64}$"
@@ -63,6 +63,7 @@ class RetryPolicy(ContractModel):
 
 class WorkflowPolicy(ContractModel):
     on_failure: Literal["fail_fast", "continue"] | None = None
+    retry: RetryPolicy | None = None
 
 
 class WorkflowNode(ContractModel):
@@ -170,6 +171,10 @@ class WorkflowGraph(ContractModel):
         if visited != len(self.nodes):
             problems.append("workflow graph contains a cycle")
 
+        policy_attempts = 1
+        if self.policy and self.policy.retry and self.policy.retry.max_attempts:
+            policy_attempts = self.policy.retry.max_attempts
+
         for node in self.nodes:
             if node.input_from is None:
                 continue
@@ -181,6 +186,15 @@ class WorkflowGraph(ContractModel):
                     problems.append(f"node {node.id!r} input_from references non-upstream node {ref!r}")
             if len(set(node.input_from)) != len(node.input_from):
                 problems.append(f"node {node.id!r} has duplicate input_from references")
+
+        for node in self.nodes:
+            if node.retry is not None and node.retry.max_attempts is not None:
+                continue
+            side_effect = node.side_effect_class or "read_only"
+            if side_effect == "non_idempotent" and policy_attempts > 1 and node.idempotency_key is None:
+                problems.append(
+                    f"non_idempotent node {node.id!r} requires idempotency_key when policy.retry.max_attempts > 1"
+                )
 
         if problems:
             raise ValueError("; ".join(problems))

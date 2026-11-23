@@ -1208,6 +1208,7 @@ components:
           additionalProperties: false
           properties:
             on_failure: { type: string, enum: [fail_fast, continue], default: fail_fast }
+            retry: { $ref: '#/components/schemas/RetryPolicy' }
         input_schema:
           type: object
           additionalProperties: true
@@ -1286,7 +1287,7 @@ components:
           uniqueItems: true
           items:
             type: string
-            enum: [transient, timeout, worker_lost, cancelled, any]
+            enum: [transient, timeout, worker_lost, result_invalid, cancelled, any]
           default: [transient, timeout, worker_lost]
         backoff_base_ms: { type: integer, minimum: 100, maximum: 60000, default: 1000 }
         backoff_max_ms: { type: integer, minimum: 100, maximum: 600000, default: 60000 }

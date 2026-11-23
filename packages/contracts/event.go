@@ -211,7 +211,9 @@ func (e *EventEnvelope) Validate() error {
 			v.pattern("task_id", *e.TaskID, taskIDPattern)
 		}
 	}
-	if e.MessageType == EventTaskStateChanged || e.MessageType == EventTaskAttemptFinished || e.MessageType == EventTaskDispatch {
+	// A pending task can transition (cancelled/skipped) before any attempt exists, so task.state_changed only
+	// requires an attempt when one is known. Attempt-finished and dispatch are always attempt-scoped.
+	if e.MessageType == EventTaskAttemptFinished || e.MessageType == EventTaskDispatch {
 		if e.AttemptID == nil {
 			v.addf("attempt_id is required for %s", e.MessageType)
 		} else {

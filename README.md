@@ -72,8 +72,10 @@ task attempt is individually identifiable. Every execution pins immutable workfl
 | 05 — Scheduler, worker and event pipeline | Complete. JetStream dispatch/DLQ, outbox publisher, scheduler, fenced results, redelivery and redrive. |
 | 06 — Worker manager and distributed scheduler | Complete. Worker capabilities/resources, heartbeat statuses, priority and tenant-fair scheduling, leases/fencing, graceful drain. |
 | 07 — Python agent runtime | Complete. LangGraph agent loop over the runtime ABI, provider adapters, schema-validated results, usage, cancellation and runtime tests. |
+| 08 — Durable execution, checkpoints and recovery | Complete. Durable checkpoints, fenced resume, recovery manager, retry engine, idempotency keys, durable cancellation and a ten-scenario crash suite. |
 
-The dashboard renders labelled fixtures until the dashboard wiring phase. Phase 07 is documented in
+The dashboard renders labelled fixtures until the dashboard wiring phase. Phase 08 is documented in
+[`docs/phase-08-durable-execution.md`](docs/phase-08-durable-execution.md); Phase 07 is documented in
 [`docs/phase-07-agent-runtime.md`](docs/phase-07-agent-runtime.md); Phase 06 is documented in
 [`docs/phase-06-worker-manager.md`](docs/phase-06-worker-manager.md); Phase 05 is documented in
 [`docs/phase-05-messaging.md`](docs/phase-05-messaging.md); Phase 04 is documented in

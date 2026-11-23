@@ -95,9 +95,10 @@ type RetryPolicy struct {
 	BackoffMaxMS  *int      `json:"backoff_max_ms,omitempty"`
 }
 
-// WorkflowPolicy sets execution-wide behaviour. The only Phase 1 policy is on_failure.
+// WorkflowPolicy sets execution-wide behaviour. Retry is the default for nodes that do not override it.
 type WorkflowPolicy struct {
-	OnFailure *string `json:"on_failure,omitempty"`
+	OnFailure *string      `json:"on_failure,omitempty"`
+	Retry     *RetryPolicy `json:"retry,omitempty"`
 }
 
 // Graph returns the immutable graph portion of the document.

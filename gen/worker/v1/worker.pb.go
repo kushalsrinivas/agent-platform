@@ -2395,8 +2395,15 @@ type GetTaskContextResponse struct {
 	// The pinned node output_schema, when present. The worker validates runtime output against it before
 	// reporting, so an invalid result never reaches the orchestrator as a success.
 	NodeOutputSchema *structpb.Struct `protobuf:"bytes,15,opt,name=node_output_schema,json=nodeOutputSchema,proto3" json:"node_output_schema,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Latest durable checkpoint for this task, resumed by the next attempt. Empty on a first attempt.
+	ResumeCheckpointBytes         []byte `protobuf:"bytes,16,opt,name=resume_checkpoint_bytes,json=resumeCheckpointBytes,proto3" json:"resume_checkpoint_bytes,omitempty"`
+	ResumeCheckpointId            string `protobuf:"bytes,17,opt,name=resume_checkpoint_id,json=resumeCheckpointId,proto3" json:"resume_checkpoint_id,omitempty"`
+	ResumeCheckpointSchemaVersion int32  `protobuf:"varint,18,opt,name=resume_checkpoint_schema_version,json=resumeCheckpointSchemaVersion,proto3" json:"resume_checkpoint_schema_version,omitempty"`
+	ResumeCheckpointSequence      int32  `protobuf:"varint,19,opt,name=resume_checkpoint_sequence,json=resumeCheckpointSequence,proto3" json:"resume_checkpoint_sequence,omitempty"`
+	// Logical idempotency key for a tool node; external side effects must deduplicate on it across retries.
+	IdempotencyKey string `protobuf:"bytes,20,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GetTaskContextResponse) Reset() {
@@ -2532,6 +2539,41 @@ func (x *GetTaskContextResponse) GetNodeOutputSchema() *structpb.Struct {
 		return x.NodeOutputSchema
 	}
 	return nil
+}
+
+func (x *GetTaskContextResponse) GetResumeCheckpointBytes() []byte {
+	if x != nil {
+		return x.ResumeCheckpointBytes
+	}
+	return nil
+}
+
+func (x *GetTaskContextResponse) GetResumeCheckpointId() string {
+	if x != nil {
+		return x.ResumeCheckpointId
+	}
+	return ""
+}
+
+func (x *GetTaskContextResponse) GetResumeCheckpointSchemaVersion() int32 {
+	if x != nil {
+		return x.ResumeCheckpointSchemaVersion
+	}
+	return 0
+}
+
+func (x *GetTaskContextResponse) GetResumeCheckpointSequence() int32 {
+	if x != nil {
+		return x.ResumeCheckpointSequence
+	}
+	return 0
+}
+
+func (x *GetTaskContextResponse) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
 }
 
 type CheckpointRef struct {
@@ -2738,6 +2780,178 @@ func (x *GetTaskCredentialsResponse) GetExpiresAt() *timestamppb.Timestamp {
 	return nil
 }
 
+type PutCheckpointRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	TaskId    string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	AttemptId string                 `protobuf:"bytes,2,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	LeaseId   string                 `protobuf:"bytes,3,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	// Monotonic within the attempt; makes the upload idempotent.
+	Sequence                int32  `protobuf:"varint,4,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	CheckpointSchemaVersion int32  `protobuf:"varint,5,opt,name=checkpoint_schema_version,json=checkpointSchemaVersion,proto3" json:"checkpoint_schema_version,omitempty"`
+	RuntimeAbi              int32  `protobuf:"varint,6,opt,name=runtime_abi,json=runtimeAbi,proto3" json:"runtime_abi,omitempty"`
+	RuntimeVersion          string `protobuf:"bytes,7,opt,name=runtime_version,json=runtimeVersion,proto3" json:"runtime_version,omitempty"`
+	// sha256 of state, formatted as "sha256:<hex>".
+	Sha256 string `protobuf:"bytes,8,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	// Gzip-compressed canonical JSON produced by the runtime checkpoint codec. Never pickle.
+	State         []byte `protobuf:"bytes,9,opt,name=state,proto3" json:"state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutCheckpointRequest) Reset() {
+	*x = PutCheckpointRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutCheckpointRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutCheckpointRequest) ProtoMessage() {}
+
+func (x *PutCheckpointRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutCheckpointRequest.ProtoReflect.Descriptor instead.
+func (*PutCheckpointRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *PutCheckpointRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *PutCheckpointRequest) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *PutCheckpointRequest) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
+}
+
+func (x *PutCheckpointRequest) GetSequence() int32 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *PutCheckpointRequest) GetCheckpointSchemaVersion() int32 {
+	if x != nil {
+		return x.CheckpointSchemaVersion
+	}
+	return 0
+}
+
+func (x *PutCheckpointRequest) GetRuntimeAbi() int32 {
+	if x != nil {
+		return x.RuntimeAbi
+	}
+	return 0
+}
+
+func (x *PutCheckpointRequest) GetRuntimeVersion() string {
+	if x != nil {
+		return x.RuntimeVersion
+	}
+	return ""
+}
+
+func (x *PutCheckpointRequest) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
+func (x *PutCheckpointRequest) GetState() []byte {
+	if x != nil {
+		return x.State
+	}
+	return nil
+}
+
+type PutCheckpointResponse struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	CheckpointId string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	// True when an identical (attempt_id, sequence) checkpoint already existed.
+	Duplicate     bool  `protobuf:"varint,2,opt,name=duplicate,proto3" json:"duplicate,omitempty"`
+	SizeBytes     int64 `protobuf:"varint,3,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutCheckpointResponse) Reset() {
+	*x = PutCheckpointResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutCheckpointResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutCheckpointResponse) ProtoMessage() {}
+
+func (x *PutCheckpointResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutCheckpointResponse.ProtoReflect.Descriptor instead.
+func (*PutCheckpointResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *PutCheckpointResponse) GetCheckpointId() string {
+	if x != nil {
+		return x.CheckpointId
+	}
+	return ""
+}
+
+func (x *PutCheckpointResponse) GetDuplicate() bool {
+	if x != nil {
+		return x.Duplicate
+	}
+	return false
+}
+
+func (x *PutCheckpointResponse) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
 var File_worker_v1_worker_proto protoreflect.FileDescriptor
 
 const file_worker_v1_worker_proto_rawDesc = "" +
@@ -2930,7 +3144,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
 	"\n" +
 	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12\x19\n" +
-	"\blease_id\x18\x03 \x01(\tR\aleaseId\"\xeb\x06\n" +
+	"\blease_id\x18\x03 \x01(\tR\aleaseId\"\x85\t\n" +
 	"\x16GetTaskContextResponse\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
@@ -2949,7 +3163,12 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x11resume_checkpoint\x18\f \x01(\v2!.platform.worker.v1.CheckpointRefR\x10resumeCheckpoint\x126\n" +
 	"\bdeadline\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\x12 \n" +
 	"\vtraceparent\x18\x0e \x01(\tR\vtraceparent\x12E\n" +
-	"\x12node_output_schema\x18\x0f \x01(\v2\x17.google.protobuf.StructR\x10nodeOutputSchema\x1a[\n" +
+	"\x12node_output_schema\x18\x0f \x01(\v2\x17.google.protobuf.StructR\x10nodeOutputSchema\x126\n" +
+	"\x17resume_checkpoint_bytes\x18\x10 \x01(\fR\x15resumeCheckpointBytes\x120\n" +
+	"\x14resume_checkpoint_id\x18\x11 \x01(\tR\x12resumeCheckpointId\x12G\n" +
+	" resume_checkpoint_schema_version\x18\x12 \x01(\x05R\x1dresumeCheckpointSchemaVersion\x12<\n" +
+	"\x1aresume_checkpoint_sequence\x18\x13 \x01(\x05R\x18resumeCheckpointSequence\x12'\n" +
+	"\x0fidempotency_key\x18\x14 \x01(\tR\x0eidempotencyKey\x1a[\n" +
 	"\x14UpstreamOutputsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
 	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01\"\xe7\x01\n" +
@@ -2975,7 +3194,24 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x1a9\n" +
 	"\vValuesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01*\xb3\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb9\x02\n" +
+	"\x14PutCheckpointRequest\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12\x19\n" +
+	"\blease_id\x18\x03 \x01(\tR\aleaseId\x12\x1a\n" +
+	"\bsequence\x18\x04 \x01(\x05R\bsequence\x12:\n" +
+	"\x19checkpoint_schema_version\x18\x05 \x01(\x05R\x17checkpointSchemaVersion\x12\x1f\n" +
+	"\vruntime_abi\x18\x06 \x01(\x05R\n" +
+	"runtimeAbi\x12'\n" +
+	"\x0fruntime_version\x18\a \x01(\tR\x0eruntimeVersion\x12\x16\n" +
+	"\x06sha256\x18\b \x01(\tR\x06sha256\x12\x14\n" +
+	"\x05state\x18\t \x01(\fR\x05state\"y\n" +
+	"\x15PutCheckpointResponse\x12#\n" +
+	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12\x1c\n" +
+	"\tduplicate\x18\x02 \x01(\bR\tduplicate\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x03 \x01(\x03R\tsizeBytes*\xb3\x02\n" +
 	"\x13TaskRejectionReason\x12%\n" +
 	"!TASK_REJECTION_REASON_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aTASK_REJECTION_REASON_BUSY\x10\x01\x12&\n" +
@@ -3016,14 +3252,15 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x19ARTIFACT_KIND_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18ARTIFACT_KIND_CHECKPOINT\x10\x01\x12\x18\n" +
 	"\x14ARTIFACT_KIND_OUTPUT\x10\x02\x12\x15\n" +
-	"\x11ARTIFACT_KIND_LOG\x10\x032\xb3\x05\n" +
+	"\x11ARTIFACT_KIND_LOG\x10\x032\x99\x06\n" +
 	"\rWorkerControl\x12Y\n" +
 	"\aConnect\x12!.platform.worker.v1.WorkerMessage\x1a'.platform.worker.v1.OrchestratorMessage(\x010\x01\x12m\n" +
 	"\x10ReportTaskResult\x12+.platform.worker.v1.ReportTaskResultRequest\x1a,.platform.worker.v1.ReportTaskResultResponse\x12y\n" +
 	"\x14CreateArtifactUpload\x12/.platform.worker.v1.CreateArtifactUploadRequest\x1a0.platform.worker.v1.CreateArtifactUploadResponse\x12\x7f\n" +
 	"\x16CreateArtifactDownload\x121.platform.worker.v1.CreateArtifactDownloadRequest\x1a2.platform.worker.v1.CreateArtifactDownloadResponse\x12g\n" +
 	"\x0eGetTaskContext\x12).platform.worker.v1.GetTaskContextRequest\x1a*.platform.worker.v1.GetTaskContextResponse\x12s\n" +
-	"\x12GetTaskCredentials\x12-.platform.worker.v1.GetTaskCredentialsRequest\x1a..platform.worker.v1.GetTaskCredentialsResponseBAZ?github.com/agent-platform/agent-platform/gen/worker/v1;workerv1b\x06proto3"
+	"\x12GetTaskCredentials\x12-.platform.worker.v1.GetTaskCredentialsRequest\x1a..platform.worker.v1.GetTaskCredentialsResponse\x12d\n" +
+	"\rPutCheckpoint\x12(.platform.worker.v1.PutCheckpointRequest\x1a).platform.worker.v1.PutCheckpointResponseBAZ?github.com/agent-platform/agent-platform/gen/worker/v1;workerv1b\x06proto3"
 
 var (
 	file_worker_v1_worker_proto_rawDescOnce sync.Once
@@ -3038,7 +3275,7 @@ func file_worker_v1_worker_proto_rawDescGZIP() []byte {
 }
 
 var file_worker_v1_worker_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_worker_v1_worker_proto_goTypes = []any{
 	(TaskRejectionReason)(0),               // 0: platform.worker.v1.TaskRejectionReason
 	(WorkerStatus)(0),                      // 1: platform.worker.v1.WorkerStatus
@@ -3075,12 +3312,14 @@ var file_worker_v1_worker_proto_goTypes = []any{
 	(*CheckpointRef)(nil),                  // 32: platform.worker.v1.CheckpointRef
 	(*GetTaskCredentialsRequest)(nil),      // 33: platform.worker.v1.GetTaskCredentialsRequest
 	(*GetTaskCredentialsResponse)(nil),     // 34: platform.worker.v1.GetTaskCredentialsResponse
-	nil,                                    // 35: platform.worker.v1.Hello.LabelsEntry
-	nil,                                    // 36: platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
-	nil,                                    // 37: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
-	nil,                                    // 38: platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
-	(*timestamppb.Timestamp)(nil),          // 39: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),                // 40: google.protobuf.Struct
+	(*PutCheckpointRequest)(nil),           // 35: platform.worker.v1.PutCheckpointRequest
+	(*PutCheckpointResponse)(nil),          // 36: platform.worker.v1.PutCheckpointResponse
+	nil,                                    // 37: platform.worker.v1.Hello.LabelsEntry
+	nil,                                    // 38: platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
+	nil,                                    // 39: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
+	nil,                                    // 40: platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
+	(*timestamppb.Timestamp)(nil),          // 41: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                // 42: google.protobuf.Struct
 }
 var file_worker_v1_worker_proto_depIdxs = []int32{
 	8,  // 0: platform.worker.v1.WorkerMessage.hello:type_name -> platform.worker.v1.Hello
@@ -3093,56 +3332,58 @@ var file_worker_v1_worker_proto_depIdxs = []int32{
 	15, // 7: platform.worker.v1.OrchestratorMessage.cancel_task:type_name -> platform.worker.v1.CancelTask
 	16, // 8: platform.worker.v1.OrchestratorMessage.drain:type_name -> platform.worker.v1.DrainWorker
 	18, // 9: platform.worker.v1.OrchestratorMessage.error:type_name -> platform.worker.v1.ControlError
-	35, // 10: platform.worker.v1.Hello.labels:type_name -> platform.worker.v1.Hello.LabelsEntry
+	37, // 10: platform.worker.v1.Hello.labels:type_name -> platform.worker.v1.Hello.LabelsEntry
 	19, // 11: platform.worker.v1.Hello.capacity:type_name -> platform.worker.v1.Capacity
 	20, // 12: platform.worker.v1.Hello.resources:type_name -> platform.worker.v1.WorkerResources
-	39, // 13: platform.worker.v1.HelloAck.server_time:type_name -> google.protobuf.Timestamp
-	39, // 14: platform.worker.v1.Heartbeat.sent_at:type_name -> google.protobuf.Timestamp
+	41, // 13: platform.worker.v1.HelloAck.server_time:type_name -> google.protobuf.Timestamp
+	41, // 14: platform.worker.v1.Heartbeat.sent_at:type_name -> google.protobuf.Timestamp
 	11, // 15: platform.worker.v1.Heartbeat.active_attempts:type_name -> platform.worker.v1.ActiveAttempt
 	19, // 16: platform.worker.v1.Heartbeat.capacity:type_name -> platform.worker.v1.Capacity
 	1,  // 17: platform.worker.v1.Heartbeat.status:type_name -> platform.worker.v1.WorkerStatus
-	39, // 18: platform.worker.v1.TaskAccepted.started_at:type_name -> google.protobuf.Timestamp
-	39, // 19: platform.worker.v1.TaskProgress.reported_at:type_name -> google.protobuf.Timestamp
+	41, // 18: platform.worker.v1.TaskAccepted.started_at:type_name -> google.protobuf.Timestamp
+	41, // 19: platform.worker.v1.TaskProgress.reported_at:type_name -> google.protobuf.Timestamp
 	0,  // 20: platform.worker.v1.TaskRejected.reason:type_name -> platform.worker.v1.TaskRejectionReason
 	2,  // 21: platform.worker.v1.ReportTaskResultRequest.outcome:type_name -> platform.worker.v1.TaskOutcome
-	40, // 22: platform.worker.v1.ReportTaskResultRequest.output:type_name -> google.protobuf.Struct
+	42, // 22: platform.worker.v1.ReportTaskResultRequest.output:type_name -> google.protobuf.Struct
 	23, // 23: platform.worker.v1.ReportTaskResultRequest.output_artifact:type_name -> platform.worker.v1.ArtifactRef
 	23, // 24: platform.worker.v1.ReportTaskResultRequest.checkpoint:type_name -> platform.worker.v1.ArtifactRef
 	22, // 25: platform.worker.v1.ReportTaskResultRequest.failure:type_name -> platform.worker.v1.TaskFailure
 	24, // 26: platform.worker.v1.ReportTaskResultRequest.metrics:type_name -> platform.worker.v1.AttemptMetrics
-	39, // 27: platform.worker.v1.ReportTaskResultRequest.started_at:type_name -> google.protobuf.Timestamp
-	39, // 28: platform.worker.v1.ReportTaskResultRequest.finished_at:type_name -> google.protobuf.Timestamp
+	41, // 27: platform.worker.v1.ReportTaskResultRequest.started_at:type_name -> google.protobuf.Timestamp
+	41, // 28: platform.worker.v1.ReportTaskResultRequest.finished_at:type_name -> google.protobuf.Timestamp
 	3,  // 29: platform.worker.v1.TaskFailure.classification:type_name -> platform.worker.v1.FailureClassification
-	40, // 30: platform.worker.v1.AttemptMetrics.extra:type_name -> google.protobuf.Struct
+	42, // 30: platform.worker.v1.AttemptMetrics.extra:type_name -> google.protobuf.Struct
 	4,  // 31: platform.worker.v1.ReportTaskResultResponse.status:type_name -> platform.worker.v1.ResultStatus
 	5,  // 32: platform.worker.v1.CreateArtifactUploadRequest.kind:type_name -> platform.worker.v1.ArtifactKind
-	36, // 33: platform.worker.v1.CreateArtifactUploadResponse.headers:type_name -> platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
-	39, // 34: platform.worker.v1.CreateArtifactUploadResponse.expires_at:type_name -> google.protobuf.Timestamp
-	39, // 35: platform.worker.v1.CreateArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
-	40, // 36: platform.worker.v1.GetTaskContextResponse.version_spec:type_name -> google.protobuf.Struct
-	40, // 37: platform.worker.v1.GetTaskContextResponse.execution_input:type_name -> google.protobuf.Struct
-	40, // 38: platform.worker.v1.GetTaskContextResponse.node_params:type_name -> google.protobuf.Struct
-	37, // 39: platform.worker.v1.GetTaskContextResponse.upstream_outputs:type_name -> platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
+	38, // 33: platform.worker.v1.CreateArtifactUploadResponse.headers:type_name -> platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
+	41, // 34: platform.worker.v1.CreateArtifactUploadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	41, // 35: platform.worker.v1.CreateArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	42, // 36: platform.worker.v1.GetTaskContextResponse.version_spec:type_name -> google.protobuf.Struct
+	42, // 37: platform.worker.v1.GetTaskContextResponse.execution_input:type_name -> google.protobuf.Struct
+	42, // 38: platform.worker.v1.GetTaskContextResponse.node_params:type_name -> google.protobuf.Struct
+	39, // 39: platform.worker.v1.GetTaskContextResponse.upstream_outputs:type_name -> platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
 	32, // 40: platform.worker.v1.GetTaskContextResponse.resume_checkpoint:type_name -> platform.worker.v1.CheckpointRef
-	39, // 41: platform.worker.v1.GetTaskContextResponse.deadline:type_name -> google.protobuf.Timestamp
-	40, // 42: platform.worker.v1.GetTaskContextResponse.node_output_schema:type_name -> google.protobuf.Struct
-	38, // 43: platform.worker.v1.GetTaskCredentialsResponse.values:type_name -> platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
-	39, // 44: platform.worker.v1.GetTaskCredentialsResponse.expires_at:type_name -> google.protobuf.Timestamp
-	40, // 45: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
+	41, // 41: platform.worker.v1.GetTaskContextResponse.deadline:type_name -> google.protobuf.Timestamp
+	42, // 42: platform.worker.v1.GetTaskContextResponse.node_output_schema:type_name -> google.protobuf.Struct
+	40, // 43: platform.worker.v1.GetTaskCredentialsResponse.values:type_name -> platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
+	41, // 44: platform.worker.v1.GetTaskCredentialsResponse.expires_at:type_name -> google.protobuf.Timestamp
+	42, // 45: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
 	6,  // 46: platform.worker.v1.WorkerControl.Connect:input_type -> platform.worker.v1.WorkerMessage
 	21, // 47: platform.worker.v1.WorkerControl.ReportTaskResult:input_type -> platform.worker.v1.ReportTaskResultRequest
 	26, // 48: platform.worker.v1.WorkerControl.CreateArtifactUpload:input_type -> platform.worker.v1.CreateArtifactUploadRequest
 	28, // 49: platform.worker.v1.WorkerControl.CreateArtifactDownload:input_type -> platform.worker.v1.CreateArtifactDownloadRequest
 	30, // 50: platform.worker.v1.WorkerControl.GetTaskContext:input_type -> platform.worker.v1.GetTaskContextRequest
 	33, // 51: platform.worker.v1.WorkerControl.GetTaskCredentials:input_type -> platform.worker.v1.GetTaskCredentialsRequest
-	7,  // 52: platform.worker.v1.WorkerControl.Connect:output_type -> platform.worker.v1.OrchestratorMessage
-	25, // 53: platform.worker.v1.WorkerControl.ReportTaskResult:output_type -> platform.worker.v1.ReportTaskResultResponse
-	27, // 54: platform.worker.v1.WorkerControl.CreateArtifactUpload:output_type -> platform.worker.v1.CreateArtifactUploadResponse
-	29, // 55: platform.worker.v1.WorkerControl.CreateArtifactDownload:output_type -> platform.worker.v1.CreateArtifactDownloadResponse
-	31, // 56: platform.worker.v1.WorkerControl.GetTaskContext:output_type -> platform.worker.v1.GetTaskContextResponse
-	34, // 57: platform.worker.v1.WorkerControl.GetTaskCredentials:output_type -> platform.worker.v1.GetTaskCredentialsResponse
-	52, // [52:58] is the sub-list for method output_type
-	46, // [46:52] is the sub-list for method input_type
+	35, // 52: platform.worker.v1.WorkerControl.PutCheckpoint:input_type -> platform.worker.v1.PutCheckpointRequest
+	7,  // 53: platform.worker.v1.WorkerControl.Connect:output_type -> platform.worker.v1.OrchestratorMessage
+	25, // 54: platform.worker.v1.WorkerControl.ReportTaskResult:output_type -> platform.worker.v1.ReportTaskResultResponse
+	27, // 55: platform.worker.v1.WorkerControl.CreateArtifactUpload:output_type -> platform.worker.v1.CreateArtifactUploadResponse
+	29, // 56: platform.worker.v1.WorkerControl.CreateArtifactDownload:output_type -> platform.worker.v1.CreateArtifactDownloadResponse
+	31, // 57: platform.worker.v1.WorkerControl.GetTaskContext:output_type -> platform.worker.v1.GetTaskContextResponse
+	34, // 58: platform.worker.v1.WorkerControl.GetTaskCredentials:output_type -> platform.worker.v1.GetTaskCredentialsResponse
+	36, // 59: platform.worker.v1.WorkerControl.PutCheckpoint:output_type -> platform.worker.v1.PutCheckpointResponse
+	53, // [53:60] is the sub-list for method output_type
+	46, // [46:53] is the sub-list for method input_type
 	46, // [46:46] is the sub-list for extension type_name
 	46, // [46:46] is the sub-list for extension extendee
 	0,  // [0:46] is the sub-list for field type_name
@@ -3173,7 +3414,7 @@ func file_worker_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_v1_worker_proto_rawDesc), len(file_worker_v1_worker_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   33,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

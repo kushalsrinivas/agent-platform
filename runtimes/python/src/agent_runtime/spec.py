@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 CHECKPOINT_SCHEMA_VERSION = 1
 
@@ -51,6 +51,12 @@ class LimitsSpec(RuntimeModel):
 class CheckpointSpec(RuntimeModel):
     mode: Literal["none", "on_node_end"] = "on_node_end"
     require_checkpoint: bool = False
+
+    @model_validator(mode="after")
+    def _require_mode(self) -> CheckpointSpec:
+        if self.require_checkpoint and self.mode == "none":
+            raise ValueError("require_checkpoint cannot be true when checkpoint mode is none")
+        return self
 
 
 class AgentVersionSpec(RuntimeModel):

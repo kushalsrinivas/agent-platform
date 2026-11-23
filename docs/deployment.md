@@ -175,8 +175,9 @@ docker compose exec -T postgres pg_dump -U postgres -Fc agent_platform > "agent_
 ```
 
 - Restore with `pg_restore` into an empty database.
-- Object storage becomes authoritative for checkpoints and artifacts when the worker/runtime slice lands; back up
-  the bucket (volume snapshot or `mc mirror`) once it is used.
+- Large checkpoints and artifacts live in the `checkpoint-artifacts` volume (or an S3/MinIO bucket when the
+  artifact backend is replaced). Snapshot the volume with the host or mirror the bucket; losing it reduces resume
+  granularity but cannot change a committed logical state because PostgreSQL remains authoritative.
 - NATS and Redis hold no authoritative state; do not back them up. `TASK_DISPATCH` is a work-queue stream,
   `EVENTS` retains 72 hours and `TASK_DLQ` retains dead letters for 7 days. Setting
   `ORCHESTRATOR_STREAM_REPLICAS=3` requires a three-node NATS cluster; do not raise it on a single node.
@@ -187,7 +188,9 @@ docker compose exec -T postgres pg_dump -U postgres -Fc agent_platform > "agent_
   `python -m agent_runtime serve --socket {socket}`; setting it empty uses the offline echo executor. Each attempt
   is a separate Python process in its own process group; `WORKER_RUNTIME_STARTUP_SECONDS` and
   `WORKER_RUNTIME_KILL_SECONDS` bound startup and termination. The image is larger than a Go-only worker because it
-  carries the Python venv and LangGraph.
+  carries the Python venv and LangGraph. The orchestrator writes large checkpoints to
+  `ORCHESTRATOR_ARTIFACT_DIR`; Compose mounts the `checkpoint-artifacts` volume, and the directory is created with
+  the service user's ownership in the image.
 - Workers advertise `WORKER_RUNTIME`, `WORKER_CAPABILITIES`, CPU cores and memory. The scheduler only assigns a
   node to a worker whose pool, capability and runtime ABI/digest match. Scale workers by adding replicas with
   distinct `WORKER_ID` values; a shared worker ID intentionally replaces the previous boot.

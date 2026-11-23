@@ -37,6 +37,10 @@ func runtimePython(t *testing.T) string {
 }
 
 func startRuntimeWorker(t *testing.T, suffix, pool string) *testWorker {
+	return startRuntimeWorkerEnv(t, suffix, pool, nil)
+}
+
+func startRuntimeWorkerEnv(t *testing.T, suffix, pool string, env []string) *testWorker {
 	t.Helper()
 	worker := startTestWorkerWithCapacity(t, suffix, pool, 1)
 	executor := execution.NewExecutor(worker.control, execution.Config{
@@ -45,6 +49,7 @@ func startRuntimeWorker(t *testing.T, suffix, pool string) *testWorker {
 		RuntimeVersion:  "0.1.0",
 		StartupTimeout:  30 * time.Second,
 		KillGrace:       5 * time.Second,
+		Env:             env,
 	}, zap.NewNop())
 	worker.startConsumer(t, &delivery.Handler{
 		Client:   worker.control,
@@ -123,7 +128,7 @@ func TestRuntimeOutputSchemaRejectsInvalidOutput(t *testing.T) {
 	})
 
 	path := "/v1/orgs/" + fixture.orgID + "/projects/" + fixture.projectID + "/executions/" + fixture.executionID
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		execution := client.request(http.MethodGet, path, nil, nil, http.StatusOK)
 		state, _ := execution["state"].(string)

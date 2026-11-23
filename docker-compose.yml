@@ -132,8 +132,8 @@ services:
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-agent-platform-api}
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
-      API_RATE_LIMIT_PER_MINUTE: "120"
-      API_RATE_LIMIT_BURST: "30"
+      API_RATE_LIMIT_PER_MINUTE: ${API_RATE_LIMIT_PER_MINUTE:-120}
+      API_RATE_LIMIT_BURST: ${API_RATE_LIMIT_BURST:-30}
     ports:
       - "${API_PORT:-8080}:8080"
     depends_on:
@@ -176,6 +176,9 @@ services:
       ORCHESTRATOR_MAX_ACTIVE_TASKS_PER_TENANT: ${ORCHESTRATOR_MAX_ACTIVE_TASKS_PER_TENANT:-0}
       ORCHESTRATOR_PROVIDER_CONCURRENCY: ${ORCHESTRATOR_PROVIDER_CONCURRENCY:-}
       ORCHESTRATOR_TOOL_CONCURRENCY: ${ORCHESTRATOR_TOOL_CONCURRENCY:-}
+      ORCHESTRATOR_ARTIFACT_DIR: /var/lib/agent-platform/artifacts
+    volumes:
+      - checkpoint-artifacts:/var/lib/agent-platform/artifacts
     ports:
       - "${ORCHESTRATOR_GRPC_PORT:-9090}:9090"
       - "${ORCHESTRATOR_HTTP_PORT:-8081}:8081"
@@ -255,6 +258,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  checkpoint-artifacts:
   postgres-data:
   nats-data:
   redis-data:

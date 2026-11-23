@@ -32,7 +32,9 @@ FROM alpine:3.22
 
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S -g 10001 app \
-    && adduser -S -u 10001 -G app app
+    && adduser -S -u 10001 -G app app \
+    && mkdir -p /var/lib/agent-platform/artifacts \
+    && chown -R 10001:10001 /var/lib/agent-platform
 
 COPY --from=build /out/service /usr/local/bin/service
 

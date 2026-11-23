@@ -74,7 +74,59 @@ async def test_agent_loop_runs_tools_and_resumes() -> None:
     await resumed.restore_state(checkpoint.model_dump())
     second = await resumed.execute({"topic": "tool:add:[1,2,3]"}, _context())
     assert second.outcome == "succeeded"
+    # The final checkpoint records completed work: a retry must return the same result without another model call.
+    assert second.output["steps"] == 2
+    assert second.output == result.output
+
+
+async def test_mid_run_checkpoint_resumes_tool_conversation() -> None:
+    runtime = LangGraphRuntime()
+    await runtime.initialize(_spec(tools=True), _context())
+    result = await runtime.execute({"topic": "tool:add:[1,2,3]"}, _context())
+    checkpoint = decode(result.checkpoint or b"")
+    state = dict(checkpoint.state)
+    state.pop("completed", None)
+    state.pop("output", None)
+    from checkpointing.codec import Checkpoint
+
+    mid = Checkpoint(agent_version_id=checkpoint.agent_version_id, state=state)
+    resumed = LangGraphRuntime()
+    await resumed.initialize(_spec(tools=True), _context())
+    await resumed.restore_state(mid.model_dump())
+    second = await resumed.execute({"topic": "tool:add:[1,2,3]"}, _context())
+    assert second.outcome == "succeeded"
     assert second.output["steps"] == 3
+
+
+async def test_tool_pending_checkpoint_resumes_at_tools() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, message_to_dict
+
+    from checkpointing.codec import Checkpoint
+
+    messages = [
+        SystemMessage(content="You are a test agent."),
+        HumanMessage(content='{"input": {"topic": "tool:add:[1,2,3]"}, "params": {}}'),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "add", "args": {"numbers": [1, 2, 3]}, "id": "call_echo_1", "type": "tool_call"}],
+        ),
+    ]
+    checkpoint = Checkpoint(
+        agent_version_id="agtv_1",
+        state={
+            "messages": [message_to_dict(message) for message in messages],
+            "steps": 1,
+            "phase": "tools_pending",
+            "completed": False,
+        },
+    )
+    runtime = LangGraphRuntime()
+    await runtime.initialize(_spec(tools=True), _context())
+    await runtime.restore_state(checkpoint.model_dump())
+    result = await runtime.execute({"topic": "tool:add:[1,2,3]"}, _context())
+    assert result.outcome == "succeeded"
+    # The tool node is entered directly; only the final model turn runs.
+    assert result.output["steps"] == 2
 
 
 async def test_checkpoint_disabled_by_spec() -> None:

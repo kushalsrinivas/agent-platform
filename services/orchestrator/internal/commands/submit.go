@@ -241,9 +241,23 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 			taskID := idgen.New("task")
 			taskIDs[node.ID] = taskID
 
+			// The effective retry policy is frozen on the task: a later workflow edit must not change how an
+			// in-flight execution retries.
+			retry := node.Retry
+			if retry == nil && graph.Policy != nil {
+				retry = graph.Policy.Retry
+			}
 			maxAttempts := 1
-			if node.Retry != nil && node.Retry.MaxAttempts != nil {
-				maxAttempts = *node.Retry.MaxAttempts
+			if retry != nil && retry.MaxAttempts != nil {
+				maxAttempts = *retry.MaxAttempts
+			}
+			retryPolicy := []byte("{}")
+			if retry != nil {
+				encoded, err := json.Marshal(retry)
+				if err != nil {
+					return status.Errorf(codes.Internal, "could not encode the retry policy for node %q", node.ID)
+				}
+				retryPolicy = encoded
 			}
 			timeoutSeconds := 600
 			if node.TimeoutSeconds != nil {
@@ -279,13 +293,15 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 				INSERT INTO execution.execution_tasks
 					(id, execution_id, org_id, node_id, node_type, agent_version_id, tool_version_id,
 					 worker_pool, priority, runtime_abi, runtime_digest, provider, model,
-					 state, attempt_count, max_attempts, timeout_seconds, side_effect_class)
+					 state, attempt_count, max_attempts, timeout_seconds, side_effect_class,
+					 retry_policy, idempotency_key)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-				        'pending', 0, $14, $15, $16)`,
+				        'pending', 0, $14, $15, $16, $17::jsonb, $18)`,
 				taskID, executionID, req.OrgId, node.ID, string(node.Type),
 				nullableArg(agentVersionID), nullableArg(toolVersionID), nullableArg(node.WorkerPool),
 				req.Priority, nullableArgInt(runtimeABI), nullableArg(runtimeDigest), nullableArg(provider),
-				nullableArg(model), maxAttempts, timeoutSeconds, sideEffect)
+				nullableArg(model), maxAttempts, timeoutSeconds, sideEffect, retryPolicy,
+				nullableArg(node.IdempotencyKey))
 			if err != nil {
 				return err
 			}

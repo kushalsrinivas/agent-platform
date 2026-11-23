@@ -13,12 +13,15 @@ from checkpointing.codec import (
     encode,
     sha256,
 )
+from checkpointing.sink import CHECKPOINT_DIR_ENV, CheckpointSink
 
 __all__ = [
+    "CHECKPOINT_DIR_ENV",
     "CHECKPOINT_SCHEMA_VERSION",
     "MAX_CHECKPOINT_BYTES",
     "Checkpoint",
     "CheckpointError",
+    "CheckpointSink",
     "decode",
     "encode",
     "sha256",

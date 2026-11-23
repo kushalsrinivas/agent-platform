@@ -39,6 +39,9 @@ type serviceConfig struct {
 	MaxQueuedExecutions int `env:"ORCHESTRATOR_MAX_QUEUED_EXECUTIONS" envDefault:"100"`
 	MaxExecutionSeconds int `env:"ORCHESTRATOR_MAX_EXECUTION_SECONDS" envDefault:"86400"`
 
+	// ArtifactDir offloads checkpoints above the inline threshold. Empty keeps all state in PostgreSQL.
+	ArtifactDir string `env:"ORCHESTRATOR_ARTIFACT_DIR" envDefault:"./data/artifacts"`
+
 	StreamReplicas    int    `env:"ORCHESTRATOR_STREAM_REPLICAS" envDefault:"1"`
 	AdminToken        string `env:"ORCHESTRATOR_ADMIN_TOKEN"`
 	DispatcherMillis  int    `env:"ORCHESTRATOR_DISPATCH_INTERVAL_MS" envDefault:"500"`
@@ -105,12 +108,6 @@ func main() {
 	if err != nil {
 		log.Fatal("grpc listen failed", zap.Error(err))
 	}
-	orchestratorv1.RegisterExecutionCommandsServer(grpcSrv.Server, commands.New(log, pool, commands.Quotas{
-		MaxActive:            cfg.MaxActiveExecutions,
-		MaxQueued:            cfg.MaxQueuedExecutions,
-		MaxExecutionDuration: time.Duration(cfg.MaxExecutionSeconds) * time.Second,
-	}))
-
 	providerLimits, err := lifecycle.ParseConcurrencyLimits(cfg.ProviderConcurrency)
 	if err != nil {
 		log.Fatal("invalid provider concurrency limits", zap.Error(err))
@@ -126,7 +123,14 @@ func main() {
 		MaxActiveTasksPerTenant: cfg.MaxActiveTasksPerTenant,
 		ProviderConcurrency:     providerLimits,
 		ToolConcurrency:         toolLimits,
+		ArtifactDir:             cfg.ArtifactDir,
 	})
+	orchestratorv1.RegisterExecutionCommandsServer(grpcSrv.Server, commands.New(log, pool, commands.Quotas{
+		MaxActive:            cfg.MaxActiveExecutions,
+		MaxQueued:            cfg.MaxQueuedExecutions,
+		MaxExecutionDuration: time.Duration(cfg.MaxExecutionSeconds) * time.Second,
+	}, lifecycleService))
+
 	workerv1.RegisterWorkerControlServer(grpcSrv.Server, lifecycle.NewWorkerServer(lifecycleService, log))
 	publisher := messaging.NewPublisherLoop(outbox.NewStore(pool),
 		messaging.NewNATSPublisher(js, log), log,
@@ -170,7 +174,7 @@ func main() {
 			return lifecycleService.RunDispatcher(ctx, time.Duration(cfg.DispatcherMillis)*time.Millisecond)
 		},
 		func(ctx context.Context) error {
-			return lifecycleService.RunReaper(ctx, time.Duration(cfg.ReaperMillis)*time.Millisecond)
+			return lifecycleService.RunRecovery(ctx, time.Duration(cfg.ReaperMillis)*time.Millisecond)
 		},
 	); err != nil {
 		log.Fatal("orchestrator stopped", zap.Error(err))

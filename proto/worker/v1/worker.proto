@@ -31,6 +31,9 @@ service WorkerControl {
 
   // Short-lived, task-scoped credentials. Never cached on disk and never placed on the bus.
   rpc GetTaskCredentials(GetTaskCredentialsRequest) returns (GetTaskCredentialsResponse);
+
+  // Fenced upload of one checkpoint produced at a safe execution boundary. Idempotent by (attempt_id, sequence).
+  rpc PutCheckpoint(PutCheckpointRequest) returns (PutCheckpointResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +341,13 @@ message GetTaskContextResponse {
   // The pinned node output_schema, when present. The worker validates runtime output against it before
   // reporting, so an invalid result never reaches the orchestrator as a success.
   google.protobuf.Struct node_output_schema = 15;
+  // Latest durable checkpoint for this task, resumed by the next attempt. Empty on a first attempt.
+  bytes resume_checkpoint_bytes = 16;
+  string resume_checkpoint_id = 17;
+  int32 resume_checkpoint_schema_version = 18;
+  int32 resume_checkpoint_sequence = 19;
+  // Logical idempotency key for a tool node; external side effects must deduplicate on it across retries.
+  string idempotency_key = 20;
 }
 
 message CheckpointRef {
@@ -359,4 +369,26 @@ message GetTaskCredentialsRequest {
 message GetTaskCredentialsResponse {
   map<string, string> values = 1;
   google.protobuf.Timestamp expires_at = 2;
+}
+
+message PutCheckpointRequest {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  // Monotonic within the attempt; makes the upload idempotent.
+  int32 sequence = 4;
+  int32 checkpoint_schema_version = 5;
+  int32 runtime_abi = 6;
+  string runtime_version = 7;
+  // sha256 of state, formatted as "sha256:<hex>".
+  string sha256 = 8;
+  // Gzip-compressed canonical JSON produced by the runtime checkpoint codec. Never pickle.
+  bytes state = 9;
+}
+
+message PutCheckpointResponse {
+  string checkpoint_id = 1;
+  // True when an identical (attempt_id, sequence) checkpoint already existed.
+  bool duplicate = 2;
+  int64 size_bytes = 3;
 }

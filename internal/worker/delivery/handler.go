@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -90,8 +91,26 @@ func (h *Handler) Handle(ctx context.Context, msg jetstream.Msg) error {
 	if err != nil {
 		return messaging.Permanent(fmt.Errorf("invalid deadline: %w", err))
 	}
-	runCtx, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
+	deadlineCtx, deadlineCancel := context.WithDeadline(ctx, deadline)
+	defer deadlineCancel()
+	runCtx, cancelRun := context.WithCancel(deadlineCtx)
+	defer cancelRun()
+
+	cancelCh, unsubscribe := h.Client.Cancellation(dispatch.TaskID, dispatch.AttemptID, dispatch.LeaseID)
+	defer unsubscribe()
+	var cancelledByOrchestrator atomic.Bool
+	go func() {
+		select {
+		case <-cancelCh:
+			cancelledByOrchestrator.Store(true)
+			h.Log.Warn("cancelling attempt on orchestrator request",
+				zap.String("task_id", dispatch.TaskID),
+				zap.String("attempt_id", dispatch.AttemptID),
+			)
+			cancelRun()
+		case <-runCtx.Done():
+		}
+	}()
 
 	if h.Client.Draining() {
 		if err := h.Client.Rejected(ctx, dispatch.TaskID, dispatch.AttemptID, dispatch.LeaseID,
@@ -146,9 +165,9 @@ func (h *Handler) Handle(ctx context.Context, msg jetstream.Msg) error {
 	finishedAt := time.Now().UTC()
 	duration := finishedAt.Sub(startedAt).Milliseconds()
 
-	// A cancelled run context means the worker is shutting down or the attempt lost its broker deadline; do not
-	// burn an attempt on it. The lease is the recovery mechanism.
-	if errors.Is(runCtx.Err(), context.Canceled) && executeErr != nil {
+	// A cancellation requested by the orchestrator is durable and must be reported, not left for redelivery. Any
+	// other cancelled context is the worker shutting down: leave the message to the lease/recovery mechanism.
+	if errors.Is(runCtx.Err(), context.Canceled) && executeErr != nil && !cancelledByOrchestrator.Load() {
 		return fmt.Errorf("attempt interrupted: %w", executeErr)
 	}
 
@@ -169,7 +188,14 @@ func (h *Handler) Handle(ctx context.Context, msg jetstream.Msg) error {
 		request.RuntimeVersion = outcome.RuntimeVersion
 	}
 
-	if executeErr != nil {
+	if cancelledByOrchestrator.Load() {
+		request.Outcome = workerv1.TaskOutcome_TASK_OUTCOME_CANCELLED
+		request.Failure = &workerv1.TaskFailure{
+			Code: "CANCELLED", Message: "execution cancellation requested",
+			Classification:  workerv1.FailureClassification_FAILURE_CLASSIFICATION_CANCELLED,
+			EffectUncertain: outcome.Failure != nil && outcome.Failure.GetEffectUncertain(),
+		}
+	} else if executeErr != nil {
 		request.Outcome = workerv1.TaskOutcome_TASK_OUTCOME_FAILED
 		request.Failure = failureFor(runCtx, executeErr)
 	} else if outcome.Failure != nil {

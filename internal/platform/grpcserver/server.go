@@ -31,7 +31,13 @@ func New(addr, env string, log *zap.Logger, opts ...grpc.ServerOption) (*Server,
 		return nil, fmt.Errorf("grpc: listen %s: %w", addr, err)
 	}
 
-	srv := grpc.NewServer(opts...)
+	// Checkpoints travel as one unary message; the Python runtime and the worker share a 32 MiB payload limit.
+	serverOpts := []grpc.ServerOption{
+		grpc.MaxRecvMsgSize(36 << 20),
+		grpc.MaxSendMsgSize(36 << 20),
+	}
+	serverOpts = append(serverOpts, opts...)
+	srv := grpc.NewServer(serverOpts...)
 	healthpb.RegisterHealthServer(srv, health.NewServer())
 	if env == "development" {
 		reflection.Register(srv)

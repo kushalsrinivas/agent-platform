@@ -61,7 +61,8 @@ an execution starts. This is safe because definitions are immutable once referen
 - Reaper module: expire leases, recover orphaned attempts, finalise cancellations, enforce deadlines. Singleton via
   PostgreSQL advisory lock, safe to run on any replica.
 - Event-publisher module: claim outbox rows, publish envelopes to NATS, mark published; retry with backoff.
-- Persist checkpoints metadata and issue presigned upload/download URLs; never store blob bytes in PostgreSQL.
+- Persist checkpoint metadata and bytes (small inline, large in the artifact store); expose the latest resume
+  checkpoint through `GetTaskContext`. Checkpoint upload is fenced by the attempt lease.
 - Emit audit events and OpenTelemetry signals.
 - Execute CEL edge expressions at task eligibility time.
 
@@ -105,7 +106,8 @@ happened; committed-but-unpublished outbox rows are published after restart.
 - Start one isolated Python runtime process per attempt; pass task spec, tenant/project/execution context, deadline,
   resume checkpoint reference and task-scoped credentials.
 - Enforce attempt deadline and cancellation: SIGTERM, grace period, SIGKILL; kill the whole process group.
-- Upload checkpoints/artifacts through presigned URLs; verify SHA-256 before reporting.
+- Upload checkpoint bytes through the fenced `PutCheckpoint` RPC; verify SHA-256 and never report success when a
+  produced checkpoint could not be committed.
 - Report fenced results and errors; classify failure as `transient`/`permanent`/`timeout`/`cancelled` but never
   decide retry.
 - Clean up sandbox directories, processes and secrets after every attempt and on startup.
@@ -128,7 +130,7 @@ server per attempt.
 
 | | `agent-runtime` | `tool-runtime` |
 |---|---|---|
-| Input | Agent version spec, execution input, upstream outputs, task params, checkpoint ref | Tool version spec, resolved arguments, tenant context, deadline |
+| Input | Agent version spec, execution input, upstream outputs, task params, resume checkpoint bytes | Tool version spec, resolved arguments, tenant context, deadline, idempotency key |
 | Work | Prompt assembly, model calls, agent loop, tool dispatch via local tool-runtime, checkpoint creation | HTTP/MCP/tool invocation, auth injection, output normalisation, timeout |
 | Output | Output JSON, optional checkpoint, metrics | Output JSON, error classification, metrics |
 | State | Its own internal state, serialised via the checkpoint contract (ADR 0008) | Stateless between attempts; MCP sessions are per attempt |
@@ -161,7 +163,7 @@ at tool level (ADR 0006).
 | Cancel execution | api requests; orchestrator commits `cancel_requested` | worker kills sandbox | orchestrator | dashboard |
 | Worker healthy | worker-manager module | worker heartbeats | orchestrator (`workers`) | dashboard/ops |
 | Publish workflow | api | — | api (`control`) | dashboard |
-| Store checkpoint | worker uploads | Python serialises | object storage + orchestrator metadata | — |
+| Store checkpoint | worker uploads | Python serialises | inline PostgreSQL or artifact store + orchestrator metadata | — |
 
 ## 8. Split triggers
 

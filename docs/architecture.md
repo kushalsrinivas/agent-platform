@@ -56,7 +56,7 @@ flowchart LR
   py["agent-runtime / tool-runtime<br/>(Python, per attempt)"]
   db[("PostgreSQL<br/>source of truth")]
   nats[("NATS JetStream<br/>dispatch + events")]
-  obj[("Object storage<br/>checkpoints, artifacts, logs")]
+  obj[("Artifact store<br/>large checkpoints, artifacts, logs")]
   obs[("OTel collector<br/>traces, metrics, logs")]
 
   user -->|HTTPS| dash
@@ -112,7 +112,7 @@ This is the mandatory table from the phase brief, made concrete.
 | Task state, task attempts, leases | Go orchestrator | `execution` | `orchestrator` only |
 | Worker availability, health, capacity | Go worker manager (orchestrator module) | `execution.workers` + in-process view | `orchestrator` only; workers report, never assert |
 | Execution event history (audit) | Go orchestrator | `execution.execution_events` | append-only by `orchestrator` |
-| Agent internal state | Python runtime, persisted via checkpoint contract | Object storage, referenced by `execution.checkpoints` | Python produces bytes; worker uploads; orchestrator commits the reference |
+| Agent internal state | Python runtime, persisted via checkpoint contract | Small states inline in `execution.checkpoints`; large states in the artifact store | Python produces bytes; worker uploads through `PutCheckpoint`; orchestrator validates, commits and offloads |
 | Traces, metrics, logs | Observability infrastructure | OTel backend / log store | services emit; nobody queries it for correctness |
 
 Three rules make this unambiguous:
@@ -201,8 +201,8 @@ sequenceDiagram
   W->>O: task_accepted (attempt, lease)
   O->>P: task assigned→running
   W->>R: ExecuteNode (sandbox)
-  R-->>W: output + checkpoint
-  W->>O: CreateArtifactUpload → PUT checkpoint → ReportTaskResult
+  R-->>W: output + checkpoint files
+  W->>O: PutCheckpoint (safe boundaries) → ReportTaskResult
   O->>P: TX validate fence, attempt result, task transition,<br/>maybe execution completion, event + outbox
   O->>N: publisher: execution/task events
   N-->>A: events → SSE to dashboard
@@ -276,13 +276,15 @@ execution. Validation failures are `422` and leave no rows.
 ### 9.3 How a worker returns its result
 
 1. The worker runs one Python runtime process per attempt and calls `AgentRuntime.ExecuteNode` (or
-   `ToolRuntime.ExecuteTool`) over a per-sandbox Unix socket, passing a resume checkpoint reference if one exists
-   and a deadline.
-2. The runtime returns output, optional checkpoint bytes and metrics. The worker requests a presigned upload URL,
-   PUTs the checkpoint as an immutable object, and keeps only `{object_key, sha256, size, schema_version}`.
+   `ToolRuntime.ExecuteTool`) over a per-sandbox Unix socket, passing resume checkpoint bytes and a deadline.
+2. The runtime writes atomic checkpoint files after each recoverable tool call and at node completion, and returns
+   output plus metrics. While the runtime runs, the worker uploads each file with the fenced `PutCheckpoint` RPC.
+   The orchestrator validates the envelope, stores small states inline and offloads larger states to its artifact
+   store.
 3. The worker calls `ReportTaskResult` with `task_id`, `attempt_id`, `lease_id`, outcome, an inline output object
-   (always present for success, ≤64 KiB) plus an optional artifact reference for larger data, a checkpoint reference
-   including its schema version, and a sanitised error. Logs go to stdout/object storage, never into the result.
+   (always present for success, ≤64 KiB) plus an optional artifact reference for larger data, and a sanitised error.
+   Checkpoints were already committed by `PutCheckpoint`; the result never blocks on a large payload. Logs go to
+   stdout/artifact storage, never into the result.
 4. The orchestrator locks the execution row, then the task row, verifies that `state ∈ {assigned, running}`, that
    `owner_worker_id` and `lease_id` match the current assignment, and that the lease has not expired. It validates
    the result shape against the node's declared output schema and size limits.
@@ -295,9 +297,11 @@ execution. Validation failures are `422` and leave no rows.
 ### 9.4 Where execution state is stored
 
 - **PostgreSQL** (`execution` schema) is authoritative for executions, tasks, dependencies, attempts, leases,
-  checkpoints metadata, worker registry, event history and the outbox. See [data-ownership.md](data-ownership.md).
-- **Object storage** holds immutable blobs: checkpoints, large results/artifacts and optional task logs. The
-  database stores only references plus hashes; a blob without a committed reference is garbage and may be deleted.
+  small checkpoints, checkpoint metadata, worker registry, event history and the outbox. See [data-ownership.md](data-ownership.md).
+- **Artifact store** holds immutable blobs: large checkpoints, large results/artifacts and optional task logs.
+  Small checkpoints stay inline in PostgreSQL. The database stores references plus hashes; a blob without a
+  committed reference is garbage and may be deleted. The orchestrator is the only reader/writer; workers upload
+  checkpoint bytes over the fenced RPC.
 - **NATS JetStream** holds transient dispatch and event messages. It is never read to reconstruct state. Loss of
   all streams delays work only until the reaper/outbox republish.
 - **In-memory** structures (scheduler queue, worker capacity view, SSE connections) are caches/accelerators. They
@@ -305,16 +309,16 @@ execution. Validation failures are `422` and leave no rows.
 
 ### 9.5 What happens when a worker crashes
 
-1. Heartbeats stop. After `lease_ttl` (30s) the task's lease is expired. The reaper runs every 5s with a
-   PostgreSQL advisory lock, so only one orchestrator replica reaps at a time.
+1. Heartbeats stop. After `lease_ttl` (30s) the task's lease is expired. The recovery manager runs every 2s with
+   PostgreSQL row locks, so concurrent passes cannot double-commit a transition.
 2. For each expired lease it records the attempt as `lease_expired` with `outcome_unknown = true`, then applies the
-   node's retry policy:
+   task's frozen retry policy:
    - retry allowed and budget remains → task `assigned → pending`, `next_attempt_at` set; it is dispatched to
-     another worker on a later scheduler tick, from the latest committed checkpoint if one exists. Phase 1 commits
-     checkpoints only with a result, so a worker crash mid-node restarts that node from the beginning;
-   - no retry → task `failed` with `WORKER_LOST` (or `EFFECT_UNCERTAIN` if the node is non-idempotent and had
-     started executing), and the execution completes per the
-     [failure rules](state-machines/execution.md#4-completion-rules).
+     another worker on a later scheduler tick. `GetTaskContext` returns the latest durable checkpoint, so a crash
+     after a tool call resumes after that tool; a completed checkpoint returns the stored output without another
+     model call;
+   - no retry → task `failed` with `WORKER_LOST`/`EFFECT_UNCERTAIN`, `dead_lettered_at` set, and the execution
+     completes per the [failure rules](state-machines/execution.md#4-completion-rules).
 3. If the worker was mid-side-effect, the side effect may have happened. The checkpoint does not make tool calls
    transactional. This is why retry safety is declared per node (I8); the platform never silently retries a
    non-idempotent effect.

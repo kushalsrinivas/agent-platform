@@ -41,6 +41,11 @@ func (c *OrchestratorClient) Submit(ctx context.Context, req *orchestratorv1.Sub
 	return c.client.SubmitExecution(ctx, req)
 }
 
+func (c *OrchestratorClient) Cancel(ctx context.Context,
+	req *orchestratorv1.CancelExecutionRequest) (*orchestratorv1.CancelExecutionResponse, error) {
+	return c.client.CancelExecution(ctx, req)
+}
+
 func (c *OrchestratorClient) Close() error {
 	return c.conn.Close()
 }

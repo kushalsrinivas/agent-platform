@@ -134,7 +134,7 @@ build-go: ## Build Go binaries into bin/
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/platformctl ./cli/cmd/platformctl
 
 integration-test: ## Run integration tests against the Docker stack
-	POSTGRES_PORT=$(POSTGRES_PORT) $(COMPOSE) up -d --build postgres nats redis minio minio-init api orchestrator worker
+	POSTGRES_PORT=$(POSTGRES_PORT) API_RATE_LIMIT_PER_MINUTE=1000 $(COMPOSE) up -d --build postgres nats redis minio minio-init api orchestrator worker
 	@echo "Waiting for the API..."
 	@for i in $$(seq 1 60); do \
 		if curl -fsS "$(API_URL)/healthz" >/dev/null 2>&1; then break; fi; \

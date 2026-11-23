@@ -10,7 +10,7 @@ One PostgreSQL 16 cluster, one database `agent_platform`, two schemas:
 | Schema | Owner | Purpose |
 |---|---|---|
 | `control` | `api` (Go control plane) | Organizations, projects, memberships, agents/versions, workflows/versions, credentials, HTTP idempotency. |
-| `execution` | `orchestrator` (Go) | Executions, tasks, dependencies, attempts, leases, checkpoints metadata, workers, event history, outbox. |
+| `execution` | `orchestrator` (Go) | Executions, tasks, dependencies, attempts, leases, small checkpoints and checkpoint metadata, workers, event history, outbox. |
 
 Observability data is **not** in PostgreSQL. Traces, metrics and service logs go to the OTel backend; bulky task
 logs go to object storage. Nothing in observability is used to make a correctness decision.
@@ -64,7 +64,7 @@ once referenced, so the orchestrator reading the committed row at execution star
 | `execution_tasks` | `id pk, execution_id fk, org_id, node_id, node_type ∈ {agent, tool}, agent_version_id?, tool_version_id?, worker_pool?, state, state_version, attempt_count, max_attempts, next_attempt_at, owner_worker_id?, lease_id?, lease_expires_at?, latest_attempt_id?, skip_reason?, side_effect_class, started_at, ended_at, unique(execution_id, node_id)` | Materialised once per execution. CHECK ties `owner_worker_id`/`lease_id` presence to `assigned`/`running`. Partial index on `(next_attempt_at) WHERE state='pending'`. |
 | `task_dependencies` | `execution_id, task_id, depends_on_task_id, when_expr text?, when_digest, org_id, pk(task_id, depends_on_task_id)` | Static graph edges. `when_expr` is CEL source validated at publish; evaluated by the scheduler. |
 | `task_attempts` | `id pk, task_id fk, execution_id, org_id, attempt_number int, worker_id, lease_id uuid unique, outcome ∈ {succeeded, failed, cancelled, lease_expired, incomplete}, outcome_unknown bool, effect_uncertain bool, dispatched_at, accepted_at, started_at, finished_at, error_code, error_message, result_inline jsonb?, result_object_key?, result_sha256?, result_size_bytes?, result_content_type?, checkpoint_id?, metrics jsonb, runtime_version, unique(task_id, attempt_number)` | Partial unique index `(task_id) WHERE finished_at IS NULL` enforces at most one open attempt. Inline results are nulled after retention. Artifact hash/size/type are stored with the object key so the result can be validated before commit. |
-| `checkpoints` | `id pk, execution_id, task_id, attempt_id, org_id, object_key unique, sha256, size_bytes, checkpoint_schema_version, runtime_abi, runtime_version, agent_version_id, created_at, expires_at` | Metadata only. Bytes in object storage. Reference is committed by orchestrator after the worker reports it. |
+| `checkpoints` | `id pk, execution_id, task_id, attempt_id, org_id, node_id, workflow_version_id, parent_checkpoint_id, sequence, object_key?, state_inline?, sha256, size_bytes, checkpoint_schema_version, runtime_abi, runtime_version, agent_version_id, idempotency_key?, created_at, expires_at` | Small states are inline; larger states are offloaded to the artifact store. Exactly one of `object_key` and `state_inline` is set. Unique `(attempt_id, sequence)`. The orchestrator commits the reference through the fenced `PutCheckpoint` RPC. |
 | `execution_events` | `id bigserial, event_id text unique, execution_id, org_id, seq bigint, event_type, entity_type, entity_id, actor_type ∈ {user, system, worker}, actor_id, from_state?, to_state?, reason?, payload jsonb, trace_id?, created_at, unique(execution_id, seq)` | Append-only audit. A trigger rejects UPDATE/DELETE for the orchestrator role; only `app_retention` may delete after the horizon. `seq` is per execution, allocated from `executions.next_event_seq` under the execution row lock. |
 | `outbox` | `id uuid pk, message_id unique, subject, message_type, schema_version int, org_id, execution_id?, payload jsonb, headers jsonb, created_at, available_at, published_at?, attempts int, last_error?` | Claimed with `FOR UPDATE SKIP LOCKED`; published rows retained briefly for debugging (ADR 0013). |
 | `workers` | `id text pk, boot_id uuid, pool, status ∈ {active, unhealthy, draining, offline}, max_concurrency int, reported_available_slots int, reserved_slots int, labels jsonb, runtime_abis text[], runtime_digests text[], binary_version, protocol_version, session_id?, registered_at, last_heartbeat_at, drained_at?, created_at, updated_at` | Fleet registry. Not tenant-scoped. Status is derived from heartbeats and drain commands, never asserted by the worker. A changed `boot_id` invalidates the previous process's open attempts. `reserved_slots` is incremented transactionally at assignment and released exactly once when the attempt closes; availability = min(reported, max − reserved). |
@@ -101,27 +101,26 @@ once referenced, so the orchestrator reading the committed row at execution star
 - Object keys and NATS subjects carry `org_id`. Cross-tenant access is rejected server-side at the API, at
   presigned-URL issuance, and at the worker's dispatch filter.
 
-## 6. Object storage
+## 6. Artifact storage
 
-Bucket layout (S3-compatible; MinIO locally):
+Checkpoint layout under `ORCHESTRATOR_ARTIFACT_DIR` (a filesystem volume locally, S3/MinIO behind the same
+`Put`/`Get` interface in production):
 
 ```
-s3://agent-platform/
-  org=<org_id>/project=<project_id>/executions/<execution_id>/
-    tasks/<task_id>/attempts/<attempt_id>/
-      checkpoints/<checkpoint_id>.json.zst
-      outputs/<artifact_id>.json
-      logs/<attempt_id>.log
+checkpoints/<execution_id>/<checkpoint_id>.json.gz
+outputs/<artifact_id>.json
+logs/<attempt_id>.log
 ```
 
 Rules:
 
-- Objects are immutable. A retry writes a new object key; it never overwrites a committed checkpoint.
-- Server-side encryption (SSE-KMS where available). No public access. Presigned URLs are single-object, single
-  method, 15 minutes, issued only for a live lease and the attempt that owns it.
-- The database stores the object key, SHA-256, size and schema/runtime versions. A blob without a committed
-  reference is an orphan and is garbage-collected after 24h.
-- Checkpoint bytes are produced by Python but uploaded by the Go worker. Python never holds storage credentials.
+- Objects are immutable. A retry writes a new checkpoint ID; it never overwrites a committed checkpoint.
+- The orchestrator is the only reader and writer. Checkpoint bytes are produced by Python, uploaded by the Go
+  worker over the fenced gRPC RPC, and stored by the orchestrator. Workers and Python never hold object-store
+  credentials.
+- The database stores the object key, SHA-256, size and schema/runtime versions. States ≤256 KiB stay in
+  `state_inline`; larger states are offloaded. A blob without a committed row is an orphan and may be garbage
+  collected.
 - Artifacts are content-addressed by a random ID plus SHA; duplicate uploads are harmless but the reference is
   committed once.
 
@@ -132,9 +131,9 @@ Rules:
 | Executions, tasks, attempts (metadata) | 13 months after terminal | Batched deletes indexed by terminal time. Monthly partitioning is a later optimisation and must include the partition key in keys/constraints. |
 | `execution_events` (audit) | 13 months after terminal | Same job, same horizon. Legal hold blocks deletion. |
 | Inline attempt results | While execution is non-terminal, then 30 days after attempt finish | `UPDATE ... SET result_inline = NULL`, keep row. |
-| Checkpoints | While the execution is non-terminal, then 30 days / latest 2 per task | Object lifecycle + metadata row tombstone. |
-| Artifacts | While the execution is non-terminal, then 30 days | Object lifecycle. |
-| Task logs | While the execution is non-terminal, then 14 days | Object lifecycle. |
+| Checkpoints | While the execution is non-terminal, then 30 days / latest 2 per task | Metadata tombstone plus artifact cleanup. |
+| Artifacts | While the execution is non-terminal, then 30 days | Artifact cleanup. |
+| Task logs | While the execution is non-terminal, then 14 days | Artifact cleanup. |
 | Outbox published rows | 7 days | Delete job. |
 | `workers` rows | 7 days after `offline` | Delete job; attempts keep the worker ID. |
 | Idempotency keys | 24h after linked execution terminal, max 7 days | Delete job. |
@@ -162,7 +161,8 @@ job must never remove an execution in a non-terminal state; cancel/timeout final
 - Python or the worker writing any table.
 - The API writing `execution.*`; the orchestrator writing `control.*`.
 - Deriving task or execution state from `execution_events` or NATS. Events are audit and fan-out.
-- Storing checkpoint bytes, logs or large results in PostgreSQL.
+- Storing large checkpoint bytes, logs or large results in PostgreSQL. Small checkpoint inline storage (≤256 KiB)
+  is intentional so recovery works without the artifact volume.
 - Deleting or editing a published version.
 - Using worker-clock timestamps for lease expiry or ordering.
 - Unscoped queries in tenant-facing code paths.

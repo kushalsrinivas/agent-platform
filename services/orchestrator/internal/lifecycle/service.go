@@ -14,10 +14,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"github.com/agent-platform/agent-platform/internal/artifacts"
 	"github.com/agent-platform/agent-platform/internal/outbox"
 	"github.com/agent-platform/agent-platform/internal/platform/idgen"
 	"github.com/agent-platform/agent-platform/internal/platform/postgres"
@@ -41,6 +43,8 @@ type Config struct {
 	MaxActiveTasksPerTenant int
 	ProviderConcurrency     map[string]int
 	ToolConcurrency         map[string]int
+	// ArtifactDir stores checkpoints above the inline threshold. Empty keeps every checkpoint inline.
+	ArtifactDir string
 }
 
 // Service applies lifecycle transitions inside short database transactions.
@@ -54,6 +58,8 @@ type Service struct {
 	maxActiveTasksPerTenant int
 	providerConcurrency     map[string]int
 	toolConcurrency         map[string]int
+	artifacts               *artifacts.Store
+	sessions                *sessionHub
 }
 
 // New builds the lifecycle service with defaults.
@@ -75,6 +81,10 @@ func NewWithConfig(pool *pgxpool.Pool, log *zap.Logger, cfg Config) *Service {
 	if cfg.WorkerTerminateAfter <= cfg.HeartbeatTimeout {
 		cfg.WorkerTerminateAfter = cfg.HeartbeatTimeout * 2
 	}
+	artifactStore, err := artifacts.New(cfg.ArtifactDir)
+	if err != nil {
+		log.Warn("artifact store disabled", zap.Error(err))
+	}
 	return &Service{
 		pool: pool, log: log, store: outbox.NewStore(pool),
 		leaseTTL: cfg.LeaseTTL, heartbeatTimeout: cfg.HeartbeatTimeout,
@@ -82,6 +92,8 @@ func NewWithConfig(pool *pgxpool.Pool, log *zap.Logger, cfg Config) *Service {
 		maxActiveTasksPerTenant: cfg.MaxActiveTasksPerTenant,
 		providerConcurrency:     cloneLimits(cfg.ProviderConcurrency),
 		toolConcurrency:         cloneLimits(cfg.ToolConcurrency),
+		artifacts:               artifactStore,
+		sessions:                newSessionHub(),
 	}
 }
 
@@ -139,6 +151,10 @@ type execution struct {
 	StartedAt         *time.Time
 	EndedAt           *time.Time
 	FailureCode       *string
+	CancelEpoch       int
+	CancelReason      *string
+	CancelRequestedAt *time.Time
+	CancelRequestedBy *string
 }
 
 type task struct {
@@ -165,6 +181,10 @@ type task struct {
 	LeaseExpiresAt  *time.Time
 	LatestAttemptID *string
 	LeaseExpired    bool
+	SideEffectClass string
+	IdempotencyKey  *string
+	RetryPolicy     json.RawMessage
+	DeadLetteredAt  *time.Time
 }
 
 type attempt struct {
@@ -185,15 +205,19 @@ type attempt struct {
 func (s *Service) lockExecution(ctx context.Context, tx pgx.Tx, executionID string) (*execution, error) {
 	var e execution
 	var deadline, started, ended pgtype.Timestamptz
-	var failure pgtype.Text
+	var failure, cancelReason pgtype.Text
+	var cancelRequestedBy pgtype.Text
+	var cancelAt pgtype.Timestamptz
 	err := tx.QueryRow(ctx, `
 		SELECT id, org_id, project_id, workflow_version_id, state, state_version, next_event_seq,
-		       deadline_at, started_at, ended_at, failure_code
+		       deadline_at, started_at, ended_at, failure_code, cancel_epoch, cancel_reason,
+		       cancel_requested_at, cancel_requested_by
 		FROM execution.executions
 		WHERE id = $1
 		FOR UPDATE`, executionID).
 		Scan(&e.ID, &e.OrgID, &e.ProjectID, &e.WorkflowVersionID, &e.State, &e.StateVersion,
-			&e.NextEventSeq, &deadline, &started, &ended, &failure)
+			&e.NextEventSeq, &deadline, &started, &ended, &failure, &e.CancelEpoch, &cancelReason,
+			&cancelAt, &cancelRequestedBy)
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +225,9 @@ func (s *Service) lockExecution(ctx context.Context, tx pgx.Tx, executionID stri
 	e.StartedAt = timePtr(started)
 	e.EndedAt = timePtr(ended)
 	e.FailureCode = textPtr(failure)
+	e.CancelReason = textPtr(cancelReason)
+	e.CancelRequestedAt = timePtr(cancelAt)
+	e.CancelRequestedBy = textPtr(cancelRequestedBy)
 	return &e, nil
 }
 
@@ -218,26 +245,29 @@ func (s *Service) lockTask(ctx context.Context, tx pgx.Tx, taskID string) (*task
 	var agentVersion, toolVersion, workerPool, owner, lease, latest pgtype.Text
 	var runtimeDigest, provider, model pgtype.Text
 	var runtimeABI pgtype.Int4
-	var leaseExpires pgtype.Timestamptz
+	var leaseExpires, deadLettered pgtype.Timestamptz
 	err := tx.QueryRow(ctx, `
 		SELECT id, execution_id, org_id, node_id, node_type, priority, runtime_abi, runtime_digest,
 		       provider, model, state, state_version, attempt_count, max_attempts, timeout_seconds,
 		       agent_version_id, tool_version_id, worker_pool, owner_worker_id, lease_id,
 		       lease_expires_at, latest_attempt_id,
-		       (lease_expires_at IS NOT NULL AND lease_expires_at <= now())
+		       (lease_expires_at IS NOT NULL AND lease_expires_at <= now()),
+		       side_effect_class, idempotency_key, retry_policy, dead_lettered_at
 		FROM execution.execution_tasks
 		WHERE id = $1
 		FOR UPDATE`, taskID).
 		Scan(&t.ID, &t.ExecutionID, &t.OrgID, &t.NodeID, &t.NodeType, &t.Priority, &runtimeABI,
 			&runtimeDigest, &provider, &model, &t.State, &t.StateVersion, &t.AttemptCount,
 			&t.MaxAttempts, &t.TimeoutSeconds, &agentVersion, &toolVersion, &workerPool,
-			&owner, &lease, &leaseExpires, &latest, &t.LeaseExpired)
+			&owner, &lease, &leaseExpires, &latest, &t.LeaseExpired, &t.SideEffectClass,
+			&t.IdempotencyKey, &t.RetryPolicy, &deadLettered)
 	if err != nil {
 		return nil, err
 	}
 	t.AgentVersionID = textPtr(agentVersion)
 	t.ToolVersionID = textPtr(toolVersion)
 	t.WorkerPool = textPtr(workerPool)
+	t.DeadLetteredAt = timePtr(deadLettered)
 	t.OwnerWorkerID = textPtr(owner)
 	t.LeaseID = textPtr(lease)
 	t.LeaseExpiresAt = timePtr(leaseExpires)
@@ -463,7 +493,10 @@ func (s *Service) evaluateCompletion(ctx context.Context, tx pgx.Tx, e *executio
 		}
 		return s.transitionExecution(ctx, tx, e, "failed", "failure_quiescent", &code)
 	case "cancel_requested":
-		// Cancellation propagation is deferred; finalise conservatively as cancelled.
+		if e.CancelReason != nil && *e.CancelReason == "deadline" {
+			code := "EXECUTION_TIMEOUT"
+			return s.transitionExecution(ctx, tx, e, "failed", "cancellation_quiescent", &code)
+		}
 		return s.transitionExecution(ctx, tx, e, "cancelled", "cancellation_quiescent", nil)
 	}
 	return nil
@@ -597,9 +630,30 @@ func ptr[T any](value T) *T {
 	return &value
 }
 
-// withTx is a small alias so the lifecycle files share one transaction helper.
+// withTx is a small alias so the lifecycle files share one transaction helper. Deadlocks and serialization
+// failures are retried a bounded number of times; the closure is database-only, so replaying it is safe.
 func (s *Service) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	return postgres.WithTx(ctx, s.pool, fn)
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		err = postgres.WithTx(ctx, s.pool, fn)
+		if err == nil || !retryableTransaction(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 25 * time.Millisecond):
+		}
+	}
+	return err
+}
+
+func retryableTransaction(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == "40P01" || pgErr.Code == "40001"
 }
 
 func isNoRows(err error) bool {

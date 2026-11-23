@@ -79,8 +79,8 @@ stateDiagram-v2
 | T3 | `assigned → running` | Worker via `task_accepted` | Fence matches; lease unexpired; execution not `cancel_requested`/`failing` | Set `started_at`; attempt `accepted_at`/`started_at`; event. |
 | T4 | `assigned → pending` | Reaper or result handler | Lease expired, or worker rejected transiently (busy/shutting down); retry allowed; execution still schedulable | Close attempt `lease_expired` or `failed` with the rejection code (`WORKER_BUSY`); release slot; set `next_attempt_at`; clear owner/lease; event. |
 | T5 | `assigned → failed` | Reaper or result handler | Lease expired or worker rejected permanently; no retry allowed | Close attempt `lease_expired` or `failed` with error code; event; completion evaluation. |
-| T6 | `running → succeeded` | Result handler | Fence matches; lease unexpired; result validates; outcome `SUCCEEDED` | Close attempt `succeeded`; store inline result/artifact ref/checkpoint ref; event; completion evaluation. |
-| T7 | `running → failed` | Result handler or reaper | Fence matches (or lease expired for reaper); attempt outcome failure; validation passed; retry not allowed | Close attempt `failed`/`lease_expired`; store a valid checkpoint if reported; set error code; event; completion evaluation. |
+| T6 | `running → succeeded` | Result handler | Fence matches; lease unexpired; result validates; outcome `SUCCEEDED` | Close attempt `succeeded`; store inline result/artifact ref; link the latest `PutCheckpoint` row; event; completion evaluation. |
+| T7 | `running → failed` | Result handler or reaper | Fence matches (or lease expired for reaper); attempt outcome failure; validation passed; retry not allowed | Close attempt `failed`/`lease_expired`; keep any committed checkpoint for the next attempt; set error code and `dead_lettered_at`; event; completion evaluation. |
 | T8 | `running → pending` | Result handler or reaper | Retry allowed and budget remains; execution still schedulable | Close attempt (`failed`/`lease_expired`); set `next_attempt_at`; clear owner/lease; event. No dispatch in this transition; the scheduler dispatches later. |
 | T9 | `pending → cancelled` | Reaper / lifecycle | Execution `cancel_requested` or `failing`; or cancel came before assignment | No attempt; `skip_reason=null`; event; completion evaluation. |
 | T10 | `assigned/running → cancelled` | Result handler or reaper | Execution `cancel_requested`/`failing`, or user cancel propagated | Close attempt `cancelled` (or `lease_expired` if unreachable, with `effect_uncertain`); event; completion evaluation. |
@@ -113,12 +113,17 @@ Notes:
 ### Attempt count and retry budget
 
 - `attempt_count` counts dispatches, including leases that were never accepted and attempts that were killed.
-- `max_attempts` comes from the node spec (default 1). Every closed attempt that reached a worker counts; the sole
-  exception is a dispatch that was never published (see the note above), which never reached a worker.
-- `next_attempt_at` uses exponential backoff with full jitter: `min(60s, 1s * 2^(attempt-1)) * rand(0.5..1.5)`,
-  overridable per node.
+- `max_attempts` comes from the frozen node/workflow policy (default 1). Every closed attempt that reached a worker
+  counts; the exceptions are a dispatch that was never published and a pre-execution worker rejection
+  (`WORKER_BUSY`, `WORKER_SHUTTING_DOWN`, `ATTEMPT_NOT_OPEN`), which does not consume budget. `WRONG_WORKER`
+  indicates a routing defect and does consume budget.
+- `next_attempt_at` uses exponential backoff with 0.5–1.0 jitter:
+  `min(backoff_max, backoff_base * 2^(attempt-1)) * rand(0.5..1.0)`, overridable per node and by `policy.retry`.
+- The effective policy is frozen in `retry_policy` at materialisation. A retry never re-reads a later workflow edit.
 - Exhausting the budget closes the task `failed` with the last error code (`LEASE_EXPIRED`, `TASK_TIMEOUT`,
-  `WORKER_LOST`, `RESULT_INVALID`, etc.).
+  `WORKER_LOST`, `RESULT_INVALID`, `EFFECT_UNCERTAIN`, etc.) and sets `dead_lettered_at`/`last_failure_code`.
+- `retry_on` values are `transient`, `timeout`, `worker_lost`, `result_invalid`, `cancelled` and `any`. `cancelled`
+  is listed for schema compatibility but a cancelled execution never restarts work.
 
 ## 5. Eligibility and skip rules
 
@@ -176,7 +181,7 @@ The orchestrator validates before committing (I6). Any failure here closes the a
 | Outcome enum is one of `SUCCEEDED/FAILED/CANCELLED` | `VALIDATION_FAILED`. |
 | Success has an inline JSON output object (may be empty, ≤64 KiB). Artifacts are optional extra data, never a substitute: routing edges need the inline value. Artifact ref (if any) has matching hash/size | Attempt failed `RESULT_INVALID`; retry policy applies. |
 | Output matches the node's declared output schema, when present | Attempt failed `RESULT_SCHEMA_INVALID`; retry policy applies. |
-| Checkpoint reference belongs to this attempt, hash/size match, schema/ABI supported | Attempt failed `CHECKPOINT_INVALID`; retry policy applies unless a checkpoint was optional. A checkpoint reported with a failed/cancelled result is committed if valid and may be used by the next attempt. |
+| Checkpoint envelope (separate `PutCheckpoint`) has gzip JSON, matching sha256, schema `1`, runtime ABI supported and belongs to this fenced attempt | Upload rejected `CHECKPOINT_*`; a success is never reported until the upload commits. A checkpoint from a failed/cancelled attempt remains a valid resume point. |
 | Failure classification is known | Unknown → `WORKER_ERROR` (treated as transient by default, never as success). |
 | `CANCELLED` legitimacy | Accepted only as defined in §4; otherwise treated as failure. |
 
@@ -187,9 +192,11 @@ grading belongs to the workflow.
 ## 7. Cancellation and deadlines
 
 - On execution `cancel_requested` or `failing`, the lifecycle handler cancels `pending` tasks immediately (T9) and
-  sends cancel commands for active attempts (T10 path). The worker kills the sandbox and may report `CANCELLED`.
-  Heartbeats stop renewing leases for cancelling/failing executions, so an uncooperative worker loses ownership
-  within one TTL and the reaper finalises the task.
+  sends `CancelTask` for active attempts (T10 path). The command is delivered over the worker's live control stream;
+  the worker marks the exact `(task, attempt, lease)` and cancels the attempt context, killing the process group.
+  A cancel that arrives before the handler starts is remembered and applied immediately. Heartbeats stop renewing
+  leases for cancelling/failing executions, so an uncooperative worker loses ownership within one TTL and recovery
+  finalises the task. The cancellation decision is committed, so an orchestrator restart cannot restart the work.
 - If the worker is dead or partitioned, the reaper waits for lease expiry and closes the attempt `lease_expired`
   with `outcome_unknown=true`; if the attempt had started, `effect_uncertain=true`.
 - Task `timeout_seconds` is enforced twice: the worker kills the runtime at the deadline; the orchestrator's reaper
@@ -206,12 +213,12 @@ grading belongs to the workflow.
 |---|---|---|
 | `worker_pool` | none | Optional placement constraint; the scheduler only assigns workers registered in that pool. |
 | `max_attempts` | 1 | Dispatch attempts, including lease expiry. |
-| `retry_on` | `[transient, timeout, worker_lost]` for read-only; narrower for side-effecting | Which failure classes may return the task to `pending`. |
+| `retry_on` | `[transient, timeout, worker_lost]`; `result_invalid` opt-in | Which failure classes may return the task to `pending`. A workflow `policy.retry` supplies the default. |
 | `timeout_seconds` | 600 | Per-attempt runtime deadline, enforced by worker and reaper. |
 | `side_effect_class` | `read_only` | `read_only`, `idempotent`, `non_idempotent`. Non-idempotent requires an idempotency key or `max_attempts=1` (ADR 0006). |
 | `output_schema` | none | Optional JSON Schema for result validation. |
-| `checkpoint_mode` | `on_node_end` | `none`, `on_node_end`. The checkpoint is committed with the result; mid-node streaming is not in Phase 1. |
-| `require_checkpoint` | false | If true, a failed checkpoint upload fails the attempt instead of degrading to a warning. |
+| `checkpoint_mode` | Agent version default (`on_node_end`) | `none`, `on_node_end`, `inherit`. The workflow node overrides the agent version. Checkpoints are written after each model response and recoverable tool call and at node completion, uploaded while the attempt runs, and resumed by the next attempt. |
+| `require_checkpoint` | false | If true, a failed checkpoint encode/write fails the attempt instead of degrading to a warning. A success is never reported when a produced checkpoint could not be uploaded. |
 
 Publishing a workflow validates these fields and their combinations. The orchestrator re-validates at
 materialisation and again when applying retry policy.
