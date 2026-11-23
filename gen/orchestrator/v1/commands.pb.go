@@ -39,10 +39,12 @@ type SubmitExecutionRequest struct {
 	WorkflowVersion int32                  `protobuf:"varint,4,opt,name=workflow_version,json=workflowVersion,proto3" json:"workflow_version,omitempty"`
 	Input           *structpb.Struct       `protobuf:"bytes,5,opt,name=input,proto3" json:"input,omitempty"`
 	// Stable across retries; the unique key for execution deduplication.
-	RequestId     string                 `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	RequestedBy   string                 `protobuf:"bytes,7,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
-	DeadlineAt    *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=deadline_at,json=deadlineAt,proto3" json:"deadline_at,omitempty"`
-	Traceparent   string                 `protobuf:"bytes,9,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
+	RequestId   string                 `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	RequestedBy string                 `protobuf:"bytes,7,opt,name=requested_by,json=requestedBy,proto3" json:"requested_by,omitempty"`
+	DeadlineAt  *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=deadline_at,json=deadlineAt,proto3" json:"deadline_at,omitempty"`
+	Traceparent string                 `protobuf:"bytes,9,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
+	// Scheduling priority, -100..100. Higher runs first; aging prevents permanent starvation.
+	Priority      int32 `protobuf:"varint,10,opt,name=priority,proto3" json:"priority,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -138,6 +140,13 @@ func (x *SubmitExecutionRequest) GetTraceparent() string {
 		return x.Traceparent
 	}
 	return ""
+}
+
+func (x *SubmitExecutionRequest) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
 }
 
 type SubmitExecutionResponse struct {
@@ -519,7 +528,7 @@ var File_orchestrator_v1_commands_proto protoreflect.FileDescriptor
 
 const file_orchestrator_v1_commands_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorchestrator/v1/commands.proto\x12\x18platform.orchestrator.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xea\x02\n" +
+	"\x1eorchestrator/v1/commands.proto\x12\x18platform.orchestrator.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x86\x03\n" +
 	"\x16SubmitExecutionRequest\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
@@ -533,7 +542,9 @@ const file_orchestrator_v1_commands_proto_rawDesc = "" +
 	"\frequested_by\x18\a \x01(\tR\vrequestedBy\x12;\n" +
 	"\vdeadline_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"deadlineAt\x12 \n" +
-	"\vtraceparent\x18\t \x01(\tR\vtraceparent\"\xce\x01\n" +
+	"\vtraceparent\x18\t \x01(\tR\vtraceparent\x12\x1a\n" +
+	"\bpriority\x18\n" +
+	" \x01(\x05R\bpriority\"\xce\x01\n" +
 	"\x17SubmitExecutionResponse\x12!\n" +
 	"\fexecution_id\x18\x01 \x01(\tR\vexecutionId\x12\x14\n" +
 	"\x05state\x18\x02 \x01(\tR\x05state\x12#\n" +

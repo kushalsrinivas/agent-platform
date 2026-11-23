@@ -75,7 +75,7 @@ stateDiagram-v2
 | # | From → To | Actor | Guard | Effects (one transaction) |
 |---|---|---|---|---|
 | T1 | — → `pending` | Orchestrator (materialisation) | Node exists in pinned graph; versions valid; execution committed | Insert task, dependencies, attempt budget, `side_effect_class`; event. |
-| T2 | `pending → assigned` | Scheduler | Execution `pending`/`running`; eligible (§5); `attempt_count < max_attempts`; `next_attempt_at <= now()`; live compatible worker with a free slot (`reserved_slots < min(max_concurrency, reported_available_slots)`) | CAS `WHERE state='pending'`; increment `attempt_count`; **reserve one worker slot** (`reserved_slots += 1`); set owner, new `lease_id`, `lease_expires_at`; insert open attempt; update `latest_attempt_id`; outbox `task.dispatch`. |
+| T2 | `pending → assigned` | Scheduler | Execution `pending`/`running`; eligible (§5); `attempt_count < max_attempts`; `next_attempt_at <= now()`; worker status `available`/`busy` with a free slot (`reserved_slots < min(max_concurrency, reported_available_slots)`); required capability, runtime ABI and image digest match; tenant/provider/tool admission limits permit | CAS `WHERE state='pending'`; increment `attempt_count`; **reserve one worker slot** (`reserved_slots += 1`), set `busy` when full; set owner, new `lease_id`, `lease_expires_at`; insert open attempt with monotonic `attempt_number`; update `latest_attempt_id`; outbox `task.dispatch`. |
 | T3 | `assigned → running` | Worker via `task_accepted` | Fence matches; lease unexpired; execution not `cancel_requested`/`failing` | Set `started_at`; attempt `accepted_at`/`started_at`; event. |
 | T4 | `assigned → pending` | Reaper or result handler | Lease expired, or worker rejected transiently (busy/shutting down); retry allowed; execution still schedulable | Close attempt `lease_expired` or `failed` with the rejection code (`WORKER_BUSY`); release slot; set `next_attempt_at`; clear owner/lease; event. |
 | T5 | `assigned → failed` | Reaper or result handler | Lease expired or worker rejected permanently; no retry allowed | Close attempt `lease_expired` or `failed` with error code; event; completion evaluation. |
@@ -99,6 +99,8 @@ Notes:
 - A worker whose session is replaced by a new boot (same `worker_id`, new `boot_id`) has its open attempts closed
   as `lease_expired` immediately, not after the TTL. This makes restart recovery fast and prevents the new process
   from inheriting a lease it cannot honour.
+- A heartbeat never revives an expired lease (`lease_expires_at > now()` is required). A worker that was
+  partitioned past the TTL is stale even if its next heartbeat succeeds.
 - T4 and T8 differ only in whether the worker had accepted. Both close the old attempt and may retry.
 - T10 wins over T8/T7 when the execution is cancelling: do not retry into a cancelled execution.
 - T12 exists because a task can fail before any attempt: an invalid CEL edge or a permanently unassignable pinned
@@ -127,8 +129,15 @@ The scheduler considers a `pending` task only when:
 3. `attempt_count < max_attempts`.
 4. Every inbound dependency is terminal (either succeeded, failed or skipped).
 5. The edge activation resolves to **true**, or the task is a root.
-6. A live worker matches the task's requested `worker_pool` (if set), runtime ABI and runtime image digest, and has
-   a free slot.
+6. A live worker matches the task's requested `worker_pool` (if set), required capability
+   (`agent_execution`/`tool_execution`), runtime ABI and runtime image digest, and has a free slot.
+7. The tenant active-task cap permits another assignment.
+8. The pinned model provider and tool concurrency caps permit another active task.
+
+Candidates are ordered per tenant by `priority DESC, created_at` and then interleaved by tenant rank, with an
+effective priority that adds one point per minute waited (capped at 200). This is FIFO for equal priorities,
+priority-aware within a tenant, capacity-aware in worker selection and tenant-fair across a dispatch pass; aging
+prevents permanent starvation.
 
 ### Edge evaluation
 

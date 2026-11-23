@@ -31,7 +31,7 @@ That is the entire path. `make dev` is the single documented command once depend
 | API | http://localhost:8080 | `/healthz`, `/readyz`, `/v1/meta` |
 | Orchestrator gRPC | localhost:9090 | reflection enabled in development |
 | Orchestrator HTTP | http://localhost:8081 | health, version, operator messaging status/redrive |
-| Worker HTTP | http://localhost:8082 | health, version, `/v1/consumer` delivery counters |
+| Worker HTTP | http://localhost:8082 | health, version, `/v1/consumer` delivery counters, runtime and drain state |
 | PostgreSQL | localhost:5432 | `agent_platform`, user `postgres`/`postgres` |
 | NATS | localhost:4222 / 8222 | JetStream enabled; 8222 is monitoring |
 | Redis | localhost:6379 | |
@@ -113,6 +113,21 @@ cd apps/dashboard && npm run dev
 
 Environment variables are documented in `.env.example`; defaults point at localhost, so the commands above work
 with no `.env` once the data stores are up.
+
+### Worker registration and shutdown
+
+A worker advertises `WORKER_RUNTIME`, `WORKER_RUNTIME_VERSION`, `WORKER_CAPABILITIES`, `WORKER_CPU_CORES`,
+`WORKER_MEMORY_MB`, its worker pool and concurrency at registration. Heartbeats carry capacity, active attempts,
+CPU/memory usage and the worker status (`starting`, `available`, `busy`, `draining`, `unhealthy`, `terminated`).
+
+`SIGTERM`/`SIGINT` drains the worker: no new dispatches are accepted, in-flight attempts get
+`WORKER_SHUTDOWN_GRACE_SECONDS` to report, then the session sends `Goodbye`. The orchestrator marks a silent worker
+`unhealthy` after 15 s and `terminated` after 60 s; its leases expire independently and are retried.
+
+Execution priority is accepted by `POST .../executions` (`priority`, -100..100, default 0). The scheduler is
+priority- and tenant-fair with aging; see [phase-06-worker-manager.md](phase-06-worker-manager.md#3-scheduling-pipeline).
+Optional caps: `ORCHESTRATOR_MAX_ACTIVE_TASKS_PER_TENANT`, `ORCHESTRATOR_PROVIDER_CONCURRENCY`,
+`ORCHESTRATOR_TOOL_CONCURRENCY`.
 
 ## Repository layout
 
@@ -223,7 +238,8 @@ These are the places where the project chose the smaller option on purpose. Revi
 3. Dashboard: Biome, `tsc`, production build.
 4. Compose: validates `docker-compose.yml`.
 5. Integration: builds and starts the API, orchestrator and worker, applies migrations, then runs the
-   infrastructure, schema/RLS/immutability, outbox, API flow, redelivery/duplicate and DLQ/redrive suites.
+   infrastructure, schema/RLS/immutability, outbox, API flow, messaging, worker-registration, distribution,
+   priority/fairness, lease-renewal, stale-fencing and drain suites.
 
 No job needs secrets. External model providers are never called by tests.
 

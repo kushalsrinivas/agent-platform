@@ -46,6 +46,13 @@ type serviceConfig struct {
 	PublisherMillis   int    `env:"ORCHESTRATOR_OUTBOX_INTERVAL_MS" envDefault:"250"`
 	PublisherBatch    int    `env:"ORCHESTRATOR_OUTBOX_BATCH" envDefault:"50"`
 	PublisherRetrySec int    `env:"ORCHESTRATOR_OUTBOX_RETRY_SECONDS" envDefault:"5"`
+
+	LeaseSeconds            int    `env:"ORCHESTRATOR_LEASE_SECONDS" envDefault:"30"`
+	HeartbeatTimeoutSeconds int    `env:"ORCHESTRATOR_HEARTBEAT_TIMEOUT_SECONDS" envDefault:"15"`
+	WorkerTerminateSeconds  int    `env:"ORCHESTRATOR_WORKER_TERMINATE_SECONDS" envDefault:"60"`
+	MaxActiveTasksPerTenant int    `env:"ORCHESTRATOR_MAX_ACTIVE_TASKS_PER_TENANT" envDefault:"0"`
+	ProviderConcurrency     string `env:"ORCHESTRATOR_PROVIDER_CONCURRENCY"`
+	ToolConcurrency         string `env:"ORCHESTRATOR_TOOL_CONCURRENCY"`
 }
 
 func main() {
@@ -104,7 +111,22 @@ func main() {
 		MaxExecutionDuration: time.Duration(cfg.MaxExecutionSeconds) * time.Second,
 	}))
 
-	lifecycleService := lifecycle.New(pool, log)
+	providerLimits, err := lifecycle.ParseConcurrencyLimits(cfg.ProviderConcurrency)
+	if err != nil {
+		log.Fatal("invalid provider concurrency limits", zap.Error(err))
+	}
+	toolLimits, err := lifecycle.ParseConcurrencyLimits(cfg.ToolConcurrency)
+	if err != nil {
+		log.Fatal("invalid tool concurrency limits", zap.Error(err))
+	}
+	lifecycleService := lifecycle.NewWithConfig(pool, log, lifecycle.Config{
+		LeaseTTL:                time.Duration(cfg.LeaseSeconds) * time.Second,
+		HeartbeatTimeout:        time.Duration(cfg.HeartbeatTimeoutSeconds) * time.Second,
+		WorkerTerminateAfter:    time.Duration(cfg.WorkerTerminateSeconds) * time.Second,
+		MaxActiveTasksPerTenant: cfg.MaxActiveTasksPerTenant,
+		ProviderConcurrency:     providerLimits,
+		ToolConcurrency:         toolLimits,
+	})
 	workerv1.RegisterWorkerControlServer(grpcSrv.Server, lifecycle.NewWorkerServer(lifecycleService, log))
 	publisher := messaging.NewPublisherLoop(outbox.NewStore(pool),
 		messaging.NewNATSPublisher(js, log), log,
@@ -113,6 +135,10 @@ func main() {
 		time.Duration(cfg.PublisherRetrySec)*time.Second,
 	)
 	adminHandler := admin.New(lifecycleService, js, cfg.AdminToken, log)
+
+	if err := lifecycleService.ReconcileWorkerSlots(ctx); err != nil {
+		log.Warn("worker slot reconciliation failed", zap.Error(err))
+	}
 
 	httpSrv := httpserver.New(httpserver.Options{
 		Addr:   cfg.HTTPAddr,
@@ -130,6 +156,10 @@ func main() {
 	log.Info("starting orchestrator",
 		zap.Int("stream_replicas", cfg.StreamReplicas),
 		zap.Bool("operator_api", cfg.AdminToken != ""),
+		zap.Duration("lease_ttl", time.Duration(cfg.LeaseSeconds)*time.Second),
+		zap.Int("max_active_tasks_per_tenant", cfg.MaxActiveTasksPerTenant),
+		zap.Int("provider_limits", len(providerLimits)),
+		zap.Int("tool_limits", len(toolLimits)),
 	)
 
 	if err := run.Group(ctx,

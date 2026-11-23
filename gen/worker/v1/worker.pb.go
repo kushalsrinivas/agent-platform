@@ -91,6 +91,67 @@ func (TaskRejectionReason) EnumDescriptor() ([]byte, []int) {
 	return file_worker_v1_worker_proto_rawDescGZIP(), []int{0}
 }
 
+type WorkerStatus int32
+
+const (
+	WorkerStatus_WORKER_STATUS_UNSPECIFIED WorkerStatus = 0
+	WorkerStatus_WORKER_STATUS_STARTING    WorkerStatus = 1
+	WorkerStatus_WORKER_STATUS_AVAILABLE   WorkerStatus = 2
+	WorkerStatus_WORKER_STATUS_BUSY        WorkerStatus = 3
+	WorkerStatus_WORKER_STATUS_DRAINING    WorkerStatus = 4
+	WorkerStatus_WORKER_STATUS_UNHEALTHY   WorkerStatus = 5
+	WorkerStatus_WORKER_STATUS_TERMINATED  WorkerStatus = 6
+)
+
+// Enum value maps for WorkerStatus.
+var (
+	WorkerStatus_name = map[int32]string{
+		0: "WORKER_STATUS_UNSPECIFIED",
+		1: "WORKER_STATUS_STARTING",
+		2: "WORKER_STATUS_AVAILABLE",
+		3: "WORKER_STATUS_BUSY",
+		4: "WORKER_STATUS_DRAINING",
+		5: "WORKER_STATUS_UNHEALTHY",
+		6: "WORKER_STATUS_TERMINATED",
+	}
+	WorkerStatus_value = map[string]int32{
+		"WORKER_STATUS_UNSPECIFIED": 0,
+		"WORKER_STATUS_STARTING":    1,
+		"WORKER_STATUS_AVAILABLE":   2,
+		"WORKER_STATUS_BUSY":        3,
+		"WORKER_STATUS_DRAINING":    4,
+		"WORKER_STATUS_UNHEALTHY":   5,
+		"WORKER_STATUS_TERMINATED":  6,
+	}
+)
+
+func (x WorkerStatus) Enum() *WorkerStatus {
+	p := new(WorkerStatus)
+	*p = x
+	return p
+}
+
+func (x WorkerStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (WorkerStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_worker_v1_worker_proto_enumTypes[1].Descriptor()
+}
+
+func (WorkerStatus) Type() protoreflect.EnumType {
+	return &file_worker_v1_worker_proto_enumTypes[1]
+}
+
+func (x WorkerStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use WorkerStatus.Descriptor instead.
+func (WorkerStatus) EnumDescriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{1}
+}
+
 type TaskOutcome int32
 
 const (
@@ -127,11 +188,11 @@ func (x TaskOutcome) String() string {
 }
 
 func (TaskOutcome) Descriptor() protoreflect.EnumDescriptor {
-	return file_worker_v1_worker_proto_enumTypes[1].Descriptor()
+	return file_worker_v1_worker_proto_enumTypes[2].Descriptor()
 }
 
 func (TaskOutcome) Type() protoreflect.EnumType {
-	return &file_worker_v1_worker_proto_enumTypes[1]
+	return &file_worker_v1_worker_proto_enumTypes[2]
 }
 
 func (x TaskOutcome) Number() protoreflect.EnumNumber {
@@ -140,7 +201,7 @@ func (x TaskOutcome) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TaskOutcome.Descriptor instead.
 func (TaskOutcome) EnumDescriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{1}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{2}
 }
 
 type FailureClassification int32
@@ -188,11 +249,11 @@ func (x FailureClassification) String() string {
 }
 
 func (FailureClassification) Descriptor() protoreflect.EnumDescriptor {
-	return file_worker_v1_worker_proto_enumTypes[2].Descriptor()
+	return file_worker_v1_worker_proto_enumTypes[3].Descriptor()
 }
 
 func (FailureClassification) Type() protoreflect.EnumType {
-	return &file_worker_v1_worker_proto_enumTypes[2]
+	return &file_worker_v1_worker_proto_enumTypes[3]
 }
 
 func (x FailureClassification) Number() protoreflect.EnumNumber {
@@ -201,7 +262,7 @@ func (x FailureClassification) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use FailureClassification.Descriptor instead.
 func (FailureClassification) EnumDescriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{2}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{3}
 }
 
 type ResultStatus int32
@@ -246,11 +307,11 @@ func (x ResultStatus) String() string {
 }
 
 func (ResultStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_worker_v1_worker_proto_enumTypes[3].Descriptor()
+	return file_worker_v1_worker_proto_enumTypes[4].Descriptor()
 }
 
 func (ResultStatus) Type() protoreflect.EnumType {
-	return &file_worker_v1_worker_proto_enumTypes[3]
+	return &file_worker_v1_worker_proto_enumTypes[4]
 }
 
 func (x ResultStatus) Number() protoreflect.EnumNumber {
@@ -259,7 +320,7 @@ func (x ResultStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ResultStatus.Descriptor instead.
 func (ResultStatus) EnumDescriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{3}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{4}
 }
 
 type ArtifactKind int32
@@ -298,11 +359,11 @@ func (x ArtifactKind) String() string {
 }
 
 func (ArtifactKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_worker_v1_worker_proto_enumTypes[4].Descriptor()
+	return file_worker_v1_worker_proto_enumTypes[5].Descriptor()
 }
 
 func (ArtifactKind) Type() protoreflect.EnumType {
-	return &file_worker_v1_worker_proto_enumTypes[4]
+	return &file_worker_v1_worker_proto_enumTypes[5]
 }
 
 func (x ArtifactKind) Number() protoreflect.EnumNumber {
@@ -311,7 +372,7 @@ func (x ArtifactKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ArtifactKind.Descriptor instead.
 func (ArtifactKind) EnumDescriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{4}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{5}
 }
 
 type WorkerMessage struct {
@@ -590,8 +651,14 @@ type Hello struct {
 	JoinToken string `protobuf:"bytes,9,opt,name=join_token,json=joinToken,proto3" json:"join_token,omitempty"`
 	// Runtime image digests this worker can execute (AgentSpec.runtime.image_digest).
 	RuntimeDigests []string `protobuf:"bytes,10,rep,name=runtime_digests,json=runtimeDigests,proto3" json:"runtime_digests,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Runtime family and version, e.g. "python" and "1.0.0". Distinct from the Go host binary_version.
+	Runtime        string `protobuf:"bytes,11,opt,name=runtime,proto3" json:"runtime,omitempty"`
+	RuntimeVersion string `protobuf:"bytes,12,opt,name=runtime_version,json=runtimeVersion,proto3" json:"runtime_version,omitempty"`
+	// Advertised capabilities, e.g. agent_execution, tool_execution, langgraph, mcp.
+	Capabilities  []string         `protobuf:"bytes,13,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	Resources     *WorkerResources `protobuf:"bytes,14,opt,name=resources,proto3" json:"resources,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Hello) Reset() {
@@ -694,6 +761,34 @@ func (x *Hello) GetRuntimeDigests() []string {
 	return nil
 }
 
+func (x *Hello) GetRuntime() string {
+	if x != nil {
+		return x.Runtime
+	}
+	return ""
+}
+
+func (x *Hello) GetRuntimeVersion() string {
+	if x != nil {
+		return x.RuntimeVersion
+	}
+	return ""
+}
+
+func (x *Hello) GetCapabilities() []string {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
+}
+
+func (x *Hello) GetResources() *WorkerResources {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
 type HelloAck struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	SessionId           string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -767,9 +862,14 @@ type Heartbeat struct {
 	SentAt         *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=sent_at,json=sentAt,proto3" json:"sent_at,omitempty"`
 	ActiveAttempts []*ActiveAttempt       `protobuf:"bytes,2,rep,name=active_attempts,json=activeAttempts,proto3" json:"active_attempts,omitempty"`
 	// Latest observed capacity may shrink under memory pressure; the worker manager uses the newest value.
-	Capacity      *Capacity `protobuf:"bytes,3,opt,name=capacity,proto3" json:"capacity,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Capacity *Capacity `protobuf:"bytes,3,opt,name=capacity,proto3" json:"capacity,omitempty"`
+	// Process-level usage since the previous heartbeat. Advisory for placement and operator visibility.
+	CpuUsagePercent float64      `protobuf:"fixed64,4,opt,name=cpu_usage_percent,json=cpuUsagePercent,proto3" json:"cpu_usage_percent,omitempty"`
+	MemoryUsedMb    int64        `protobuf:"varint,5,opt,name=memory_used_mb,json=memoryUsedMb,proto3" json:"memory_used_mb,omitempty"`
+	Status          WorkerStatus `protobuf:"varint,6,opt,name=status,proto3,enum=platform.worker.v1.WorkerStatus" json:"status,omitempty"`
+	RuntimeVersion  string       `protobuf:"bytes,7,opt,name=runtime_version,json=runtimeVersion,proto3" json:"runtime_version,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -821,6 +921,34 @@ func (x *Heartbeat) GetCapacity() *Capacity {
 		return x.Capacity
 	}
 	return nil
+}
+
+func (x *Heartbeat) GetCpuUsagePercent() float64 {
+	if x != nil {
+		return x.CpuUsagePercent
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetMemoryUsedMb() int64 {
+	if x != nil {
+		return x.MemoryUsedMb
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetStatus() WorkerStatus {
+	if x != nil {
+		return x.Status
+	}
+	return WorkerStatus_WORKER_STATUS_UNSPECIFIED
+}
+
+func (x *Heartbeat) GetRuntimeVersion() string {
+	if x != nil {
+		return x.RuntimeVersion
+	}
+	return ""
 }
 
 type ActiveAttempt struct {
@@ -1406,6 +1534,58 @@ func (x *Capacity) GetAvailableSlots() int32 {
 	return 0
 }
 
+type WorkerResources struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CpuCores      float64                `protobuf:"fixed64,1,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`
+	MemoryMb      int64                  `protobuf:"varint,2,opt,name=memory_mb,json=memoryMb,proto3" json:"memory_mb,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkerResources) Reset() {
+	*x = WorkerResources{}
+	mi := &file_worker_v1_worker_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkerResources) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkerResources) ProtoMessage() {}
+
+func (x *WorkerResources) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkerResources.ProtoReflect.Descriptor instead.
+func (*WorkerResources) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *WorkerResources) GetCpuCores() float64 {
+	if x != nil {
+		return x.CpuCores
+	}
+	return 0
+}
+
+func (x *WorkerResources) GetMemoryMb() int64 {
+	if x != nil {
+		return x.MemoryMb
+	}
+	return 0
+}
+
 type ReportTaskResultRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	TaskId    string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
@@ -1421,13 +1601,15 @@ type ReportTaskResultRequest struct {
 	StartedAt      *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	FinishedAt     *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
 	RuntimeVersion string                 `protobuf:"bytes,12,opt,name=runtime_version,json=runtimeVersion,proto3" json:"runtime_version,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Monotonic per-task attempt generation; a stale generation is rejected even if the lease is guessed.
+	AttemptNumber int32 `protobuf:"varint,13,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReportTaskResultRequest) Reset() {
 	*x = ReportTaskResultRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[14]
+	mi := &file_worker_v1_worker_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1439,7 +1621,7 @@ func (x *ReportTaskResultRequest) String() string {
 func (*ReportTaskResultRequest) ProtoMessage() {}
 
 func (x *ReportTaskResultRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[14]
+	mi := &file_worker_v1_worker_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1452,7 +1634,7 @@ func (x *ReportTaskResultRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportTaskResultRequest.ProtoReflect.Descriptor instead.
 func (*ReportTaskResultRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{14}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ReportTaskResultRequest) GetTaskId() string {
@@ -1539,6 +1721,13 @@ func (x *ReportTaskResultRequest) GetRuntimeVersion() string {
 	return ""
 }
 
+func (x *ReportTaskResultRequest) GetAttemptNumber() int32 {
+	if x != nil {
+		return x.AttemptNumber
+	}
+	return 0
+}
+
 type TaskFailure struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Code           string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
@@ -1552,7 +1741,7 @@ type TaskFailure struct {
 
 func (x *TaskFailure) Reset() {
 	*x = TaskFailure{}
-	mi := &file_worker_v1_worker_proto_msgTypes[15]
+	mi := &file_worker_v1_worker_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1564,7 +1753,7 @@ func (x *TaskFailure) String() string {
 func (*TaskFailure) ProtoMessage() {}
 
 func (x *TaskFailure) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[15]
+	mi := &file_worker_v1_worker_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1577,7 +1766,7 @@ func (x *TaskFailure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskFailure.ProtoReflect.Descriptor instead.
 func (*TaskFailure) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{15}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *TaskFailure) GetCode() string {
@@ -1622,7 +1811,7 @@ type ArtifactRef struct {
 
 func (x *ArtifactRef) Reset() {
 	*x = ArtifactRef{}
-	mi := &file_worker_v1_worker_proto_msgTypes[16]
+	mi := &file_worker_v1_worker_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1634,7 +1823,7 @@ func (x *ArtifactRef) String() string {
 func (*ArtifactRef) ProtoMessage() {}
 
 func (x *ArtifactRef) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[16]
+	mi := &file_worker_v1_worker_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1647,7 +1836,7 @@ func (x *ArtifactRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArtifactRef.ProtoReflect.Descriptor instead.
 func (*ArtifactRef) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{16}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ArtifactRef) GetObjectKey() string {
@@ -1697,7 +1886,7 @@ type AttemptMetrics struct {
 
 func (x *AttemptMetrics) Reset() {
 	*x = AttemptMetrics{}
-	mi := &file_worker_v1_worker_proto_msgTypes[17]
+	mi := &file_worker_v1_worker_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1709,7 +1898,7 @@ func (x *AttemptMetrics) String() string {
 func (*AttemptMetrics) ProtoMessage() {}
 
 func (x *AttemptMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[17]
+	mi := &file_worker_v1_worker_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1722,7 +1911,7 @@ func (x *AttemptMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttemptMetrics.ProtoReflect.Descriptor instead.
 func (*AttemptMetrics) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{17}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *AttemptMetrics) GetDurationMs() int64 {
@@ -1764,7 +1953,7 @@ type ReportTaskResultResponse struct {
 
 func (x *ReportTaskResultResponse) Reset() {
 	*x = ReportTaskResultResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[18]
+	mi := &file_worker_v1_worker_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1776,7 +1965,7 @@ func (x *ReportTaskResultResponse) String() string {
 func (*ReportTaskResultResponse) ProtoMessage() {}
 
 func (x *ReportTaskResultResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[18]
+	mi := &file_worker_v1_worker_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1789,7 +1978,7 @@ func (x *ReportTaskResultResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportTaskResultResponse.ProtoReflect.Descriptor instead.
 func (*ReportTaskResultResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{18}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ReportTaskResultResponse) GetStatus() ResultStatus {
@@ -1828,7 +2017,7 @@ type CreateArtifactUploadRequest struct {
 
 func (x *CreateArtifactUploadRequest) Reset() {
 	*x = CreateArtifactUploadRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[19]
+	mi := &file_worker_v1_worker_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1840,7 +2029,7 @@ func (x *CreateArtifactUploadRequest) String() string {
 func (*CreateArtifactUploadRequest) ProtoMessage() {}
 
 func (x *CreateArtifactUploadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[19]
+	mi := &file_worker_v1_worker_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1853,7 +2042,7 @@ func (x *CreateArtifactUploadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateArtifactUploadRequest.ProtoReflect.Descriptor instead.
 func (*CreateArtifactUploadRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{19}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *CreateArtifactUploadRequest) GetTaskId() string {
@@ -1918,7 +2107,7 @@ type CreateArtifactUploadResponse struct {
 
 func (x *CreateArtifactUploadResponse) Reset() {
 	*x = CreateArtifactUploadResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[20]
+	mi := &file_worker_v1_worker_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1930,7 +2119,7 @@ func (x *CreateArtifactUploadResponse) String() string {
 func (*CreateArtifactUploadResponse) ProtoMessage() {}
 
 func (x *CreateArtifactUploadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[20]
+	mi := &file_worker_v1_worker_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1943,7 +2132,7 @@ func (x *CreateArtifactUploadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateArtifactUploadResponse.ProtoReflect.Descriptor instead.
 func (*CreateArtifactUploadResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{20}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *CreateArtifactUploadResponse) GetUploadUrl() string {
@@ -1993,7 +2182,7 @@ type CreateArtifactDownloadRequest struct {
 
 func (x *CreateArtifactDownloadRequest) Reset() {
 	*x = CreateArtifactDownloadRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[21]
+	mi := &file_worker_v1_worker_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2005,7 +2194,7 @@ func (x *CreateArtifactDownloadRequest) String() string {
 func (*CreateArtifactDownloadRequest) ProtoMessage() {}
 
 func (x *CreateArtifactDownloadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[21]
+	mi := &file_worker_v1_worker_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2018,7 +2207,7 @@ func (x *CreateArtifactDownloadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateArtifactDownloadRequest.ProtoReflect.Descriptor instead.
 func (*CreateArtifactDownloadRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{21}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *CreateArtifactDownloadRequest) GetCheckpointId() string {
@@ -2061,7 +2250,7 @@ type CreateArtifactDownloadResponse struct {
 
 func (x *CreateArtifactDownloadResponse) Reset() {
 	*x = CreateArtifactDownloadResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[22]
+	mi := &file_worker_v1_worker_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2073,7 +2262,7 @@ func (x *CreateArtifactDownloadResponse) String() string {
 func (*CreateArtifactDownloadResponse) ProtoMessage() {}
 
 func (x *CreateArtifactDownloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[22]
+	mi := &file_worker_v1_worker_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2086,7 +2275,7 @@ func (x *CreateArtifactDownloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateArtifactDownloadResponse.ProtoReflect.Descriptor instead.
 func (*CreateArtifactDownloadResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{22}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *CreateArtifactDownloadResponse) GetDownloadUrl() string {
@@ -2128,7 +2317,7 @@ type GetTaskContextRequest struct {
 
 func (x *GetTaskContextRequest) Reset() {
 	*x = GetTaskContextRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[23]
+	mi := &file_worker_v1_worker_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2140,7 +2329,7 @@ func (x *GetTaskContextRequest) String() string {
 func (*GetTaskContextRequest) ProtoMessage() {}
 
 func (x *GetTaskContextRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[23]
+	mi := &file_worker_v1_worker_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2153,7 +2342,7 @@ func (x *GetTaskContextRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskContextRequest.ProtoReflect.Descriptor instead.
 func (*GetTaskContextRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{23}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *GetTaskContextRequest) GetTaskId() string {
@@ -2200,7 +2389,7 @@ type GetTaskContextResponse struct {
 
 func (x *GetTaskContextResponse) Reset() {
 	*x = GetTaskContextResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[24]
+	mi := &file_worker_v1_worker_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2212,7 +2401,7 @@ func (x *GetTaskContextResponse) String() string {
 func (*GetTaskContextResponse) ProtoMessage() {}
 
 func (x *GetTaskContextResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[24]
+	mi := &file_worker_v1_worker_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2225,7 +2414,7 @@ func (x *GetTaskContextResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskContextResponse.ProtoReflect.Descriptor instead.
 func (*GetTaskContextResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{24}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *GetTaskContextResponse) GetOrgId() string {
@@ -2340,7 +2529,7 @@ type CheckpointRef struct {
 
 func (x *CheckpointRef) Reset() {
 	*x = CheckpointRef{}
-	mi := &file_worker_v1_worker_proto_msgTypes[25]
+	mi := &file_worker_v1_worker_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2352,7 +2541,7 @@ func (x *CheckpointRef) String() string {
 func (*CheckpointRef) ProtoMessage() {}
 
 func (x *CheckpointRef) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[25]
+	mi := &file_worker_v1_worker_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2365,7 +2554,7 @@ func (x *CheckpointRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointRef.ProtoReflect.Descriptor instead.
 func (*CheckpointRef) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{25}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *CheckpointRef) GetCheckpointId() string {
@@ -2422,7 +2611,7 @@ type GetTaskCredentialsRequest struct {
 
 func (x *GetTaskCredentialsRequest) Reset() {
 	*x = GetTaskCredentialsRequest{}
-	mi := &file_worker_v1_worker_proto_msgTypes[26]
+	mi := &file_worker_v1_worker_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2434,7 +2623,7 @@ func (x *GetTaskCredentialsRequest) String() string {
 func (*GetTaskCredentialsRequest) ProtoMessage() {}
 
 func (x *GetTaskCredentialsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[26]
+	mi := &file_worker_v1_worker_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2447,7 +2636,7 @@ func (x *GetTaskCredentialsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskCredentialsRequest.ProtoReflect.Descriptor instead.
 func (*GetTaskCredentialsRequest) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{26}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *GetTaskCredentialsRequest) GetTaskId() string {
@@ -2488,7 +2677,7 @@ type GetTaskCredentialsResponse struct {
 
 func (x *GetTaskCredentialsResponse) Reset() {
 	*x = GetTaskCredentialsResponse{}
-	mi := &file_worker_v1_worker_proto_msgTypes[27]
+	mi := &file_worker_v1_worker_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2500,7 +2689,7 @@ func (x *GetTaskCredentialsResponse) String() string {
 func (*GetTaskCredentialsResponse) ProtoMessage() {}
 
 func (x *GetTaskCredentialsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_v1_worker_proto_msgTypes[27]
+	mi := &file_worker_v1_worker_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2513,7 +2702,7 @@ func (x *GetTaskCredentialsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskCredentialsResponse.ProtoReflect.Descriptor instead.
 func (*GetTaskCredentialsResponse) Descriptor() ([]byte, []int) {
-	return file_worker_v1_worker_proto_rawDescGZIP(), []int{27}
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *GetTaskCredentialsResponse) GetValues() map[string]string {
@@ -2549,7 +2738,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"cancelTask\x127\n" +
 	"\x05drain\x18\x03 \x01(\v2\x1f.platform.worker.v1.DrainWorkerH\x00R\x05drain\x128\n" +
 	"\x05error\x18\x04 \x01(\v2 .platform.worker.v1.ControlErrorH\x00R\x05errorB\x06\n" +
-	"\x04body\"\xc2\x03\n" +
+	"\x04body\"\xec\x04\n" +
 	"\x05Hello\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12\x17\n" +
 	"\aboot_id\x18\x02 \x01(\tR\x06bootId\x12\x12\n" +
@@ -2562,7 +2751,11 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\n" +
 	"join_token\x18\t \x01(\tR\tjoinToken\x12'\n" +
 	"\x0fruntime_digests\x18\n" +
-	" \x03(\tR\x0eruntimeDigests\x1a9\n" +
+	" \x03(\tR\x0eruntimeDigests\x12\x18\n" +
+	"\aruntime\x18\v \x01(\tR\aruntime\x12'\n" +
+	"\x0fruntime_version\x18\f \x01(\tR\x0eruntimeVersion\x12\"\n" +
+	"\fcapabilities\x18\r \x03(\tR\fcapabilities\x12A\n" +
+	"\tresources\x18\x0e \x01(\v2#.platform.worker.v1.WorkerResourcesR\tresources\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbc\x01\n" +
@@ -2573,11 +2766,15 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\flease_ttl_ms\x18\x03 \x01(\x05R\n" +
 	"leaseTtlMs\x12;\n" +
 	"\vserver_time\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"serverTime\"\xc6\x01\n" +
+	"serverTime\"\xfb\x02\n" +
 	"\tHeartbeat\x123\n" +
 	"\asent_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x06sentAt\x12J\n" +
 	"\x0factive_attempts\x18\x02 \x03(\v2!.platform.worker.v1.ActiveAttemptR\x0eactiveAttempts\x128\n" +
-	"\bcapacity\x18\x03 \x01(\v2\x1c.platform.worker.v1.CapacityR\bcapacity\"b\n" +
+	"\bcapacity\x18\x03 \x01(\v2\x1c.platform.worker.v1.CapacityR\bcapacity\x12*\n" +
+	"\x11cpu_usage_percent\x18\x04 \x01(\x01R\x0fcpuUsagePercent\x12$\n" +
+	"\x0ememory_used_mb\x18\x05 \x01(\x03R\fmemoryUsedMb\x128\n" +
+	"\x06status\x18\x06 \x01(\x0e2 .platform.worker.v1.WorkerStatusR\x06status\x12'\n" +
+	"\x0fruntime_version\x18\a \x01(\tR\x0eruntimeVersion\"b\n" +
 	"\rActiveAttempt\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
 	"\n" +
@@ -2626,7 +2823,10 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\tretryable\x18\x03 \x01(\bR\tretryable\"\\\n" +
 	"\bCapacity\x12'\n" +
 	"\x0fmax_concurrency\x18\x01 \x01(\x05R\x0emaxConcurrency\x12'\n" +
-	"\x0favailable_slots\x18\x02 \x01(\x05R\x0eavailableSlots\"\xfd\x04\n" +
+	"\x0favailable_slots\x18\x02 \x01(\x05R\x0eavailableSlots\"K\n" +
+	"\x0fWorkerResources\x12\x1b\n" +
+	"\tcpu_cores\x18\x01 \x01(\x01R\bcpuCores\x12\x1b\n" +
+	"\tmemory_mb\x18\x02 \x01(\x03R\bmemoryMb\"\xa4\x05\n" +
 	"\x17ReportTaskResultRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
 	"\n" +
@@ -2645,7 +2845,8 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12;\n" +
 	"\vfinished_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"finishedAt\x12'\n" +
-	"\x0fruntime_version\x18\f \x01(\tR\x0eruntimeVersion\"\xb9\x01\n" +
+	"\x0fruntime_version\x18\f \x01(\tR\x0eruntimeVersion\x12%\n" +
+	"\x0eattempt_number\x18\r \x01(\x05R\rattemptNumber\"\xb9\x01\n" +
 	"\vTaskFailure\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12Q\n" +
@@ -2761,7 +2962,15 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"%TASK_REJECTION_REASON_INVALID_PAYLOAD\x10\x03\x12-\n" +
 	")TASK_REJECTION_REASON_UNSUPPORTED_RUNTIME\x10\x04\x12'\n" +
 	"#TASK_REJECTION_REASON_SHUTTING_DOWN\x10\x05\x12*\n" +
-	"&TASK_REJECTION_REASON_ATTEMPT_NOT_OPEN\x10\x06*|\n" +
+	"&TASK_REJECTION_REASON_ATTEMPT_NOT_OPEN\x10\x06*\xd5\x01\n" +
+	"\fWorkerStatus\x12\x1d\n" +
+	"\x19WORKER_STATUS_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16WORKER_STATUS_STARTING\x10\x01\x12\x1b\n" +
+	"\x17WORKER_STATUS_AVAILABLE\x10\x02\x12\x16\n" +
+	"\x12WORKER_STATUS_BUSY\x10\x03\x12\x1a\n" +
+	"\x16WORKER_STATUS_DRAINING\x10\x04\x12\x1b\n" +
+	"\x17WORKER_STATUS_UNHEALTHY\x10\x05\x12\x1c\n" +
+	"\x18WORKER_STATUS_TERMINATED\x10\x06*|\n" +
 	"\vTaskOutcome\x12\x1c\n" +
 	"\x18TASK_OUTCOME_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16TASK_OUTCOME_SUCCEEDED\x10\x01\x12\x17\n" +
@@ -2807,110 +3016,114 @@ func file_worker_v1_worker_proto_rawDescGZIP() []byte {
 	return file_worker_v1_worker_proto_rawDescData
 }
 
-var file_worker_v1_worker_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_worker_v1_worker_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
+var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
 var file_worker_v1_worker_proto_goTypes = []any{
 	(TaskRejectionReason)(0),               // 0: platform.worker.v1.TaskRejectionReason
-	(TaskOutcome)(0),                       // 1: platform.worker.v1.TaskOutcome
-	(FailureClassification)(0),             // 2: platform.worker.v1.FailureClassification
-	(ResultStatus)(0),                      // 3: platform.worker.v1.ResultStatus
-	(ArtifactKind)(0),                      // 4: platform.worker.v1.ArtifactKind
-	(*WorkerMessage)(nil),                  // 5: platform.worker.v1.WorkerMessage
-	(*OrchestratorMessage)(nil),            // 6: platform.worker.v1.OrchestratorMessage
-	(*Hello)(nil),                          // 7: platform.worker.v1.Hello
-	(*HelloAck)(nil),                       // 8: platform.worker.v1.HelloAck
-	(*Heartbeat)(nil),                      // 9: platform.worker.v1.Heartbeat
-	(*ActiveAttempt)(nil),                  // 10: platform.worker.v1.ActiveAttempt
-	(*TaskAccepted)(nil),                   // 11: platform.worker.v1.TaskAccepted
-	(*TaskProgress)(nil),                   // 12: platform.worker.v1.TaskProgress
-	(*TaskRejected)(nil),                   // 13: platform.worker.v1.TaskRejected
-	(*CancelTask)(nil),                     // 14: platform.worker.v1.CancelTask
-	(*DrainWorker)(nil),                    // 15: platform.worker.v1.DrainWorker
-	(*Goodbye)(nil),                        // 16: platform.worker.v1.Goodbye
-	(*ControlError)(nil),                   // 17: platform.worker.v1.ControlError
-	(*Capacity)(nil),                       // 18: platform.worker.v1.Capacity
-	(*ReportTaskResultRequest)(nil),        // 19: platform.worker.v1.ReportTaskResultRequest
-	(*TaskFailure)(nil),                    // 20: platform.worker.v1.TaskFailure
-	(*ArtifactRef)(nil),                    // 21: platform.worker.v1.ArtifactRef
-	(*AttemptMetrics)(nil),                 // 22: platform.worker.v1.AttemptMetrics
-	(*ReportTaskResultResponse)(nil),       // 23: platform.worker.v1.ReportTaskResultResponse
-	(*CreateArtifactUploadRequest)(nil),    // 24: platform.worker.v1.CreateArtifactUploadRequest
-	(*CreateArtifactUploadResponse)(nil),   // 25: platform.worker.v1.CreateArtifactUploadResponse
-	(*CreateArtifactDownloadRequest)(nil),  // 26: platform.worker.v1.CreateArtifactDownloadRequest
-	(*CreateArtifactDownloadResponse)(nil), // 27: platform.worker.v1.CreateArtifactDownloadResponse
-	(*GetTaskContextRequest)(nil),          // 28: platform.worker.v1.GetTaskContextRequest
-	(*GetTaskContextResponse)(nil),         // 29: platform.worker.v1.GetTaskContextResponse
-	(*CheckpointRef)(nil),                  // 30: platform.worker.v1.CheckpointRef
-	(*GetTaskCredentialsRequest)(nil),      // 31: platform.worker.v1.GetTaskCredentialsRequest
-	(*GetTaskCredentialsResponse)(nil),     // 32: platform.worker.v1.GetTaskCredentialsResponse
-	nil,                                    // 33: platform.worker.v1.Hello.LabelsEntry
-	nil,                                    // 34: platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
-	nil,                                    // 35: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
-	nil,                                    // 36: platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
-	(*timestamppb.Timestamp)(nil),          // 37: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),                // 38: google.protobuf.Struct
+	(WorkerStatus)(0),                      // 1: platform.worker.v1.WorkerStatus
+	(TaskOutcome)(0),                       // 2: platform.worker.v1.TaskOutcome
+	(FailureClassification)(0),             // 3: platform.worker.v1.FailureClassification
+	(ResultStatus)(0),                      // 4: platform.worker.v1.ResultStatus
+	(ArtifactKind)(0),                      // 5: platform.worker.v1.ArtifactKind
+	(*WorkerMessage)(nil),                  // 6: platform.worker.v1.WorkerMessage
+	(*OrchestratorMessage)(nil),            // 7: platform.worker.v1.OrchestratorMessage
+	(*Hello)(nil),                          // 8: platform.worker.v1.Hello
+	(*HelloAck)(nil),                       // 9: platform.worker.v1.HelloAck
+	(*Heartbeat)(nil),                      // 10: platform.worker.v1.Heartbeat
+	(*ActiveAttempt)(nil),                  // 11: platform.worker.v1.ActiveAttempt
+	(*TaskAccepted)(nil),                   // 12: platform.worker.v1.TaskAccepted
+	(*TaskProgress)(nil),                   // 13: platform.worker.v1.TaskProgress
+	(*TaskRejected)(nil),                   // 14: platform.worker.v1.TaskRejected
+	(*CancelTask)(nil),                     // 15: platform.worker.v1.CancelTask
+	(*DrainWorker)(nil),                    // 16: platform.worker.v1.DrainWorker
+	(*Goodbye)(nil),                        // 17: platform.worker.v1.Goodbye
+	(*ControlError)(nil),                   // 18: platform.worker.v1.ControlError
+	(*Capacity)(nil),                       // 19: platform.worker.v1.Capacity
+	(*WorkerResources)(nil),                // 20: platform.worker.v1.WorkerResources
+	(*ReportTaskResultRequest)(nil),        // 21: platform.worker.v1.ReportTaskResultRequest
+	(*TaskFailure)(nil),                    // 22: platform.worker.v1.TaskFailure
+	(*ArtifactRef)(nil),                    // 23: platform.worker.v1.ArtifactRef
+	(*AttemptMetrics)(nil),                 // 24: platform.worker.v1.AttemptMetrics
+	(*ReportTaskResultResponse)(nil),       // 25: platform.worker.v1.ReportTaskResultResponse
+	(*CreateArtifactUploadRequest)(nil),    // 26: platform.worker.v1.CreateArtifactUploadRequest
+	(*CreateArtifactUploadResponse)(nil),   // 27: platform.worker.v1.CreateArtifactUploadResponse
+	(*CreateArtifactDownloadRequest)(nil),  // 28: platform.worker.v1.CreateArtifactDownloadRequest
+	(*CreateArtifactDownloadResponse)(nil), // 29: platform.worker.v1.CreateArtifactDownloadResponse
+	(*GetTaskContextRequest)(nil),          // 30: platform.worker.v1.GetTaskContextRequest
+	(*GetTaskContextResponse)(nil),         // 31: platform.worker.v1.GetTaskContextResponse
+	(*CheckpointRef)(nil),                  // 32: platform.worker.v1.CheckpointRef
+	(*GetTaskCredentialsRequest)(nil),      // 33: platform.worker.v1.GetTaskCredentialsRequest
+	(*GetTaskCredentialsResponse)(nil),     // 34: platform.worker.v1.GetTaskCredentialsResponse
+	nil,                                    // 35: platform.worker.v1.Hello.LabelsEntry
+	nil,                                    // 36: platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
+	nil,                                    // 37: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
+	nil,                                    // 38: platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
+	(*timestamppb.Timestamp)(nil),          // 39: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                // 40: google.protobuf.Struct
 }
 var file_worker_v1_worker_proto_depIdxs = []int32{
-	7,  // 0: platform.worker.v1.WorkerMessage.hello:type_name -> platform.worker.v1.Hello
-	9,  // 1: platform.worker.v1.WorkerMessage.heartbeat:type_name -> platform.worker.v1.Heartbeat
-	11, // 2: platform.worker.v1.WorkerMessage.task_accepted:type_name -> platform.worker.v1.TaskAccepted
-	13, // 3: platform.worker.v1.WorkerMessage.task_rejected:type_name -> platform.worker.v1.TaskRejected
-	16, // 4: platform.worker.v1.WorkerMessage.goodbye:type_name -> platform.worker.v1.Goodbye
-	12, // 5: platform.worker.v1.WorkerMessage.task_progress:type_name -> platform.worker.v1.TaskProgress
-	8,  // 6: platform.worker.v1.OrchestratorMessage.hello_ack:type_name -> platform.worker.v1.HelloAck
-	14, // 7: platform.worker.v1.OrchestratorMessage.cancel_task:type_name -> platform.worker.v1.CancelTask
-	15, // 8: platform.worker.v1.OrchestratorMessage.drain:type_name -> platform.worker.v1.DrainWorker
-	17, // 9: platform.worker.v1.OrchestratorMessage.error:type_name -> platform.worker.v1.ControlError
-	33, // 10: platform.worker.v1.Hello.labels:type_name -> platform.worker.v1.Hello.LabelsEntry
-	18, // 11: platform.worker.v1.Hello.capacity:type_name -> platform.worker.v1.Capacity
-	37, // 12: platform.worker.v1.HelloAck.server_time:type_name -> google.protobuf.Timestamp
-	37, // 13: platform.worker.v1.Heartbeat.sent_at:type_name -> google.protobuf.Timestamp
-	10, // 14: platform.worker.v1.Heartbeat.active_attempts:type_name -> platform.worker.v1.ActiveAttempt
-	18, // 15: platform.worker.v1.Heartbeat.capacity:type_name -> platform.worker.v1.Capacity
-	37, // 16: platform.worker.v1.TaskAccepted.started_at:type_name -> google.protobuf.Timestamp
-	37, // 17: platform.worker.v1.TaskProgress.reported_at:type_name -> google.protobuf.Timestamp
-	0,  // 18: platform.worker.v1.TaskRejected.reason:type_name -> platform.worker.v1.TaskRejectionReason
-	1,  // 19: platform.worker.v1.ReportTaskResultRequest.outcome:type_name -> platform.worker.v1.TaskOutcome
-	38, // 20: platform.worker.v1.ReportTaskResultRequest.output:type_name -> google.protobuf.Struct
-	21, // 21: platform.worker.v1.ReportTaskResultRequest.output_artifact:type_name -> platform.worker.v1.ArtifactRef
-	21, // 22: platform.worker.v1.ReportTaskResultRequest.checkpoint:type_name -> platform.worker.v1.ArtifactRef
-	20, // 23: platform.worker.v1.ReportTaskResultRequest.failure:type_name -> platform.worker.v1.TaskFailure
-	22, // 24: platform.worker.v1.ReportTaskResultRequest.metrics:type_name -> platform.worker.v1.AttemptMetrics
-	37, // 25: platform.worker.v1.ReportTaskResultRequest.started_at:type_name -> google.protobuf.Timestamp
-	37, // 26: platform.worker.v1.ReportTaskResultRequest.finished_at:type_name -> google.protobuf.Timestamp
-	2,  // 27: platform.worker.v1.TaskFailure.classification:type_name -> platform.worker.v1.FailureClassification
-	38, // 28: platform.worker.v1.AttemptMetrics.extra:type_name -> google.protobuf.Struct
-	3,  // 29: platform.worker.v1.ReportTaskResultResponse.status:type_name -> platform.worker.v1.ResultStatus
-	4,  // 30: platform.worker.v1.CreateArtifactUploadRequest.kind:type_name -> platform.worker.v1.ArtifactKind
-	34, // 31: platform.worker.v1.CreateArtifactUploadResponse.headers:type_name -> platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
-	37, // 32: platform.worker.v1.CreateArtifactUploadResponse.expires_at:type_name -> google.protobuf.Timestamp
-	37, // 33: platform.worker.v1.CreateArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
-	38, // 34: platform.worker.v1.GetTaskContextResponse.version_spec:type_name -> google.protobuf.Struct
-	38, // 35: platform.worker.v1.GetTaskContextResponse.execution_input:type_name -> google.protobuf.Struct
-	38, // 36: platform.worker.v1.GetTaskContextResponse.node_params:type_name -> google.protobuf.Struct
-	35, // 37: platform.worker.v1.GetTaskContextResponse.upstream_outputs:type_name -> platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
-	30, // 38: platform.worker.v1.GetTaskContextResponse.resume_checkpoint:type_name -> platform.worker.v1.CheckpointRef
-	37, // 39: platform.worker.v1.GetTaskContextResponse.deadline:type_name -> google.protobuf.Timestamp
-	36, // 40: platform.worker.v1.GetTaskCredentialsResponse.values:type_name -> platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
-	37, // 41: platform.worker.v1.GetTaskCredentialsResponse.expires_at:type_name -> google.protobuf.Timestamp
-	38, // 42: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
-	5,  // 43: platform.worker.v1.WorkerControl.Connect:input_type -> platform.worker.v1.WorkerMessage
-	19, // 44: platform.worker.v1.WorkerControl.ReportTaskResult:input_type -> platform.worker.v1.ReportTaskResultRequest
-	24, // 45: platform.worker.v1.WorkerControl.CreateArtifactUpload:input_type -> platform.worker.v1.CreateArtifactUploadRequest
-	26, // 46: platform.worker.v1.WorkerControl.CreateArtifactDownload:input_type -> platform.worker.v1.CreateArtifactDownloadRequest
-	28, // 47: platform.worker.v1.WorkerControl.GetTaskContext:input_type -> platform.worker.v1.GetTaskContextRequest
-	31, // 48: platform.worker.v1.WorkerControl.GetTaskCredentials:input_type -> platform.worker.v1.GetTaskCredentialsRequest
-	6,  // 49: platform.worker.v1.WorkerControl.Connect:output_type -> platform.worker.v1.OrchestratorMessage
-	23, // 50: platform.worker.v1.WorkerControl.ReportTaskResult:output_type -> platform.worker.v1.ReportTaskResultResponse
-	25, // 51: platform.worker.v1.WorkerControl.CreateArtifactUpload:output_type -> platform.worker.v1.CreateArtifactUploadResponse
-	27, // 52: platform.worker.v1.WorkerControl.CreateArtifactDownload:output_type -> platform.worker.v1.CreateArtifactDownloadResponse
-	29, // 53: platform.worker.v1.WorkerControl.GetTaskContext:output_type -> platform.worker.v1.GetTaskContextResponse
-	32, // 54: platform.worker.v1.WorkerControl.GetTaskCredentials:output_type -> platform.worker.v1.GetTaskCredentialsResponse
-	49, // [49:55] is the sub-list for method output_type
-	43, // [43:49] is the sub-list for method input_type
-	43, // [43:43] is the sub-list for extension type_name
-	43, // [43:43] is the sub-list for extension extendee
-	0,  // [0:43] is the sub-list for field type_name
+	8,  // 0: platform.worker.v1.WorkerMessage.hello:type_name -> platform.worker.v1.Hello
+	10, // 1: platform.worker.v1.WorkerMessage.heartbeat:type_name -> platform.worker.v1.Heartbeat
+	12, // 2: platform.worker.v1.WorkerMessage.task_accepted:type_name -> platform.worker.v1.TaskAccepted
+	14, // 3: platform.worker.v1.WorkerMessage.task_rejected:type_name -> platform.worker.v1.TaskRejected
+	17, // 4: platform.worker.v1.WorkerMessage.goodbye:type_name -> platform.worker.v1.Goodbye
+	13, // 5: platform.worker.v1.WorkerMessage.task_progress:type_name -> platform.worker.v1.TaskProgress
+	9,  // 6: platform.worker.v1.OrchestratorMessage.hello_ack:type_name -> platform.worker.v1.HelloAck
+	15, // 7: platform.worker.v1.OrchestratorMessage.cancel_task:type_name -> platform.worker.v1.CancelTask
+	16, // 8: platform.worker.v1.OrchestratorMessage.drain:type_name -> platform.worker.v1.DrainWorker
+	18, // 9: platform.worker.v1.OrchestratorMessage.error:type_name -> platform.worker.v1.ControlError
+	35, // 10: platform.worker.v1.Hello.labels:type_name -> platform.worker.v1.Hello.LabelsEntry
+	19, // 11: platform.worker.v1.Hello.capacity:type_name -> platform.worker.v1.Capacity
+	20, // 12: platform.worker.v1.Hello.resources:type_name -> platform.worker.v1.WorkerResources
+	39, // 13: platform.worker.v1.HelloAck.server_time:type_name -> google.protobuf.Timestamp
+	39, // 14: platform.worker.v1.Heartbeat.sent_at:type_name -> google.protobuf.Timestamp
+	11, // 15: platform.worker.v1.Heartbeat.active_attempts:type_name -> platform.worker.v1.ActiveAttempt
+	19, // 16: platform.worker.v1.Heartbeat.capacity:type_name -> platform.worker.v1.Capacity
+	1,  // 17: platform.worker.v1.Heartbeat.status:type_name -> platform.worker.v1.WorkerStatus
+	39, // 18: platform.worker.v1.TaskAccepted.started_at:type_name -> google.protobuf.Timestamp
+	39, // 19: platform.worker.v1.TaskProgress.reported_at:type_name -> google.protobuf.Timestamp
+	0,  // 20: platform.worker.v1.TaskRejected.reason:type_name -> platform.worker.v1.TaskRejectionReason
+	2,  // 21: platform.worker.v1.ReportTaskResultRequest.outcome:type_name -> platform.worker.v1.TaskOutcome
+	40, // 22: platform.worker.v1.ReportTaskResultRequest.output:type_name -> google.protobuf.Struct
+	23, // 23: platform.worker.v1.ReportTaskResultRequest.output_artifact:type_name -> platform.worker.v1.ArtifactRef
+	23, // 24: platform.worker.v1.ReportTaskResultRequest.checkpoint:type_name -> platform.worker.v1.ArtifactRef
+	22, // 25: platform.worker.v1.ReportTaskResultRequest.failure:type_name -> platform.worker.v1.TaskFailure
+	24, // 26: platform.worker.v1.ReportTaskResultRequest.metrics:type_name -> platform.worker.v1.AttemptMetrics
+	39, // 27: platform.worker.v1.ReportTaskResultRequest.started_at:type_name -> google.protobuf.Timestamp
+	39, // 28: platform.worker.v1.ReportTaskResultRequest.finished_at:type_name -> google.protobuf.Timestamp
+	3,  // 29: platform.worker.v1.TaskFailure.classification:type_name -> platform.worker.v1.FailureClassification
+	40, // 30: platform.worker.v1.AttemptMetrics.extra:type_name -> google.protobuf.Struct
+	4,  // 31: platform.worker.v1.ReportTaskResultResponse.status:type_name -> platform.worker.v1.ResultStatus
+	5,  // 32: platform.worker.v1.CreateArtifactUploadRequest.kind:type_name -> platform.worker.v1.ArtifactKind
+	36, // 33: platform.worker.v1.CreateArtifactUploadResponse.headers:type_name -> platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
+	39, // 34: platform.worker.v1.CreateArtifactUploadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	39, // 35: platform.worker.v1.CreateArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	40, // 36: platform.worker.v1.GetTaskContextResponse.version_spec:type_name -> google.protobuf.Struct
+	40, // 37: platform.worker.v1.GetTaskContextResponse.execution_input:type_name -> google.protobuf.Struct
+	40, // 38: platform.worker.v1.GetTaskContextResponse.node_params:type_name -> google.protobuf.Struct
+	37, // 39: platform.worker.v1.GetTaskContextResponse.upstream_outputs:type_name -> platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
+	32, // 40: platform.worker.v1.GetTaskContextResponse.resume_checkpoint:type_name -> platform.worker.v1.CheckpointRef
+	39, // 41: platform.worker.v1.GetTaskContextResponse.deadline:type_name -> google.protobuf.Timestamp
+	38, // 42: platform.worker.v1.GetTaskCredentialsResponse.values:type_name -> platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
+	39, // 43: platform.worker.v1.GetTaskCredentialsResponse.expires_at:type_name -> google.protobuf.Timestamp
+	40, // 44: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
+	6,  // 45: platform.worker.v1.WorkerControl.Connect:input_type -> platform.worker.v1.WorkerMessage
+	21, // 46: platform.worker.v1.WorkerControl.ReportTaskResult:input_type -> platform.worker.v1.ReportTaskResultRequest
+	26, // 47: platform.worker.v1.WorkerControl.CreateArtifactUpload:input_type -> platform.worker.v1.CreateArtifactUploadRequest
+	28, // 48: platform.worker.v1.WorkerControl.CreateArtifactDownload:input_type -> platform.worker.v1.CreateArtifactDownloadRequest
+	30, // 49: platform.worker.v1.WorkerControl.GetTaskContext:input_type -> platform.worker.v1.GetTaskContextRequest
+	33, // 50: platform.worker.v1.WorkerControl.GetTaskCredentials:input_type -> platform.worker.v1.GetTaskCredentialsRequest
+	7,  // 51: platform.worker.v1.WorkerControl.Connect:output_type -> platform.worker.v1.OrchestratorMessage
+	25, // 52: platform.worker.v1.WorkerControl.ReportTaskResult:output_type -> platform.worker.v1.ReportTaskResultResponse
+	27, // 53: platform.worker.v1.WorkerControl.CreateArtifactUpload:output_type -> platform.worker.v1.CreateArtifactUploadResponse
+	29, // 54: platform.worker.v1.WorkerControl.CreateArtifactDownload:output_type -> platform.worker.v1.CreateArtifactDownloadResponse
+	31, // 55: platform.worker.v1.WorkerControl.GetTaskContext:output_type -> platform.worker.v1.GetTaskContextResponse
+	34, // 56: platform.worker.v1.WorkerControl.GetTaskCredentials:output_type -> platform.worker.v1.GetTaskCredentialsResponse
+	51, // [51:57] is the sub-list for method output_type
+	45, // [45:51] is the sub-list for method input_type
+	45, // [45:45] is the sub-list for extension type_name
+	45, // [45:45] is the sub-list for extension extendee
+	0,  // [0:45] is the sub-list for field type_name
 }
 
 func init() { file_worker_v1_worker_proto_init() }
@@ -2937,8 +3150,8 @@ func file_worker_v1_worker_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_v1_worker_proto_rawDesc), len(file_worker_v1_worker_proto_rawDesc)),
-			NumEnums:      5,
-			NumMessages:   32,
+			NumEnums:      6,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

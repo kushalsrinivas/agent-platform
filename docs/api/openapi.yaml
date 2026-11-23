@@ -1314,6 +1314,14 @@ components:
           type: [string, 'null']
           format: date-time
           description: Optional absolute deadline. Omitted means no execution-level deadline.
+        priority:
+          type: integer
+          minimum: -100
+          maximum: 100
+          default: 0
+          description: |
+            Scheduling priority. Higher runs first within a tenant. Aging adds one effective point per minute
+            waited, so low-priority work cannot starve permanently.
     Execution:
       type: object
       required: [id, org_id, project_id, workflow_id, workflow_version_id, workflow_version, state, state_version, counts, created_at]
@@ -1326,6 +1334,7 @@ components:
         workflow_version: { type: integer }
         state: { $ref: '#/components/schemas/ExecutionState' }
         state_version: { type: integer }
+        priority: { type: integer, minimum: -100, maximum: 100 }
         counts: { $ref: '#/components/schemas/ExecutionCounts' }
         input_digest: { type: string }
         created_by: { type: string }
@@ -1358,6 +1367,7 @@ components:
         node_type: { type: string, enum: [agent, tool] }
         state: { $ref: '#/components/schemas/TaskState' }
         state_version: { type: integer }
+        priority: { type: integer, minimum: -100, maximum: 100 }
         attempt_count: { type: integer }
         max_attempts: { type: integer }
         agent_version_id: { type: [string, 'null'] }

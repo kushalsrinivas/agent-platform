@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/agent-platform/agent-platform/internal/platform/postgres"
 	"github.com/agent-platform/agent-platform/packages/contracts"
 )
 
@@ -18,27 +19,22 @@ func (s *Service) ReapOnce(ctx context.Context, limit int) (int, error) {
 	}
 	if _, err := s.pool.Exec(ctx, `
 		UPDATE execution.workers
-		SET status = 'offline', updated_at = now()
-		WHERE status = 'active' AND last_heartbeat_at < now() - make_interval(secs => $1)`,
-		int(HeartbeatTimeout/time.Second)); err != nil {
+		SET status = 'unhealthy', status_changed_at = now(), updated_at = now()
+		WHERE status IN ('starting', 'available', 'busy')
+		  AND last_heartbeat_at < now() - make_interval(secs => $1)`,
+		int(s.heartbeatTimeout/time.Second)); err != nil {
 		return 0, err
 	}
-	// Reconcile reserved slots with actual active attempts. A completed transition releases a slot, but a
-	// deleted execution or a crashed writer must not strand capacity forever.
 	if _, err := s.pool.Exec(ctx, `
-		WITH actual AS (
-			SELECT w.id, count(t.id) AS slots
-			FROM execution.workers w
-			LEFT JOIN execution.execution_tasks t
-			  ON t.owner_worker_id = w.id AND t.state IN ('assigned', 'running')
-			GROUP BY w.id
-		)
-		UPDATE execution.workers w
-		SET reserved_slots = actual.slots, updated_at = now()
-		FROM actual
-		WHERE w.id = actual.id AND w.reserved_slots <> actual.slots`); err != nil {
+		UPDATE execution.workers
+		SET status = 'terminated', status_changed_at = now(), updated_at = now()
+		WHERE status IN ('starting', 'available', 'busy', 'unhealthy')
+		  AND last_heartbeat_at < now() - make_interval(secs => $1)`,
+		int(s.workerTerminateAfter/time.Second)); err != nil {
 		return 0, err
 	}
+	// Reconcile reserved slots with actual active attempts. Lock each worker before counting so a concurrent
+	// dispatch cannot have its fresh reservation overwritten by a stale count.
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id
@@ -66,7 +62,7 @@ func (s *Service) ReapOnce(ctx context.Context, limit int) (int, error) {
 
 	reaped := 0
 	for _, taskID := range taskIDs {
-		ok, err := s.reapTask(ctx, taskID)
+		ok, err := s.reapTask(ctx, taskID, false)
 		if err != nil {
 			s.log.Error("lease reaper failed", zap.String("task_id", taskID), zap.Error(err))
 			continue
@@ -78,7 +74,7 @@ func (s *Service) ReapOnce(ctx context.Context, limit int) (int, error) {
 	return reaped, nil
 }
 
-func (s *Service) reapTask(ctx context.Context, taskID string) (bool, error) {
+func (s *Service) reapTask(ctx context.Context, taskID string, force bool) (bool, error) {
 	reaped := false
 	err := s.withTx(ctx, func(tx pgx.Tx) error {
 		e, err := s.lockExecutionForTask(ctx, tx, taskID)
@@ -95,7 +91,19 @@ func (s *Service) reapTask(ctx context.Context, taskID string) (bool, error) {
 		if err != nil {
 			return err
 		}
-		if (t.State != "assigned" && t.State != "running") || !t.LeaseExpired {
+		if force {
+			s.log.Debug("forced reap candidate",
+				zap.String("task_id", t.ID),
+				zap.String("task_state", t.State),
+				zap.String("execution_state", e.State),
+				zap.Bool("lease_expired", t.LeaseExpired),
+				zap.Any("latest_attempt_id", t.LatestAttemptID),
+			)
+		}
+		if t.State != "assigned" && t.State != "running" {
+			return nil
+		}
+		if !force && !t.LeaseExpired {
 			return nil
 		}
 
@@ -104,6 +112,13 @@ func (s *Service) reapTask(ctx context.Context, taskID string) (bool, error) {
 			a, err = s.lockAttempt(ctx, tx, *t.LatestAttemptID)
 			if err != nil && !isNoRows(err) {
 				return err
+			}
+			if force {
+				if a == nil {
+					s.log.Debug("forced reap has no attempt row", zap.String("attempt_id", *t.LatestAttemptID))
+				} else {
+					s.log.Debug("forced reap attempt", zap.String("attempt_id", a.ID), zap.Any("outcome", a.Outcome))
+				}
 			}
 			if a != nil && a.Outcome != nil {
 				return nil
@@ -248,6 +263,59 @@ func (s *Service) reapTask(ctx context.Context, taskID string) (bool, error) {
 		return nil
 	})
 	return reaped, err
+}
+
+// ReconcileWorkerSlots repairs reserved-slot counters from actual active attempts. Run it at startup, before the
+// dispatcher is accepting work; calling it concurrently with dispatch can overwrite a fresh reservation.
+func (s *Service) ReconcileWorkerSlots(ctx context.Context) error {
+	return postgres.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT id FROM execution.workers FOR UPDATE SKIP LOCKED`)
+		if err != nil {
+			return err
+		}
+		var workerIDs []string
+		for rows.Next() {
+			var workerID string
+			if err := rows.Scan(&workerID); err != nil {
+				rows.Close()
+				return err
+			}
+			workerIDs = append(workerIDs, workerID)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		for _, workerID := range workerIDs {
+			var status string
+			var maxConcurrency, reported int
+			if err := tx.QueryRow(ctx, `
+				SELECT status, max_concurrency, reported_available_slots
+				FROM execution.workers WHERE id = $1`, workerID).
+				Scan(&status, &maxConcurrency, &reported); err != nil {
+				return err
+			}
+			var actual int
+			if err := tx.QueryRow(ctx, `
+				SELECT count(*) FROM execution.execution_tasks
+				WHERE owner_worker_id = $1 AND state IN ('assigned', 'running')`, workerID).
+				Scan(&actual); err != nil {
+				return err
+			}
+			newStatus := s.statusForWorker(actual, maxConcurrency, reported, status)
+			if _, err := tx.Exec(ctx, `
+				UPDATE execution.workers
+				SET reserved_slots = $2,
+				    status = $3,
+				    status_changed_at = CASE WHEN status <> $3 THEN now() ELSE status_changed_at END,
+				    updated_at = now()
+				WHERE id = $1`, workerID, actual, newStatus); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // RunReaper expires leases and silent workers on a fixed cadence.
