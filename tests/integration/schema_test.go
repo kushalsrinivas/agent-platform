@@ -139,15 +139,15 @@ func seedExecution(t *testing.T, admin *pgxpool.Pool) seed {
 		{`INSERT INTO execution.workers
 			(id, boot_id, pool, max_concurrency, reported_available_slots, reserved_slots,
 			 binary_version, protocol_version, runtime_abis, runtime_digests)
-		  VALUES ($1, $2, 'default', 4, 4, 0, 'dev', 1, '{1}', ARRAY['sha256:' || repeat('e', 64)])`,
+		  VALUES ($1, $2, 'seed', 4, 4, 0, 'dev', 1, '{1}', ARRAY['sha256:' || repeat('e', 64)])`,
 			[]any{s.workerID, uuid.NewString()}},
 		{`INSERT INTO execution.execution_tasks
-			(id, execution_id, org_id, node_id, node_type, agent_version_id, max_attempts)
-		  VALUES ($1, $2, $3, 'research', 'agent', $4, 2)`,
+			(id, execution_id, org_id, node_id, node_type, agent_version_id, worker_pool, max_attempts)
+		  VALUES ($1, $2, $3, 'research', 'agent', $4, 'seed', 2)`,
 			[]any{s.taskID, s.executionID, s.orgID, s.agentVersionID}},
 		{`INSERT INTO execution.execution_tasks
-			(id, execution_id, org_id, node_id, node_type, agent_version_id, max_attempts)
-		  VALUES ($1, $2, $3, 'publish', 'agent', $4, 1)`,
+			(id, execution_id, org_id, node_id, node_type, agent_version_id, worker_pool, max_attempts)
+		  VALUES ($1, $2, $3, 'publish', 'agent', $4, 'seed', 1)`,
 			[]any{s.siblingTaskID, s.executionID, s.orgID, s.agentVersionID}},
 		{`INSERT INTO execution.task_dependencies (execution_id, task_id, depends_on_task_id, org_id)
 		  VALUES ($1, $2, $3, $4)`,

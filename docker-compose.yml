@@ -196,9 +196,9 @@ services:
 
   worker:
     build:
-      <<: *go-build
+      context: .
+      dockerfile: infrastructure/docker/worker.Dockerfile
       args:
-        SERVICE: worker
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-unknown}
         BUILD_DATE: ${BUILD_DATE:-unknown}
@@ -217,6 +217,9 @@ services:
       WORKER_MEMORY_MB: ${WORKER_MEMORY_MB:-2048}
       WORKER_HEARTBEAT_MS: ${WORKER_HEARTBEAT_MS:-5000}
       WORKER_SHUTDOWN_GRACE_SECONDS: ${WORKER_SHUTDOWN_GRACE_SECONDS:-25}
+      WORKER_RUNTIME_COMMAND: ${WORKER_RUNTIME_COMMAND:-python -m agent_runtime serve --socket {socket}}
+      WORKER_RUNTIME_STARTUP_SECONDS: ${WORKER_RUNTIME_STARTUP_SECONDS:-15}
+      WORKER_RUNTIME_KILL_SECONDS: ${WORKER_RUNTIME_KILL_SECONDS:-5}
       WORKER_MAX_CONCURRENCY: "4"
     ports:
       - "${WORKER_PORT:-8082}:8082"

@@ -26,26 +26,30 @@ import (
 	"github.com/agent-platform/agent-platform/internal/platform/run"
 	"github.com/agent-platform/agent-platform/internal/worker/control"
 	"github.com/agent-platform/agent-platform/internal/worker/delivery"
+	"github.com/agent-platform/agent-platform/internal/worker/execution"
 )
 
 type serviceConfig struct {
 	config.Common
 
-	WorkerID         string  `env:"WORKER_ID"`
-	HTTPAddr         string  `env:"WORKER_HTTP_ADDR" envDefault:":8082"`
-	NATSURL          string  `env:"WORKER_NATS_URL" envDefault:"nats://localhost:4222"`
-	OrchestratorAddr string  `env:"WORKER_ORCHESTRATOR_GRPC_ADDR" envDefault:"localhost:9090"`
-	OrchestratorTLS  bool    `env:"WORKER_ORCHESTRATOR_TLS" envDefault:"false"`
-	Pool             string  `env:"WORKER_POOL" envDefault:"default"`
-	Runtime          string  `env:"WORKER_RUNTIME" envDefault:"python"`
-	RuntimeVersion   string  `env:"WORKER_RUNTIME_VERSION" envDefault:"0.1.0"`
-	Capabilities     string  `env:"WORKER_CAPABILITIES" envDefault:"agent_execution,tool_execution"`
-	CPUCores         float64 `env:"WORKER_CPU_CORES" envDefault:"0"`
-	MemoryMB         int64   `env:"WORKER_MEMORY_MB" envDefault:"2048"`
-	MaxConcurrency   int     `env:"WORKER_MAX_CONCURRENCY" envDefault:"4"`
-	RuntimeABI       int32   `env:"WORKER_RUNTIME_ABI" envDefault:"1"`
-	HeartbeatMillis  int     `env:"WORKER_HEARTBEAT_MS" envDefault:"5000"`
-	ShutdownGraceSec int     `env:"WORKER_SHUTDOWN_GRACE_SECONDS" envDefault:"25"`
+	WorkerID          string  `env:"WORKER_ID"`
+	HTTPAddr          string  `env:"WORKER_HTTP_ADDR" envDefault:":8082"`
+	NATSURL           string  `env:"WORKER_NATS_URL" envDefault:"nats://localhost:4222"`
+	OrchestratorAddr  string  `env:"WORKER_ORCHESTRATOR_GRPC_ADDR" envDefault:"localhost:9090"`
+	OrchestratorTLS   bool    `env:"WORKER_ORCHESTRATOR_TLS" envDefault:"false"`
+	Pool              string  `env:"WORKER_POOL" envDefault:"default"`
+	Runtime           string  `env:"WORKER_RUNTIME" envDefault:"python"`
+	RuntimeVersion    string  `env:"WORKER_RUNTIME_VERSION" envDefault:"0.1.0"`
+	Capabilities      string  `env:"WORKER_CAPABILITIES" envDefault:"agent_execution,tool_execution"`
+	CPUCores          float64 `env:"WORKER_CPU_CORES" envDefault:"0"`
+	MemoryMB          int64   `env:"WORKER_MEMORY_MB" envDefault:"2048"`
+	MaxConcurrency    int     `env:"WORKER_MAX_CONCURRENCY" envDefault:"4"`
+	RuntimeABI        int32   `env:"WORKER_RUNTIME_ABI" envDefault:"1"`
+	RuntimeCommand    string  `env:"WORKER_RUNTIME_COMMAND"`
+	RuntimeStartupSec int     `env:"WORKER_RUNTIME_STARTUP_SECONDS" envDefault:"15"`
+	RuntimeKillSec    int     `env:"WORKER_RUNTIME_KILL_SECONDS" envDefault:"5"`
+	HeartbeatMillis   int     `env:"WORKER_HEARTBEAT_MS" envDefault:"5000"`
+	ShutdownGraceSec  int     `env:"WORKER_SHUTDOWN_GRACE_SECONDS" envDefault:"25"`
 }
 
 func main() {
@@ -109,10 +113,28 @@ func main() {
 	}, log)
 
 	consumerConfig := messaging.DefaultConsumerConfig(cfg.WorkerID, cfg.MaxConcurrency)
+	var executor delivery.Executor = delivery.Echo
+	if cfg.RuntimeCommand != "" {
+		runtimeExecutor := execution.NewExecutor(controlClient, execution.Config{
+			CommandTemplate: cfg.RuntimeCommand,
+			RuntimeABI:      cfg.RuntimeABI,
+			RuntimeVersion:  cfg.RuntimeVersion,
+			StartupTimeout:  time.Duration(cfg.RuntimeStartupSec) * time.Second,
+			KillGrace:       time.Duration(cfg.RuntimeKillSec) * time.Second,
+		}, log)
+		executor = runtimeExecutor.Execute
+		log.Info("python runtime executor enabled",
+			zap.String("command", cfg.RuntimeCommand),
+			zap.Int32("runtime_abi", cfg.RuntimeABI),
+			zap.Duration("startup_timeout", time.Duration(cfg.RuntimeStartupSec)*time.Second),
+		)
+	} else {
+		log.Warn("no runtime command configured; using the offline echo executor")
+	}
 	handler := &delivery.Handler{
 		Client:   controlClient,
 		WorkerID: cfg.WorkerID,
-		Execute:  delivery.Echo,
+		Execute:  executor,
 		Log:      log,
 	}
 	consumer, err := messaging.NewConsumer(signalCtx, js, consumerConfig, handler, log)
@@ -176,6 +198,7 @@ func main() {
 		zap.String("pool", cfg.Pool),
 		zap.String("runtime", cfg.Runtime),
 		zap.String("runtime_version", cfg.RuntimeVersion),
+		zap.Bool("python_executor", cfg.RuntimeCommand != ""),
 		zap.Strings("capabilities", capabilities),
 		zap.Float64("cpu_cores", cfg.CPUCores),
 		zap.Int64("memory_mb", cfg.MemoryMB),

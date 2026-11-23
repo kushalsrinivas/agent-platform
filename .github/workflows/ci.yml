@@ -107,6 +107,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: astral-sh/setup-uv@v6
+      - name: Sync Python runtime
+        run: cd runtimes/python && uv sync --frozen
       - name: Start the control plane
         run: docker compose up -d --build postgres nats redis minio minio-init api orchestrator worker
       - name: Wait for the API

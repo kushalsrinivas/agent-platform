@@ -141,6 +141,7 @@ integration-test: ## Run integration tests against the Docker stack
 		sleep 2; \
 	done
 	@curl -fsS "$(API_URL)/healthz" >/dev/null || { echo "API did not become healthy"; $(COMPOSE) logs --no-color api; exit 1; }
+	cd runtimes/python && $(UV) sync --frozen
 	API_URL="$(API_URL)" \
 	API_DATABASE_URL="$(API_DATABASE_URL)" \
 	ORCHESTRATOR_DATABASE_URL="$(ORCHESTRATOR_DATABASE_URL)" \
@@ -160,6 +161,13 @@ proto: ## Regenerate Go code from proto/ (requires protoc and plugins)
 		proto/worker/v1/worker.proto \
 		proto/orchestrator/v1/commands.proto \
 		proto/runtime/v1/runtime.proto
+	cd runtimes/python && $(UV) run python -m grpc_tools.protoc -I../../proto \
+		--python_out=src/agent_runtime/proto_gen \
+		--grpc_python_out=src/agent_runtime/proto_gen \
+		runtime/v1/runtime.proto
+	mv runtimes/python/src/agent_runtime/proto_gen/runtime/v1/*.py runtimes/python/src/agent_runtime/proto_gen/ 2>/dev/null || true
+	rmdir runtimes/python/src/agent_runtime/proto_gen/runtime/v1 runtimes/python/src/agent_runtime/proto_gen/runtime 2>/dev/null || true
+	python3 scripts/patch_runtime_stubs.py
 
 fmt: ## Format Go, Python and TypeScript
 	gofmt -w .

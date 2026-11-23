@@ -16,6 +16,26 @@ class EchoTool:
         return {"echo": arguments}
 
 
+class WebSearchTool:
+    """Deterministic stand-in for the platform web-search tool.
+
+    Phase 1 has no network egress from the sandbox; the control-plane workflow references the tool by name and
+    version, and the runtime returns a stable, inspectable result.
+    """
+
+    name = "tool_web_search"
+    version = "1"
+
+    async def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        query = arguments.get("query") or arguments.get("input") or ""
+        return {
+            "query": str(query),
+            "results": [
+                {"title": f"Result for {query}", "url": "https://example.invalid/result"},
+            ],
+        }
+
+
 class AddTool:
     name = "add"
     version = "1"

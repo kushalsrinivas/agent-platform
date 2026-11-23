@@ -1875,11 +1875,13 @@ func (x *ArtifactRef) GetSchemaVersion() int32 {
 }
 
 type AttemptMetrics struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DurationMs    int64                  `protobuf:"varint,1,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
-	TokensIn      int64                  `protobuf:"varint,2,opt,name=tokens_in,json=tokensIn,proto3" json:"tokens_in,omitempty"`
-	TokensOut     int64                  `protobuf:"varint,3,opt,name=tokens_out,json=tokensOut,proto3" json:"tokens_out,omitempty"`
-	Extra         *structpb.Struct       `protobuf:"bytes,4,opt,name=extra,proto3" json:"extra,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	DurationMs int64                  `protobuf:"varint,1,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	TokensIn   int64                  `protobuf:"varint,2,opt,name=tokens_in,json=tokensIn,proto3" json:"tokens_in,omitempty"`
+	TokensOut  int64                  `protobuf:"varint,3,opt,name=tokens_out,json=tokensOut,proto3" json:"tokens_out,omitempty"`
+	Extra      *structpb.Struct       `protobuf:"bytes,4,opt,name=extra,proto3" json:"extra,omitempty"`
+	// Agent/tool steps observed by the runtime (model turns plus tool rounds).
+	Steps         int32 `protobuf:"varint,5,opt,name=steps,proto3" json:"steps,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1940,6 +1942,13 @@ func (x *AttemptMetrics) GetExtra() *structpb.Struct {
 		return x.Extra
 	}
 	return nil
+}
+
+func (x *AttemptMetrics) GetSteps() int32 {
+	if x != nil {
+		return x.Steps
+	}
+	return 0
 }
 
 type ReportTaskResultResponse struct {
@@ -2383,6 +2392,9 @@ type GetTaskContextResponse struct {
 	ResumeCheckpoint *CheckpointRef              `protobuf:"bytes,12,opt,name=resume_checkpoint,json=resumeCheckpoint,proto3" json:"resume_checkpoint,omitempty"`
 	Deadline         *timestamppb.Timestamp      `protobuf:"bytes,13,opt,name=deadline,proto3" json:"deadline,omitempty"`
 	Traceparent      string                      `protobuf:"bytes,14,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
+	// The pinned node output_schema, when present. The worker validates runtime output against it before
+	// reporting, so an invalid result never reaches the orchestrator as a success.
+	NodeOutputSchema *structpb.Struct `protobuf:"bytes,15,opt,name=node_output_schema,json=nodeOutputSchema,proto3" json:"node_output_schema,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -2513,6 +2525,13 @@ func (x *GetTaskContextResponse) GetTraceparent() string {
 		return x.Traceparent
 	}
 	return ""
+}
+
+func (x *GetTaskContextResponse) GetNodeOutputSchema() *structpb.Struct {
+	if x != nil {
+		return x.NodeOutputSchema
+	}
+	return nil
 }
 
 type CheckpointRef struct {
@@ -2859,14 +2878,15 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\n" +
 	"size_bytes\x18\x03 \x01(\x03R\tsizeBytes\x12!\n" +
 	"\fcontent_type\x18\x04 \x01(\tR\vcontentType\x12%\n" +
-	"\x0eschema_version\x18\x05 \x01(\x05R\rschemaVersion\"\x9c\x01\n" +
+	"\x0eschema_version\x18\x05 \x01(\x05R\rschemaVersion\"\xb2\x01\n" +
 	"\x0eAttemptMetrics\x12\x1f\n" +
 	"\vduration_ms\x18\x01 \x01(\x03R\n" +
 	"durationMs\x12\x1b\n" +
 	"\ttokens_in\x18\x02 \x01(\x03R\btokensIn\x12\x1d\n" +
 	"\n" +
 	"tokens_out\x18\x03 \x01(\x03R\ttokensOut\x12-\n" +
-	"\x05extra\x18\x04 \x01(\v2\x17.google.protobuf.StructR\x05extra\"\x9c\x01\n" +
+	"\x05extra\x18\x04 \x01(\v2\x17.google.protobuf.StructR\x05extra\x12\x14\n" +
+	"\x05steps\x18\x05 \x01(\x05R\x05steps\"\x9c\x01\n" +
 	"\x18ReportTaskResultResponse\x128\n" +
 	"\x06status\x18\x01 \x01(\x0e2 .platform.worker.v1.ResultStatusR\x06status\x12,\n" +
 	"\x12current_task_state\x18\x02 \x01(\tR\x10currentTaskState\x12\x18\n" +
@@ -2910,7 +2930,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
 	"\n" +
 	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12\x19\n" +
-	"\blease_id\x18\x03 \x01(\tR\aleaseId\"\xa4\x06\n" +
+	"\blease_id\x18\x03 \x01(\tR\aleaseId\"\xeb\x06\n" +
 	"\x16GetTaskContextResponse\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
@@ -2928,7 +2948,8 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x10upstream_outputs\x18\v \x03(\v2?.platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntryR\x0fupstreamOutputs\x12N\n" +
 	"\x11resume_checkpoint\x18\f \x01(\v2!.platform.worker.v1.CheckpointRefR\x10resumeCheckpoint\x126\n" +
 	"\bdeadline\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\x12 \n" +
-	"\vtraceparent\x18\x0e \x01(\tR\vtraceparent\x1a[\n" +
+	"\vtraceparent\x18\x0e \x01(\tR\vtraceparent\x12E\n" +
+	"\x12node_output_schema\x18\x0f \x01(\v2\x17.google.protobuf.StructR\x10nodeOutputSchema\x1a[\n" +
 	"\x14UpstreamOutputsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
 	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01\"\xe7\x01\n" +
@@ -3104,26 +3125,27 @@ var file_worker_v1_worker_proto_depIdxs = []int32{
 	37, // 39: platform.worker.v1.GetTaskContextResponse.upstream_outputs:type_name -> platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
 	32, // 40: platform.worker.v1.GetTaskContextResponse.resume_checkpoint:type_name -> platform.worker.v1.CheckpointRef
 	39, // 41: platform.worker.v1.GetTaskContextResponse.deadline:type_name -> google.protobuf.Timestamp
-	38, // 42: platform.worker.v1.GetTaskCredentialsResponse.values:type_name -> platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
-	39, // 43: platform.worker.v1.GetTaskCredentialsResponse.expires_at:type_name -> google.protobuf.Timestamp
-	40, // 44: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
-	6,  // 45: platform.worker.v1.WorkerControl.Connect:input_type -> platform.worker.v1.WorkerMessage
-	21, // 46: platform.worker.v1.WorkerControl.ReportTaskResult:input_type -> platform.worker.v1.ReportTaskResultRequest
-	26, // 47: platform.worker.v1.WorkerControl.CreateArtifactUpload:input_type -> platform.worker.v1.CreateArtifactUploadRequest
-	28, // 48: platform.worker.v1.WorkerControl.CreateArtifactDownload:input_type -> platform.worker.v1.CreateArtifactDownloadRequest
-	30, // 49: platform.worker.v1.WorkerControl.GetTaskContext:input_type -> platform.worker.v1.GetTaskContextRequest
-	33, // 50: platform.worker.v1.WorkerControl.GetTaskCredentials:input_type -> platform.worker.v1.GetTaskCredentialsRequest
-	7,  // 51: platform.worker.v1.WorkerControl.Connect:output_type -> platform.worker.v1.OrchestratorMessage
-	25, // 52: platform.worker.v1.WorkerControl.ReportTaskResult:output_type -> platform.worker.v1.ReportTaskResultResponse
-	27, // 53: platform.worker.v1.WorkerControl.CreateArtifactUpload:output_type -> platform.worker.v1.CreateArtifactUploadResponse
-	29, // 54: platform.worker.v1.WorkerControl.CreateArtifactDownload:output_type -> platform.worker.v1.CreateArtifactDownloadResponse
-	31, // 55: platform.worker.v1.WorkerControl.GetTaskContext:output_type -> platform.worker.v1.GetTaskContextResponse
-	34, // 56: platform.worker.v1.WorkerControl.GetTaskCredentials:output_type -> platform.worker.v1.GetTaskCredentialsResponse
-	51, // [51:57] is the sub-list for method output_type
-	45, // [45:51] is the sub-list for method input_type
-	45, // [45:45] is the sub-list for extension type_name
-	45, // [45:45] is the sub-list for extension extendee
-	0,  // [0:45] is the sub-list for field type_name
+	40, // 42: platform.worker.v1.GetTaskContextResponse.node_output_schema:type_name -> google.protobuf.Struct
+	38, // 43: platform.worker.v1.GetTaskCredentialsResponse.values:type_name -> platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
+	39, // 44: platform.worker.v1.GetTaskCredentialsResponse.expires_at:type_name -> google.protobuf.Timestamp
+	40, // 45: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
+	6,  // 46: platform.worker.v1.WorkerControl.Connect:input_type -> platform.worker.v1.WorkerMessage
+	21, // 47: platform.worker.v1.WorkerControl.ReportTaskResult:input_type -> platform.worker.v1.ReportTaskResultRequest
+	26, // 48: platform.worker.v1.WorkerControl.CreateArtifactUpload:input_type -> platform.worker.v1.CreateArtifactUploadRequest
+	28, // 49: platform.worker.v1.WorkerControl.CreateArtifactDownload:input_type -> platform.worker.v1.CreateArtifactDownloadRequest
+	30, // 50: platform.worker.v1.WorkerControl.GetTaskContext:input_type -> platform.worker.v1.GetTaskContextRequest
+	33, // 51: platform.worker.v1.WorkerControl.GetTaskCredentials:input_type -> platform.worker.v1.GetTaskCredentialsRequest
+	7,  // 52: platform.worker.v1.WorkerControl.Connect:output_type -> platform.worker.v1.OrchestratorMessage
+	25, // 53: platform.worker.v1.WorkerControl.ReportTaskResult:output_type -> platform.worker.v1.ReportTaskResultResponse
+	27, // 54: platform.worker.v1.WorkerControl.CreateArtifactUpload:output_type -> platform.worker.v1.CreateArtifactUploadResponse
+	29, // 55: platform.worker.v1.WorkerControl.CreateArtifactDownload:output_type -> platform.worker.v1.CreateArtifactDownloadResponse
+	31, // 56: platform.worker.v1.WorkerControl.GetTaskContext:output_type -> platform.worker.v1.GetTaskContextResponse
+	34, // 57: platform.worker.v1.WorkerControl.GetTaskCredentials:output_type -> platform.worker.v1.GetTaskCredentialsResponse
+	52, // [52:58] is the sub-list for method output_type
+	46, // [46:52] is the sub-list for method input_type
+	46, // [46:46] is the sub-list for extension type_name
+	46, // [46:46] is the sub-list for extension extendee
+	0,  // [0:46] is the sub-list for field type_name
 }
 
 func init() { file_worker_v1_worker_proto_init() }

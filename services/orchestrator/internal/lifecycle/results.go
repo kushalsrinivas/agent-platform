@@ -480,6 +480,9 @@ func (s *Service) closeAttemptWithResult(ctx context.Context, tx pgx.Tx, a *atte
 		if result.Metrics.TokensOut != nil {
 			metrics["tokens_out"] = *result.Metrics.TokensOut
 		}
+		if result.Metrics.Steps != nil {
+			metrics["steps"] = *result.Metrics.Steps
+		}
 		if result.Metrics.Extra != nil {
 			metrics["extra"] = *result.Metrics.Extra
 		}
@@ -579,6 +582,10 @@ func resultContract(req *workerv1.ReportTaskResultRequest) (*contracts.TaskResul
 		if req.Metrics.TokensOut > 0 {
 			value := req.Metrics.TokensOut
 			metrics.TokensOut = &value
+		}
+		if req.Metrics.Steps > 0 {
+			value := int(req.Metrics.Steps)
+			metrics.Steps = &value
 		}
 		if req.Metrics.Extra != nil {
 			extra := req.Metrics.Extra.AsMap()
