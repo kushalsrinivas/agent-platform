@@ -88,7 +88,7 @@ export function AgentTestDialog({ agent, version }: { agent: Agent; version: Age
   return (
     <>
       <Button size="sm" onClick={() => setOpen(true)} disabled={version.status !== "published"}>
-        Test agent
+        JSON test
       </Button>
       <Modal
         open={open}

@@ -4,11 +4,12 @@ import { ArrowLeft, Bot, KeyRound, Settings2, Wrench } from "lucide-react";
 import Link from "next/link";
 import { use, useMemo } from "react";
 
+import { AgentRunPanel } from "@/components/agents/agent-run-panel";
 import { AgentTestDialog } from "@/components/agents/agent-test-dialog";
 import { ExecutionsTable } from "@/components/executions/executions-table";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CodeBlock } from "@/components/ui/code-block";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -65,8 +66,29 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
           );
         }, 0) / terminal.length;
 
-  if (agent.isPending) {
+  if (!orgId || !projectId || agent.isPending) {
     return <p className="text-sm text-muted-foreground">Loading agent…</p>;
+  }
+  if (versions.isPending) {
+    return <p className="text-sm text-muted-foreground">Loading versions…</p>;
+  }
+  if (versions.isError) {
+    return (
+      <EmptyState
+        icon={Bot}
+        title="Could not load agent versions"
+        description={
+          versions.error instanceof Error
+            ? versions.error.message
+            : "The API did not return the version list."
+        }
+        action={
+          <Button variant="outline" size="sm" onClick={() => versions.refetch()}>
+            Retry
+          </Button>
+        }
+      />
+    );
   }
   if (agent.isError || !agent.data) {
     return (
@@ -121,6 +143,12 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
         />
         <Stat label="Last execution" value={formatRelative(row?.lastExecutionAt)} />
       </div>
+
+      {latest ? (
+        <div className="mt-6">
+          <AgentRunPanel agent={value} version={latest} />
+        </div>
+      ) : null}
 
       <div className="mt-6 grid gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">

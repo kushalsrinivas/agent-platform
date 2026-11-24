@@ -42,8 +42,8 @@ type serviceConfig struct {
 	OIDCIssuerURL string `env:"OIDC_ISSUER_URL"`
 	OIDCClientID  string `env:"OIDC_CLIENT_ID"`
 
-	RateLimitPerMinute int `env:"API_RATE_LIMIT_PER_MINUTE" envDefault:"120"`
-	RateLimitBurst     int `env:"API_RATE_LIMIT_BURST" envDefault:"30"`
+	RateLimitPerMinute int `env:"API_RATE_LIMIT_PER_MINUTE" envDefault:"600"`
+	RateLimitBurst     int `env:"API_RATE_LIMIT_BURST" envDefault:"60"`
 
 	SecretsMasterKey    string `env:"SECRETS_MASTER_KEY"`
 	SecretsActiveKeyID  string `env:"SECRETS_ACTIVE_KEY_ID" envDefault:"primary"`
