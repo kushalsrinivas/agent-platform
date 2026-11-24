@@ -114,6 +114,7 @@ func Mount(r chi.Router, deps Deps) {
 					r.Get("/projects/{project_id}/executions/{execution_id}", executionHandlers.Get)
 					r.Post("/projects/{project_id}/executions/{execution_id}:cancel", executionHandlers.Cancel)
 					r.Post("/projects/{project_id}/executions/{execution_id}:resume", executionHandlers.Resume)
+					r.Get("/projects/{project_id}/executions/{execution_id}/input", executionHandlers.Input)
 					r.Get("/projects/{project_id}/executions/{execution_id}/replay", executionHandlers.Replay)
 					r.Post("/projects/{project_id}/executions/{execution_id}:replay", executionHandlers.Reexecute)
 					r.Get("/projects/{project_id}/executions/{execution_id}/tasks", executionHandlers.ListTasks)

@@ -87,6 +87,7 @@ class Workflow(APIModel):
     name: str
     description: str | None = None
     latest_version: int
+    deployed_version: int | None = None
     created_at: datetime
     updated_at: datetime
 

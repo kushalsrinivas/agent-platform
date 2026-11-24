@@ -22,14 +22,15 @@ var (
 )
 
 type Workflow struct {
-	ID            string    `json:"id"`
-	OrgID         string    `json:"org_id"`
-	ProjectID     string    `json:"project_id"`
-	Name          string    `json:"name"`
-	Description   *string   `json:"description"`
-	LatestVersion int       `json:"latest_version"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	OrgID           string    `json:"org_id"`
+	ProjectID       string    `json:"project_id"`
+	Name            string    `json:"name"`
+	Description     *string   `json:"description"`
+	LatestVersion   int       `json:"latest_version"`
+	DeployedVersion *int      `json:"deployed_version"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type Version struct {
@@ -57,7 +58,7 @@ func (s *Store) List(ctx context.Context, orgID, projectID string, limit int, cu
 	var nextCursor string
 	err := s.db.WithTenant(ctx, orgID, func(tx pgx.Tx) error {
 		query := `
-			SELECT id, org_id, project_id, name, description, latest_version, created_at, updated_at
+			SELECT id, org_id, project_id, name, description, latest_version, deployed_version, created_at, updated_at
 			FROM control.workflows
 			WHERE org_id = $1 AND project_id = $2`
 		args := []any{orgID, projectID}
@@ -80,7 +81,8 @@ func (s *Store) List(ctx context.Context, orgID, projectID string, limit int, cu
 			var workflow Workflow
 			var description string
 			if err := rows.Scan(&workflow.ID, &workflow.OrgID, &workflow.ProjectID, &workflow.Name,
-				&description, &workflow.LatestVersion, &workflow.CreatedAt, &workflow.UpdatedAt); err != nil {
+				&description, &workflow.LatestVersion, &workflow.DeployedVersion,
+				&workflow.CreatedAt, &workflow.UpdatedAt); err != nil {
 				return err
 			}
 			if description != "" {
@@ -106,11 +108,11 @@ func (s *Store) Get(ctx context.Context, orgID, projectID, workflowID string) (W
 	err := s.db.WithTenant(ctx, orgID, func(tx pgx.Tx) error {
 		var description string
 		err := tx.QueryRow(ctx, `
-			SELECT id, org_id, project_id, name, description, latest_version, created_at, updated_at
+			SELECT id, org_id, project_id, name, description, latest_version, deployed_version, created_at, updated_at
 			FROM control.workflows
 			WHERE org_id = $1 AND project_id = $2 AND id = $3`, orgID, projectID, workflowID).
 			Scan(&workflow.ID, &workflow.OrgID, &workflow.ProjectID, &workflow.Name, &description,
-				&workflow.LatestVersion, &workflow.CreatedAt, &workflow.UpdatedAt)
+				&workflow.LatestVersion, &workflow.DeployedVersion, &workflow.CreatedAt, &workflow.UpdatedAt)
 		if description != "" {
 			workflow.Description = &description
 		}
@@ -290,7 +292,11 @@ func (s *Store) Publish(ctx context.Context, orgID, projectID, workflowID string
 			return err
 		}
 		if status == "published" {
-			return nil
+			_, err := tx.Exec(ctx, `
+				UPDATE control.workflows SET deployed_version = $4, updated_at = now()
+				WHERE org_id = $1 AND project_id = $2 AND id = $3`,
+				orgID, projectID, workflowID, version)
+			return err
 		}
 		if status != "draft" {
 			return ErrVersionState
@@ -311,9 +317,15 @@ func (s *Store) Publish(ctx context.Context, orgID, projectID, workflowID string
 		if err := validateSubworkflowRefs(ctx, tx, orgID, projectID, workflowID, &graph, true); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `
+		if _, err := tx.Exec(ctx, `
 			UPDATE control.workflow_versions SET status = 'published', published_at = now()
 			WHERE org_id = $1 AND project_id = $2 AND workflow_id = $3 AND version = $4`,
+			orgID, projectID, workflowID, version); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			UPDATE control.workflows SET deployed_version = $4, updated_at = now()
+			WHERE org_id = $1 AND project_id = $2 AND id = $3`,
 			orgID, projectID, workflowID, version)
 		return err
 	})

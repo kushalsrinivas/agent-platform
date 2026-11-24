@@ -536,8 +536,9 @@ paths:
       summary: Publish a draft workflow version.
       description: |
         One-way `draft -> published`. All referenced agent/tool versions must be published (not deprecated). Once
-        published, the graph is immutable and can be used to start executions. Repeating on a published version
-        returns `200`.
+        published, the graph is immutable and can be used to start executions. Publishing also sets the workflow's
+        `deployed_version`; repeating on an older published version rolls the deployment pointer back and returns
+        `200`.
       responses:
         '200':
           description: Published version.
@@ -666,6 +667,27 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/input:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+    get:
+      tags: [Executions]
+      operationId: getExecutionInput
+      summary: Read the immutable input submitted for an execution.
+      responses:
+        '200':
+          description: The original input object.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [input]
+                properties:
+                  input: { type: object, additionalProperties: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/replay:
     parameters:
       - $ref: '#/components/parameters/OrgId'
@@ -1528,6 +1550,9 @@ components:
         name: { type: string }
         description: { type: [string, 'null'] }
         latest_version: { type: integer }
+        deployed_version:
+          type: [integer, 'null']
+          description: The published version currently deployed. Publishing an older published version rolls back.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     AgentCreate:
@@ -2137,6 +2162,10 @@ components:
         finished_at: { type: [string, 'null'], format: date-time }
         result_available: { type: boolean }
         checkpoint_available: { type: boolean }
+        metrics:
+          type: object
+          additionalProperties: true
+          description: Runtime metrics reported for the attempt, such as tokens and duration.
     Event:
       type: object
       required: [seq, event_id, event_type, entity_type, entity_id, actor_type, actor_id, created_at]

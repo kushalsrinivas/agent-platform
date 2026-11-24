@@ -18,6 +18,14 @@ A workflow is a versioned DAG. Publishing freezes the graph. Executions pin one 
 | `subworkflow` | Run a pinned child workflow. |
 | `loop` | Bounded child-workflow repetition with a CEL exit condition. |
 
+## Visual builder
+
+`/workflows/new` and `/workflows/{id}/edit` provide the visual editor. Drag nodes from the library, connect
+handles, configure the selected node, validate, save a draft, deploy and run without writing JSON. Saving always
+creates an immutable version; the Versions panel can compare versions and re-activate an older published version
+as a deployment rollback. The builder writes only the contracts above — positions and selection stay in the
+browser.
+
 ## Validate before storing
 
 ```python

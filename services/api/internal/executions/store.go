@@ -107,21 +107,22 @@ type Delegation struct {
 }
 
 type Attempt struct {
-	ID                  string     `json:"id"`
-	TaskID              string     `json:"task_id"`
-	AttemptNumber       int        `json:"attempt_number"`
-	WorkerID            string     `json:"worker_id"`
-	Outcome             *string    `json:"outcome"`
-	OutcomeUnknown      bool       `json:"outcome_unknown"`
-	EffectUncertain     bool       `json:"effect_uncertain"`
-	ErrorCode           *string    `json:"error_code"`
-	ErrorMessage        *string    `json:"error_message"`
-	DispatchedAt        time.Time  `json:"dispatched_at"`
-	AcceptedAt          *time.Time `json:"accepted_at"`
-	StartedAt           *time.Time `json:"started_at"`
-	FinishedAt          *time.Time `json:"finished_at"`
-	ResultAvailable     bool       `json:"result_available"`
-	CheckpointAvailable bool       `json:"checkpoint_available"`
+	ID                  string          `json:"id"`
+	TaskID              string          `json:"task_id"`
+	AttemptNumber       int             `json:"attempt_number"`
+	WorkerID            string          `json:"worker_id"`
+	Outcome             *string         `json:"outcome"`
+	OutcomeUnknown      bool            `json:"outcome_unknown"`
+	EffectUncertain     bool            `json:"effect_uncertain"`
+	ErrorCode           *string         `json:"error_code"`
+	ErrorMessage        *string         `json:"error_message"`
+	DispatchedAt        time.Time       `json:"dispatched_at"`
+	AcceptedAt          *time.Time      `json:"accepted_at"`
+	StartedAt           *time.Time      `json:"started_at"`
+	FinishedAt          *time.Time      `json:"finished_at"`
+	ResultAvailable     bool            `json:"result_available"`
+	CheckpointAvailable bool            `json:"checkpoint_available"`
+	Metrics             json.RawMessage `json:"metrics"`
 }
 
 type TaskResult struct {
@@ -322,7 +323,7 @@ func (s *Store) GetTask(ctx context.Context, orgID, projectID, executionID, task
 			WHERE t.org_id = $1 AND t.execution_id = $2 AND t.id = $3 AND e.project_id = $4`,
 			orgID, executionID, taskID, projectID).
 			Scan(&detail.ID, &detail.ExecutionID, &detail.NodeID, &detail.NodeType, &detail.State,
-				&detail.StateVersion, &detail.AttemptCount, &detail.MaxAttempts,
+				&detail.StateVersion, &detail.Priority, &detail.AttemptCount, &detail.MaxAttempts,
 				&detail.AgentVersionID, &detail.ToolVersionID, &detail.SkipReason,
 				&detail.CreatedAt, &detail.StartedAt, &detail.EndedAt)
 		if err != nil {
@@ -332,7 +333,8 @@ func (s *Store) GetTask(ctx context.Context, orgID, projectID, executionID, task
 		rows, err := tx.Query(ctx, `
 			SELECT id, task_id, attempt_number, worker_id, outcome, outcome_unknown, effect_uncertain,
 			       error_code, error_message, dispatched_at, accepted_at, started_at, finished_at,
-			       (result_inline IS NOT NULL OR result_object_key IS NOT NULL), (checkpoint_id IS NOT NULL)
+			       (result_inline IS NOT NULL OR result_object_key IS NOT NULL), (checkpoint_id IS NOT NULL),
+			       COALESCE(metrics, '{}'::jsonb)
 			FROM execution.task_attempts
 			WHERE org_id = $1 AND task_id = $2
 			ORDER BY attempt_number`, orgID, taskID)
@@ -347,12 +349,29 @@ func (s *Store) GetTask(ctx context.Context, orgID, projectID, executionID, task
 				&attempt.Outcome, &attempt.OutcomeUnknown, &attempt.EffectUncertain,
 				&attempt.ErrorCode, &attempt.ErrorMessage, &attempt.DispatchedAt,
 				&attempt.AcceptedAt, &attempt.StartedAt, &attempt.FinishedAt,
-				&attempt.ResultAvailable, &attempt.CheckpointAvailable); err != nil {
+				&attempt.ResultAvailable, &attempt.CheckpointAvailable, &attempt.Metrics); err != nil {
 				return err
 			}
 			detail.Attempts = append(detail.Attempts, attempt)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		var result TaskResult
+		var output json.RawMessage
+		if err := tx.QueryRow(ctx, `
+			SELECT COALESCE(a.result_inline, t.result_inline, 'null'::jsonb),
+			       COALESCE(a.outcome, t.state), a.error_code, a.error_message
+			FROM execution.execution_tasks t
+			LEFT JOIN execution.task_attempts a ON a.id = t.latest_attempt_id
+			WHERE t.org_id = $1 AND t.id = $2`,
+			orgID, taskID).Scan(&output, &result.Outcome, &result.ErrorCode, &result.ErrorMessage); err != nil {
+			return err
+		}
+		result.Output = output
+		detail.Result = &result
+		return nil
 	})
 	if database.IsNotFound(err) {
 		return TaskDetail{}, ErrNotFound

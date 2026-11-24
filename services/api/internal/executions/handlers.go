@@ -209,6 +209,18 @@ func (h *Handlers) Cancel(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusAccepted, execution)
 }
 
+// Input returns the original submitted execution input for an execution detail view.
+func (h *Handlers) Input(w http.ResponseWriter, r *http.Request) {
+	membership, _ := auth.MembershipFrom(r.Context())
+	raw, err := h.store.Input(r.Context(), membership.OrgID, chi.URLParam(r, "project_id"),
+		chi.URLParam(r, "execution_id"))
+	if err != nil {
+		h.respondStoreError(w, r, err, "could not load execution input")
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"input": raw})
+}
+
 // Replay returns the durable history of an execution without re-running anything.
 func (h *Handlers) Replay(w http.ResponseWriter, r *http.Request) {
 	membership, _ := auth.MembershipFrom(r.Context())

@@ -13,7 +13,8 @@ Only Docker with Compose v2 is required to run the stack:
 make dev     # build images, run migrations, start everything
 ```
 
-Then open http://localhost:3000. API health is at http://localhost:8080/healthz.
+Then open http://localhost:3000. API health is at http://localhost:8080/healthz. Build a workflow visually at
+http://localhost:3000/workflows/new.
 
 Host ports can be remapped in `.env` if another local project owns them; all services and test commands derive
 their URLs from those values.
@@ -58,7 +59,7 @@ configuration is [`mkdocs.yml`](mkdocs.yml).
 ## Repository layout
 
 ```
-apps/dashboard/          Next.js dashboard: design system, shell, graph rendering
+apps/dashboard/          Next.js dashboard: live API, visual workflow builder, execution explorer and SSE
 apps/docs/               Hosted docs site (deferred; docs live in /docs)
 services/api/            Go HTTP control plane: auth, REST/SSE, command forwarding
 services/orchestrator/   Go execution owner: scheduler, leases, retries, events
@@ -103,8 +104,10 @@ task attempt is individually identifiable. Every execution pins immutable workfl
 | 09 — DAG workflow execution engine | Complete. Explicit node types, CEL routing, parallel/join, data mappings, durable delay/approval, child subworkflows/loops, replay and a 12-node recovery test. |
 | 10 — Multi-agent orchestration, delegation and MCP | Complete. Supervisor delegation, budgets, parent-child tracking, durable agent events, scoped context, MCP transports and tool policies, human approvals. |
 | 11 — Developer API, SDKs and CLI | Complete. Canonical `/api/v1`, API keys, environments, developer resources, Python/Go SDKs, `agentctl`, local dev mode, ten examples and a docs site. |
+| 12 — Developer dashboard and execution explorer | Complete. Live overview, agents, workflows, execution graph, SSE timeline, node/model/failure inspectors, logs, approvals, workers, tools, MCP, usage and settings. |
+| 13 — Visual workflow builder | Complete. Canvas editing, categorized node library, inspectors, local/server validation, immutable versions, deploy/rollback, comparison and live execution in the builder. |
 
-The dashboard renders labelled fixtures until the dashboard wiring phase. Phase 11 is documented in
+Phase 13 is documented in [`docs/phase-13-visual-builder.md`](docs/phase-13-visual-builder.md); Phase 12 is documented in [`docs/phase-12-dashboard.md`](docs/phase-12-dashboard.md); Phase 11 is documented in
 [`docs/phase-11-developer-api.md`](docs/phase-11-developer-api.md); Phase 10 is documented in
 [`docs/phase-10-multi-agent-mcp.md`](docs/phase-10-multi-agent-mcp.md); Phase 09 is documented in
 [`docs/phase-09-graph-engine.md`](docs/phase-09-graph-engine.md); Phase 08 is documented in

@@ -16,6 +16,8 @@ ADR wins and the document is a bug. Code written in later phases must cite and f
 | [phase-09-graph-engine.md](phase-09-graph-engine.md) | Phase 09 DAG node types, validator, executor registry, CEL routing, parallel/join, data mappings, delay/approval, subworkflows/loops and replay. |
 | [phase-10-multi-agent-mcp.md](phase-10-multi-agent-mcp.md) | Phase 10 supervisor delegation, parent-child tracking, delegation policies, durable agent events, MCP transports, tool policies and human approvals. |
 | [phase-11-developer-api.md](phase-11-developer-api.md) | Phase 11 canonical `/api/v1`, API keys, environments, developer resources, Python/Go SDKs, `agentctl`, local dev mode, examples and developer docs. |
+| [phase-12-dashboard.md](phase-12-dashboard.md) | Phase 12 live dashboard, api proxy, execution explorer, SSE history, node/model/failure inspectors, redaction and operator actions. |
+| [phase-13-visual-builder.md](phase-13-visual-builder.md) | Phase 13 visual canvas, node library, inspectors, validation, serialization, immutable versions, deployment/rollback, comparison and live builder execution. |
 | [architecture.md](architecture.md) | What the system is, its boundaries, its invariants, and how the pieces cooperate. |
 | [service-responsibilities.md](service-responsibilities.md) | What each deployable does, reads, writes, and when it may become a separate service. |
 | [communication.md](communication.md) | External and internal protocols, envelope, subjects, delivery guarantees, versioning. |

@@ -100,6 +100,37 @@ func TestDeveloperAPIKeySDKExitCriterion(t *testing.T) {
 	if err != nil || len(events) == 0 {
 		t.Fatalf("events=%d err=%v", len(events), err)
 	}
+	input := client.request(http.MethodGet,
+		"/v1/orgs/"+orgID+"/projects/"+projectID+"/executions/"+execution.ID+"/input",
+		nil, nil, http.StatusOK)
+	if asMap(t, input["input"], "input")["topic"] != "phase 11" {
+		t.Fatalf("execution input = %v", input)
+	}
+	workflowAfterDeploy := client.request(http.MethodGet,
+		"/v1/orgs/"+orgID+"/projects/"+projectID+"/workflows/"+workflow.ID, nil, nil, http.StatusOK)
+	if got := asInt(t, workflowAfterDeploy, "deployed_version"); got != 1 {
+		t.Fatalf("deployed_version after publish = %d, want 1", got)
+	}
+	graph["nodes"].([]any)[1].(map[string]any)["timeout_seconds"] = 61
+	client.request(http.MethodPost,
+		"/v1/orgs/"+orgID+"/projects/"+projectID+"/workflows/"+workflow.ID+"/versions",
+		map[string]any{"graph": graph}, nil, http.StatusCreated)
+	client.request(http.MethodPost,
+		"/v1/orgs/"+orgID+"/projects/"+projectID+"/workflows/"+workflow.ID+"/versions/2:publish",
+		nil, nil, http.StatusOK)
+	workflowAfterUpgrade := client.request(http.MethodGet,
+		"/v1/orgs/"+orgID+"/projects/"+projectID+"/workflows/"+workflow.ID, nil, nil, http.StatusOK)
+	if got := asInt(t, workflowAfterUpgrade, "deployed_version"); got != 2 {
+		t.Fatalf("deployed_version after v2 publish = %d, want 2", got)
+	}
+	client.request(http.MethodPost,
+		"/v1/orgs/"+orgID+"/projects/"+projectID+"/workflows/"+workflow.ID+"/versions/1:publish",
+		nil, nil, http.StatusOK)
+	workflowAfterRollback := client.request(http.MethodGet,
+		"/v1/orgs/"+orgID+"/projects/"+projectID+"/workflows/"+workflow.ID, nil, nil, http.StatusOK)
+	if got := asInt(t, workflowAfterRollback, "deployed_version"); got != 1 {
+		t.Fatalf("deployed_version after rollback = %d, want 1", got)
+	}
 	tools, err := api.ListTools(ctx, projectID)
 	if err != nil || len(tools) == 0 {
 		t.Fatalf("tools=%v err=%v", tools, err)

@@ -243,6 +243,10 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/dashboard.Dockerfile
+    environment:
+      DASHBOARD_API_URL: http://api:8080
+      DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-}
+      DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:-}
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
     depends_on:

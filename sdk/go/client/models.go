@@ -58,14 +58,15 @@ type AgentVersion struct {
 }
 
 type Workflow struct {
-	ID            string    `json:"id"`
-	OrgID         string    `json:"org_id"`
-	ProjectID     string    `json:"project_id"`
-	Name          string    `json:"name"`
-	Description   *string   `json:"description"`
-	LatestVersion int       `json:"latest_version"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	OrgID           string    `json:"org_id"`
+	ProjectID       string    `json:"project_id"`
+	Name            string    `json:"name"`
+	Description     *string   `json:"description"`
+	LatestVersion   int       `json:"latest_version"`
+	DeployedVersion *int      `json:"deployed_version"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type WorkflowVersion struct {

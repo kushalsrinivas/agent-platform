@@ -68,6 +68,11 @@ func (h *Handlers) Validate(w http.ResponseWriter, r *http.Request) {
 			"workflow graph is invalid", map[string]any{"problems": err.Error()})
 		return
 	}
+	if err := validateEmbeddedSchemas(&request.Graph); err != nil {
+		respond.ErrorWithDetails(w, r, http.StatusUnprocessableEntity, "invalid_graph",
+			"workflow graph is invalid", map[string]any{"problems": err.Error()})
+		return
+	}
 	respond.JSON(w, http.StatusOK, map[string]any{
 		"valid": true, "nodes": len(request.Graph.Nodes), "edges": len(request.Graph.Edges),
 	})
