@@ -7,6 +7,7 @@ import (
 
 	"github.com/agent-platform/agent-platform/services/api/internal/agents"
 	"github.com/agent-platform/agent-platform/services/api/internal/apikeys"
+	"github.com/agent-platform/agent-platform/services/api/internal/audit"
 	"github.com/agent-platform/agent-platform/services/api/internal/auth"
 	"github.com/agent-platform/agent-platform/services/api/internal/database"
 	"github.com/agent-platform/agent-platform/services/api/internal/developer"
@@ -15,6 +16,7 @@ import (
 	"github.com/agent-platform/agent-platform/services/api/internal/middleware"
 	"github.com/agent-platform/agent-platform/services/api/internal/organizations"
 	"github.com/agent-platform/agent-platform/services/api/internal/projects"
+	"github.com/agent-platform/agent-platform/services/api/internal/secrets"
 	"github.com/agent-platform/agent-platform/services/api/internal/workflows"
 )
 
@@ -31,6 +33,7 @@ type Deps struct {
 	Verifier     auth.Verifier
 	DevIssuer    *auth.DevIssuer
 	Orchestrator *executions.OrchestratorClient
+	Secrets      *secrets.Handlers
 	Logger       *zap.Logger
 	Config       Config
 }
@@ -67,6 +70,7 @@ func Mount(r chi.Router, deps Deps) {
 
 				r.Route(base+"/{org_id}", func(r chi.Router) {
 					r.Use(orgHandlers.ResolveMembership)
+					r.Use(audit.Middleware(deps.DB, deps.Logger))
 
 					r.Get("/members", orgHandlers.ListMembers)
 					r.Post("/members", orgHandlers.AddMember)
@@ -91,6 +95,14 @@ func Mount(r chi.Router, deps Deps) {
 
 					r.Get("/projects/{project_id}/tools", developerHandlers.Tools)
 					r.Get("/projects/{project_id}/mcp/servers", developerHandlers.MCPServers)
+
+					if deps.Secrets != nil {
+						r.Get("/projects/{project_id}/secrets", deps.Secrets.List)
+						r.Post("/projects/{project_id}/secrets", deps.Secrets.Create)
+						r.Get("/projects/{project_id}/secrets/{secret_id}", deps.Secrets.Get)
+						r.Post("/projects/{project_id}/secrets/{secret_id}:rotate", deps.Secrets.Rotate)
+						r.Delete("/projects/{project_id}/secrets/{secret_id}", deps.Secrets.Revoke)
+					}
 
 					r.Get("/projects/{project_id}/agents", agentHandlers.List)
 					r.Post("/projects/{project_id}/agents", agentHandlers.Create)

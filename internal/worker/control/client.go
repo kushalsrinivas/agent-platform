@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -42,6 +43,8 @@ type Config struct {
 	RuntimeDigests  []string
 	HeartbeatPeriod time.Duration
 	ReconnectDelay  time.Duration
+	// ControlToken authenticates worker-control RPCs. Empty keeps local development token-free.
+	ControlToken string
 }
 
 type activeAttempt struct {
@@ -485,11 +488,30 @@ func (c *Client) dial() (*grpc.ClientConn, error) {
 	}
 	conn, err := grpc.NewClient(c.cfg.Address,
 		grpc.WithTransportCredentials(creds),
+		grpc.WithUnaryInterceptor(c.authUnary),
+		grpc.WithStreamInterceptor(c.authStream),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(36<<20), grpc.MaxCallSendMsgSize(36<<20)))
 	if err != nil {
 		return nil, fmt.Errorf("dial orchestrator %s: %w", c.cfg.Address, err)
 	}
 	return conn, nil
+}
+
+func (c *Client) authUnary(ctx context.Context, method string, req, reply any, conn *grpc.ClientConn,
+	invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	if c.cfg.ControlToken != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-worker-token", c.cfg.ControlToken)
+	}
+	return invoker(ctx, method, req, reply, conn, opts...)
+}
+
+func (c *Client) authStream(ctx context.Context, desc *grpc.StreamDesc, conn *grpc.ClientConn,
+	method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	if c.cfg.ControlToken != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-worker-token", c.cfg.ControlToken)
+	}
+	return streamer(ctx, desc, conn, method, opts...)
 }
 
 func (c *Client) close() {

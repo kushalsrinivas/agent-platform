@@ -43,6 +43,7 @@ type Config struct {
 	WorkerTerminateAfter    time.Duration
 	MaxActiveTasksPerTenant int
 	ProviderConcurrency     map[string]int
+	ProviderRatePerMinute   map[string]int
 	ToolConcurrency         map[string]int
 	// ArtifactDir stores checkpoints above the inline threshold. Empty keeps every checkpoint inline.
 	ArtifactDir string
@@ -58,6 +59,7 @@ type Service struct {
 	workerTerminateAfter    time.Duration
 	maxActiveTasksPerTenant int
 	providerConcurrency     map[string]int
+	providerRatePerMinute   map[string]int
 	toolConcurrency         map[string]int
 	artifacts               *artifacts.Store
 	sessions                *sessionHub
@@ -93,6 +95,7 @@ func NewWithConfig(pool *pgxpool.Pool, log *zap.Logger, cfg Config) *Service {
 		workerTerminateAfter:    cfg.WorkerTerminateAfter,
 		maxActiveTasksPerTenant: cfg.MaxActiveTasksPerTenant,
 		providerConcurrency:     cloneLimits(cfg.ProviderConcurrency),
+		providerRatePerMinute:   cloneLimits(cfg.ProviderRatePerMinute),
 		toolConcurrency:         cloneLimits(cfg.ToolConcurrency),
 		artifacts:               artifactStore,
 		sessions:                newSessionHub(),

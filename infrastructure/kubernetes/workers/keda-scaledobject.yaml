@@ -1,0 +1,46 @@
+# KEDA scales the worker fleet from queue state, never CPU alone. A slow provider can leave the fleet idle from a
+# CPU perspective while tasks are waiting, so Prometheus queue signals are the primary triggers.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: python-worker
+  namespace: agent-platform
+spec:
+  scaleTargetRef:
+    name: python-worker
+  minReplicaCount: 1
+  maxReplicaCount: 20
+  pollingInterval: 15
+  cooldownPeriod: 120
+  idleReplicaCount: 1
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 15
+          policies: [{type: Percent, value: 100, periodSeconds: 30}]
+        scaleDown:
+          stabilizationWindowSeconds: 180
+          policies: [{type: Percent, value: 25, periodSeconds: 60}]
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
+        metricName: agent_platform_queue_pending_tasks
+        query: max(agent_platform_queue_pending_tasks)
+        threshold: "4"
+        activationThreshold: "1"
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
+        metricName: agent_platform_queue_oldest_pending_seconds
+        query: max(agent_platform_queue_oldest_pending_seconds)
+        threshold: "30"
+        activationThreshold: "10"
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
+        metricName: agent_platform_worker_utilization
+        query: sum(agent_platform_worker_active_tasks) / clamp_min(sum(agent_platform_worker_slots_total), 1)
+        threshold: "0.75"
+        activationThreshold: "0.2"

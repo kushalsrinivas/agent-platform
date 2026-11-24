@@ -22,8 +22,10 @@ import (
 	"github.com/agent-platform/agent-platform/internal/platform/config"
 	"github.com/agent-platform/agent-platform/internal/platform/httpserver"
 	"github.com/agent-platform/agent-platform/internal/platform/logging"
+	"github.com/agent-platform/agent-platform/internal/platform/metrics"
 	"github.com/agent-platform/agent-platform/internal/platform/natsconn"
 	"github.com/agent-platform/agent-platform/internal/platform/run"
+	"github.com/agent-platform/agent-platform/internal/platform/telemetry"
 	"github.com/agent-platform/agent-platform/internal/worker/control"
 	"github.com/agent-platform/agent-platform/internal/worker/delivery"
 	"github.com/agent-platform/agent-platform/internal/worker/execution"
@@ -37,6 +39,7 @@ type serviceConfig struct {
 	NATSURL           string  `env:"WORKER_NATS_URL" envDefault:"nats://localhost:4222"`
 	OrchestratorAddr  string  `env:"WORKER_ORCHESTRATOR_GRPC_ADDR" envDefault:"localhost:9090"`
 	OrchestratorTLS   bool    `env:"WORKER_ORCHESTRATOR_TLS" envDefault:"false"`
+	ControlToken      string  `env:"WORKER_CONTROL_TOKEN"`
 	Pool              string  `env:"WORKER_POOL" envDefault:"default"`
 	Runtime           string  `env:"WORKER_RUNTIME" envDefault:"python"`
 	RuntimeVersion    string  `env:"WORKER_RUNTIME_VERSION" envDefault:"0.1.0"`
@@ -50,6 +53,13 @@ type serviceConfig struct {
 	RuntimeKillSec    int     `env:"WORKER_RUNTIME_KILL_SECONDS" envDefault:"5"`
 	HeartbeatMillis   int     `env:"WORKER_HEARTBEAT_MS" envDefault:"5000"`
 	ShutdownGraceSec  int     `env:"WORKER_SHUTDOWN_GRACE_SECONDS" envDefault:"25"`
+
+	RuntimeMemoryMB       int64 `env:"WORKER_RUNTIME_MEMORY_MB" envDefault:"1024"`
+	RuntimeCPUSeconds     int   `env:"WORKER_RUNTIME_CPU_SECONDS" envDefault:"300"`
+	RuntimePids           int   `env:"WORKER_RUNTIME_PIDS" envDefault:"256"`
+	RuntimeFileSizeMB     int64 `env:"WORKER_RUNTIME_FILE_SIZE_MB" envDefault:"64"`
+	RuntimeOpenFiles      int   `env:"WORKER_RUNTIME_OPEN_FILES" envDefault:"1024"`
+	RequireRuntimeSandbox bool  `env:"WORKER_REQUIRE_SANDBOX" envDefault:"true"`
 }
 
 func main() {
@@ -83,8 +93,22 @@ func main() {
 		panic(err)
 	}
 	defer func() { _ = log.Sync() }()
+	if cfg.Environment != "development" {
+		if cfg.ControlToken == "" {
+			log.Fatal("WORKER_CONTROL_TOKEN is required outside development")
+		}
+		if strings.EqualFold(os.Getenv("AGENT_MCP_ALLOW_STDIO"), "true") ||
+			strings.EqualFold(os.Getenv("AGENT_MCP_ALLOW_PRIVATE_NETWORKS"), "true") {
+			log.Fatal("MCP stdio/private networking must be disabled outside development")
+		}
+	}
 
 	signalCtx := run.SignalContext()
+	shutdownTelemetry, err := telemetry.Init(signalCtx, "worker", cfg.Environment, buildinfo.Version)
+	if err != nil {
+		log.Fatal("telemetry configuration failed", zap.Error(err))
+	}
+	defer func() { _ = shutdownTelemetry(context.Background()) }()
 
 	nc, err := natsconn.Connect(signalCtx, cfg.NATSURL, cfg.WorkerID)
 	if err != nil {
@@ -110,6 +134,7 @@ func main() {
 		BinaryVersion:   buildinfo.Version,
 		RuntimeABIs:     []int32{cfg.RuntimeABI},
 		HeartbeatPeriod: time.Duration(cfg.HeartbeatMillis) * time.Millisecond,
+		ControlToken:    cfg.ControlToken,
 	}, log)
 
 	consumerConfig := messaging.DefaultConsumerConfig(cfg.WorkerID, cfg.MaxConcurrency)
@@ -121,6 +146,12 @@ func main() {
 			RuntimeVersion:  cfg.RuntimeVersion,
 			StartupTimeout:  time.Duration(cfg.RuntimeStartupSec) * time.Second,
 			KillGrace:       time.Duration(cfg.RuntimeKillSec) * time.Second,
+			MemoryMB:        cfg.RuntimeMemoryMB,
+			CPUSeconds:      cfg.RuntimeCPUSeconds,
+			ProcessLimit:    cfg.RuntimePids,
+			FileSizeMB:      cfg.RuntimeFileSizeMB,
+			OpenFiles:       cfg.RuntimeOpenFiles,
+			RequireSandbox:  cfg.RequireRuntimeSandbox,
 		}, log)
 		executor = runtimeExecutor.Execute
 		log.Info("python runtime executor enabled",
@@ -134,6 +165,7 @@ func main() {
 	handler := &delivery.Handler{
 		Client:   controlClient,
 		WorkerID: cfg.WorkerID,
+		Pool:     cfg.Pool,
 		Execute:  executor,
 		Log:      log,
 	}
@@ -143,9 +175,10 @@ func main() {
 	}
 
 	srv := httpserver.New(httpserver.Options{
-		Addr:   cfg.HTTPAddr,
-		Logger: log,
-		Checks: []httpserver.Check{natsconn.HealthCheck(nc), controlClient.Check},
+		Addr:    cfg.HTTPAddr,
+		Service: "worker",
+		Logger:  log,
+		Checks:  []httpserver.Check{natsconn.HealthCheck(nc), controlClient.Check},
 	})
 	srv.Router().Get("/v1/version", func(w http.ResponseWriter, _ *http.Request) {
 		httpserver.WriteJSON(w, http.StatusOK, buildinfo.Info())
@@ -175,6 +208,21 @@ func main() {
 
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			metrics.WorkerActiveTasks.WithLabelValues(cfg.Pool).Set(float64(controlClient.ActiveCount()))
+			metrics.WorkerSlotsTotal.WithLabelValues(cfg.Pool).Set(float64(cfg.MaxConcurrency))
+			metrics.WorkerAvailableSlots.WithLabelValues(cfg.Pool).Set(
+				float64(cfg.MaxConcurrency - controlClient.ActiveCount()))
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 	var group sync.WaitGroup
 	group.Add(2)
 	go func() {

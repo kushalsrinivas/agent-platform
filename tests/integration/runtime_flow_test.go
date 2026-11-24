@@ -47,6 +47,7 @@ func startRuntimeWorkerEnv(t *testing.T, suffix, pool string, env []string) *tes
 func startRuntimeWorkerCapacityEnv(t *testing.T, suffix, pool string, capacity int, env []string) *testWorker {
 	t.Helper()
 	worker := startTestWorkerWithCapacity(t, suffix, pool, capacity)
+	env = append(env, "AGENT_MCP_ALLOW_STDIO=true", "AGENT_MCP_ALLOW_PRIVATE_NETWORKS=true")
 	executor := execution.NewExecutor(worker.control, execution.Config{
 		CommandTemplate: "\"" + runtimePython(t) + "\" -m agent_runtime serve --socket {socket}",
 		RuntimeABI:      1,

@@ -20,8 +20,12 @@ type Handlers struct {
 func NewHandlers(store *Store) *Handlers { return &Handlers{store: store} }
 
 func (h *Handlers) List(w http.ResponseWriter, r *http.Request) {
-	if err := auth.RequireRole(r.Context(), auth.RoleOwner); err != nil {
-		respond.Error(w, r, http.StatusForbidden, "forbidden", "owner role required")
+	if auth.ProjectScope(r.Context()) != "" {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "project-scoped api keys cannot manage api keys")
+		return
+	}
+	if err := auth.RequireRole(r.Context(), auth.RoleAdmin); err != nil {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "admin role required")
 		return
 	}
 	membership, _ := auth.MembershipFrom(r.Context())
@@ -34,8 +38,12 @@ func (h *Handlers) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) Create(w http.ResponseWriter, r *http.Request) {
-	if err := auth.RequireRole(r.Context(), auth.RoleOwner); err != nil {
-		respond.Error(w, r, http.StatusForbidden, "forbidden", "owner role required")
+	if auth.ProjectScope(r.Context()) != "" {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "project-scoped api keys cannot manage api keys")
+		return
+	}
+	if err := auth.RequireRole(r.Context(), auth.RoleAdmin); err != nil {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "admin role required")
 		return
 	}
 	membership, _ := auth.MembershipFrom(r.Context())
@@ -63,8 +71,13 @@ func (h *Handlers) Create(w http.ResponseWriter, r *http.Request) {
 			"project-scoped API keys cannot have the owner role")
 		return
 	}
+	if request.Role == string(auth.RoleOwner) && membership.Role != auth.RoleOwner {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "only an owner may create an owner API key")
+		return
+	}
 	if !ValidRole(request.Role) {
-		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "role must be viewer, operator or owner")
+		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
+			"role must be viewer, developer, operator, admin or owner")
 		return
 	}
 	if request.ExpiresAt != nil && !request.ExpiresAt.After(time.Now()) {
@@ -89,8 +102,12 @@ func (h *Handlers) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) Revoke(w http.ResponseWriter, r *http.Request) {
-	if err := auth.RequireRole(r.Context(), auth.RoleOwner); err != nil {
-		respond.Error(w, r, http.StatusForbidden, "forbidden", "owner role required")
+	if auth.ProjectScope(r.Context()) != "" {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "project-scoped api keys cannot manage api keys")
+		return
+	}
+	if err := auth.RequireRole(r.Context(), auth.RoleAdmin); err != nil {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "admin role required")
 		return
 	}
 	membership, _ := auth.MembershipFrom(r.Context())

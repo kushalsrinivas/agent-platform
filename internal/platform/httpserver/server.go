@@ -11,7 +11,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
+
+	"github.com/agent-platform/agent-platform/internal/platform/metrics"
+	"github.com/agent-platform/agent-platform/internal/platform/telemetry"
 )
 
 // Check is a readiness probe. Returning an error makes /readyz return 503.
@@ -21,6 +26,7 @@ type Check func(context.Context) error
 // CORS, auth or tracing without tripping chi's "middleware before routes" rule.
 type Options struct {
 	Addr        string
+	Service     string
 	Logger      *zap.Logger
 	Middlewares []func(http.Handler) http.Handler
 	Checks      []Check
@@ -35,7 +41,14 @@ type Server struct {
 
 // New builds a server. checks are evaluated on every readiness request.
 func New(opts Options) *Server {
+	service := opts.Service
+	if service == "" {
+		service = "service"
+	}
 	r := chi.NewRouter()
+	r.Use(metrics.HTTPMiddleware(service))
+	r.Use(otelhttp.NewMiddleware(service))
+	r.Use(telemetry.TraceparentMiddleware)
 	r.Use(middleware.RequestID)
 	// middleware.RealIP is deliberately not used: it trusts client-supplied X-Forwarded-For values and is
 	// deprecated for IP spoofing. A trusted-proxy implementation belongs here when a proxy tier exists.
@@ -49,6 +62,7 @@ func New(opts Options) *Server {
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	r.Handle("/metrics", promhttp.Handler())
 	r.Get("/readyz", func(w http.ResponseWriter, req *http.Request) {
 		for _, check := range opts.Checks {
 			if err := check(req.Context()); err != nil {

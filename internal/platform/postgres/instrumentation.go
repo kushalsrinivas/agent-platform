@@ -7,14 +7,19 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
 type queryStartKey struct{}
 
 type queryStart struct {
-	at  time.Time
-	sql string
+	at   time.Time
+	sql  string
+	span trace.Span
 }
 
 // queryTracer logs slow queries and failures without logging parameter values.
@@ -24,7 +29,10 @@ type queryTracer struct {
 }
 
 func (t *queryTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	return context.WithValue(ctx, queryStartKey{}, queryStart{at: time.Now(), sql: data.SQL})
+	ctx, span := otel.Tracer("postgres").Start(ctx, "db.query",
+		trace.WithAttributes(attribute.String("db.system", "postgresql"),
+			attribute.String("db.operation", firstWord(data.SQL))))
+	return context.WithValue(ctx, queryStartKey{}, queryStart{at: time.Now(), sql: data.SQL, span: span})
 }
 
 func (t *queryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
@@ -34,6 +42,14 @@ func (t *queryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.T
 	}
 	duration := time.Since(start.at)
 	query := oneLine(start.sql)
+	if start.span != nil {
+		defer start.span.End()
+		start.span.SetAttributes(attribute.Int64("db.duration_ms", duration.Milliseconds()))
+		if data.Err != nil {
+			start.span.RecordError(data.Err)
+			start.span.SetStatus(codes.Error, "query failed")
+		}
+	}
 
 	if data.Err != nil {
 		t.log.Error("database query failed",
@@ -50,6 +66,14 @@ func (t *queryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.T
 			zap.String("rows_affected", data.CommandTag.String()),
 		)
 	}
+}
+
+func firstWord(sql string) string {
+	fields := strings.Fields(sql)
+	if len(fields) == 0 {
+		return "unknown"
+	}
+	return strings.ToUpper(fields[0])
 }
 
 func oneLine(sql string) string {

@@ -5,10 +5,12 @@ import (
 	"crypto/tls"
 	"fmt"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	orchestratorv1 "github.com/agent-platform/agent-platform/gen/orchestrator/v1"
 )
@@ -19,7 +21,7 @@ type OrchestratorClient struct {
 	client orchestratorv1.ExecutionCommandsClient
 }
 
-func DialOrchestrator(addr string, insecureConn bool, log *zap.Logger) (*OrchestratorClient, error) {
+func DialOrchestrator(addr string, insecureConn bool, token string, log *zap.Logger) (*OrchestratorClient, error) {
 	if addr == "" {
 		return nil, fmt.Errorf("orchestrator address is required")
 	}
@@ -29,7 +31,18 @@ func DialOrchestrator(addr string, insecureConn bool, log *zap.Logger) (*Orchest
 	} else {
 		credential = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
 	}
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(credential))
+	opts := []grpc.DialOption{
+		grpc.WithTransportCredentials(credential),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+	}
+	if token != "" {
+		opts = append(opts, grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any,
+			conn *grpc.ClientConn, invoker grpc.UnaryInvoker, callOpts ...grpc.CallOption) error {
+			ctx = metadata.AppendToOutgoingContext(ctx, "x-internal-token", token)
+			return invoker(ctx, method, req, reply, conn, callOpts...)
+		}))
+	}
+	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dial orchestrator: %w", err)
 	}

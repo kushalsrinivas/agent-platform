@@ -5,10 +5,16 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	orchestratorv1 "github.com/agent-platform/agent-platform/gen/orchestrator/v1"
 	workerv1 "github.com/agent-platform/agent-platform/gen/worker/v1"
@@ -19,11 +25,15 @@ import (
 	"github.com/agent-platform/agent-platform/internal/platform/grpcserver"
 	"github.com/agent-platform/agent-platform/internal/platform/httpserver"
 	"github.com/agent-platform/agent-platform/internal/platform/logging"
+	"github.com/agent-platform/agent-platform/internal/platform/metrics"
 	"github.com/agent-platform/agent-platform/internal/platform/natsconn"
 	"github.com/agent-platform/agent-platform/internal/platform/postgres"
 	"github.com/agent-platform/agent-platform/internal/platform/run"
+	"github.com/agent-platform/agent-platform/internal/platform/secretbox"
+	"github.com/agent-platform/agent-platform/internal/platform/telemetry"
 	"github.com/agent-platform/agent-platform/services/orchestrator/internal/admin"
 	"github.com/agent-platform/agent-platform/services/orchestrator/internal/commands"
+	"github.com/agent-platform/agent-platform/services/orchestrator/internal/credentials"
 	"github.com/agent-platform/agent-platform/services/orchestrator/internal/lifecycle"
 )
 
@@ -44,7 +54,10 @@ type serviceConfig struct {
 
 	StreamReplicas    int    `env:"ORCHESTRATOR_STREAM_REPLICAS" envDefault:"1"`
 	AdminToken        string `env:"ORCHESTRATOR_ADMIN_TOKEN"`
+	WorkerToken       string `env:"ORCHESTRATOR_WORKER_TOKEN"`
+	InternalAPIToken  string `env:"INTERNAL_API_TOKEN"`
 	DispatcherMillis  int    `env:"ORCHESTRATOR_DISPATCH_INTERVAL_MS" envDefault:"500"`
+	DispatcherBatch   int    `env:"ORCHESTRATOR_DISPATCH_BATCH" envDefault:"20"`
 	ReaperMillis      int    `env:"ORCHESTRATOR_REAPER_INTERVAL_MS" envDefault:"2000"`
 	PublisherMillis   int    `env:"ORCHESTRATOR_OUTBOX_INTERVAL_MS" envDefault:"250"`
 	PublisherBatch    int    `env:"ORCHESTRATOR_OUTBOX_BATCH" envDefault:"50"`
@@ -55,7 +68,12 @@ type serviceConfig struct {
 	WorkerTerminateSeconds  int    `env:"ORCHESTRATOR_WORKER_TERMINATE_SECONDS" envDefault:"60"`
 	MaxActiveTasksPerTenant int    `env:"ORCHESTRATOR_MAX_ACTIVE_TASKS_PER_TENANT" envDefault:"0"`
 	ProviderConcurrency     string `env:"ORCHESTRATOR_PROVIDER_CONCURRENCY"`
+	ProviderRatePerMinute   string `env:"ORCHESTRATOR_PROVIDER_RATE_PER_MINUTE"`
 	ToolConcurrency         string `env:"ORCHESTRATOR_TOOL_CONCURRENCY"`
+
+	SecretsMasterKey    string `env:"SECRETS_MASTER_KEY"`
+	SecretsActiveKeyID  string `env:"SECRETS_ACTIVE_KEY_ID" envDefault:"primary"`
+	SecretsPreviousKeys string `env:"SECRETS_PREVIOUS_KEYS"`
 }
 
 func main() {
@@ -75,8 +93,21 @@ func main() {
 		panic(err)
 	}
 	defer func() { _ = log.Sync() }()
+	if cfg.Environment != "development" {
+		if cfg.SecretsMasterKey == "" || cfg.SecretsMasterKey == "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" {
+			log.Fatal("SECRETS_MASTER_KEY must be replaced outside development")
+		}
+		if cfg.WorkerToken == "" || cfg.InternalAPIToken == "" {
+			log.Fatal("worker and internal API tokens are required outside development")
+		}
+	}
 
 	ctx := run.SignalContext()
+	shutdownTelemetry, err := telemetry.Init(ctx, "orchestrator", cfg.Environment, buildinfo.Version)
+	if err != nil {
+		log.Fatal("telemetry configuration failed", zap.Error(err))
+	}
+	defer func() { _ = shutdownTelemetry(context.Background()) }()
 
 	pool, err := postgres.Connect(ctx, postgres.Config{URL: cfg.DatabaseURL, MaxConns: 20, Logger: log})
 	if err != nil {
@@ -104,7 +135,13 @@ func main() {
 		log.Fatal("nats streams unavailable", zap.Error(err))
 	}
 
-	grpcSrv, err := grpcserver.New(cfg.GRPCAddr, cfg.Environment, log)
+	var grpcOpts []grpc.ServerOption
+	if cfg.WorkerToken != "" || cfg.InternalAPIToken != "" {
+		grpcOpts = append(grpcOpts,
+			grpc.ChainUnaryInterceptor(serviceTokenUnary(cfg.WorkerToken, cfg.InternalAPIToken)),
+			grpc.ChainStreamInterceptor(workerTokenStream(cfg.WorkerToken)))
+	}
+	grpcSrv, err := grpcserver.New(cfg.GRPCAddr, cfg.Environment, log, grpcOpts...)
 	if err != nil {
 		log.Fatal("grpc listen failed", zap.Error(err))
 	}
@@ -116,12 +153,17 @@ func main() {
 	if err != nil {
 		log.Fatal("invalid tool concurrency limits", zap.Error(err))
 	}
+	providerRates, err := lifecycle.ParseConcurrencyLimits(cfg.ProviderRatePerMinute)
+	if err != nil {
+		log.Fatal("invalid provider rate limits", zap.Error(err))
+	}
 	lifecycleService := lifecycle.NewWithConfig(pool, log, lifecycle.Config{
 		LeaseTTL:                time.Duration(cfg.LeaseSeconds) * time.Second,
 		HeartbeatTimeout:        time.Duration(cfg.HeartbeatTimeoutSeconds) * time.Second,
 		WorkerTerminateAfter:    time.Duration(cfg.WorkerTerminateSeconds) * time.Second,
 		MaxActiveTasksPerTenant: cfg.MaxActiveTasksPerTenant,
 		ProviderConcurrency:     providerLimits,
+		ProviderRatePerMinute:   providerRates,
 		ToolConcurrency:         toolLimits,
 		ArtifactDir:             cfg.ArtifactDir,
 	})
@@ -131,7 +173,17 @@ func main() {
 		MaxExecutionDuration: time.Duration(cfg.MaxExecutionSeconds) * time.Second,
 	}, lifecycleService))
 
-	workerv1.RegisterWorkerControlServer(grpcSrv.Server, lifecycle.NewWorkerServer(lifecycleService, log))
+	workerServer := lifecycle.NewWorkerServer(lifecycleService, log)
+	if cfg.SecretsMasterKey != "" {
+		keyring, err := secretbox.New(cfg.SecretsActiveKeyID, cfg.SecretsMasterKey, cfg.SecretsPreviousKeys)
+		if err != nil {
+			log.Fatal("invalid secret encryption configuration", zap.Error(err))
+		}
+		workerServer = workerServer.WithCredentials(credentials.New(pool, keyring))
+	} else {
+		log.Warn("secret store is not configured; task credential requests return no values")
+	}
+	workerv1.RegisterWorkerControlServer(grpcSrv.Server, workerServer)
 	publisher := messaging.NewPublisherLoop(outbox.NewStore(pool),
 		messaging.NewNATSPublisher(js, log), log,
 		time.Duration(cfg.PublisherMillis)*time.Millisecond,
@@ -145,8 +197,9 @@ func main() {
 	}
 
 	httpSrv := httpserver.New(httpserver.Options{
-		Addr:   cfg.HTTPAddr,
-		Logger: log,
+		Addr:    cfg.HTTPAddr,
+		Service: "orchestrator",
+		Logger:  log,
 		Checks: []httpserver.Check{
 			func(ctx context.Context) error { return pool.Ping(ctx) },
 			natsconn.HealthCheck(nc),
@@ -171,13 +224,66 @@ func main() {
 		httpSrv.Start,
 		publisher.Run,
 		func(ctx context.Context) error {
-			return lifecycleService.RunDispatcher(ctx, time.Duration(cfg.DispatcherMillis)*time.Millisecond)
+			return lifecycleService.RunDispatcher(ctx,
+				time.Duration(cfg.DispatcherMillis)*time.Millisecond, cfg.DispatcherBatch)
 		},
 		func(ctx context.Context) error {
 			return lifecycleService.RunRecovery(ctx, time.Duration(cfg.ReaperMillis)*time.Millisecond)
+		},
+		func(ctx context.Context) error {
+			metrics.RunCollector(ctx, pool, 10*time.Second)
+			return nil
 		},
 	); err != nil {
 		log.Fatal("orchestrator stopped", zap.Error(err))
 	}
 	log.Info("orchestrator stopped cleanly")
+}
+
+// serviceTokenUnary enforces distinct shared tokens for worker-control and API command RPCs.
+func serviceTokenUnary(workerToken, apiToken string) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		switch {
+		case strings.HasPrefix(info.FullMethod, "/platform.worker.v1.WorkerControl/"):
+			if !delegationMethod(info.FullMethod) && !serviceTokenValid(ctx, "x-worker-token", workerToken) {
+				return nil, status.Error(codes.Unauthenticated, "worker control token is invalid")
+			}
+		case strings.HasPrefix(info.FullMethod, "/platform.orchestrator.v1.ExecutionCommands/"):
+			if !serviceTokenValid(ctx, "x-internal-token", apiToken) {
+				return nil, status.Error(codes.Unauthenticated, "internal API token is invalid")
+			}
+		}
+		return handler(ctx, req)
+	}
+}
+
+func workerTokenStream(token string) grpc.StreamServerInterceptor {
+	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if strings.HasPrefix(info.FullMethod, "/platform.worker.v1.WorkerControl/") &&
+			!serviceTokenValid(stream.Context(), "x-worker-token", token) {
+			return status.Error(codes.Unauthenticated, "worker control token is invalid")
+		}
+		return handler(srv, stream)
+	}
+}
+
+// Delegation RPCs are authorised by the attempt lease and are called by the runtime process, which deliberately
+// does not receive the worker-control token. Everything else on the worker service requires the token.
+func delegationMethod(method string) bool {
+	switch method {
+	case "/platform.worker.v1.WorkerControl/ListDelegationAgents",
+		"/platform.worker.v1.WorkerControl/DelegateTask",
+		"/platform.worker.v1.WorkerControl/GetDelegation":
+		return true
+	default:
+		return false
+	}
+}
+
+func serviceTokenValid(ctx context.Context, header, expected string) bool {
+	if expected == "" {
+		return true
+	}
+	values := metadata.ValueFromIncomingContext(ctx, header)
+	return len(values) == 1 && subtle.ConstantTimeCompare([]byte(values[0]), []byte(expected)) == 1
 }

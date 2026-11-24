@@ -26,13 +26,25 @@ const WorkerIDMetadataKey = "x-worker-id"
 // WorkerServer implements the worker <-> orchestrator control contract.
 type WorkerServer struct {
 	workerv1.UnimplementedWorkerControlServer
-	service *Service
-	log     *zap.Logger
+	service     *Service
+	credentials CredentialResolver
+	log         *zap.Logger
+}
+
+// CredentialResolver resolves named project secrets after the worker has proved its lease.
+type CredentialResolver interface {
+	Resolve(ctx context.Context, orgID, projectID, environmentID string, names []string) (map[string]string, error)
 }
 
 // NewWorkerServer builds the control service.
 func NewWorkerServer(service *Service, log *zap.Logger) *WorkerServer {
 	return &WorkerServer{service: service, log: log}
+}
+
+// WithCredentials enables task-scoped credential resolution.
+func (s *WorkerServer) WithCredentials(resolver CredentialResolver) *WorkerServer {
+	s.credentials = resolver
+	return s
 }
 
 // Connect holds one worker session: registration, heartbeats, acceptance and rejection.
@@ -238,14 +250,22 @@ func (s *WorkerServer) GetTaskCredentials(ctx context.Context,
 	if workerID == "" {
 		return nil, status.Error(codes.Unauthenticated, "worker identity is required")
 	}
-	if _, err := s.service.GetTaskContext(ctx, workerID, req.GetTaskId(), req.GetAttemptId(), req.GetLeaseId()); err != nil {
+	task, err := s.service.GetTaskContext(ctx, workerID, req.GetTaskId(), req.GetAttemptId(), req.GetLeaseId())
+	if err != nil {
 		if errors.Is(err, ErrStaleLease) {
 			return nil, status.Error(codes.FailedPrecondition, "attempt is not owned by this worker")
 		}
 		return nil, status.Error(codes.Internal, "credentials could not be authorised")
 	}
+	values := map[string]string{}
+	if s.credentials != nil {
+		values, err = s.credentials.Resolve(ctx, task.OrgID, task.ProjectID, "", req.GetNames())
+		if err != nil {
+			return nil, status.Error(codes.Internal, "credentials could not be resolved")
+		}
+	}
 	return &workerv1.GetTaskCredentialsResponse{
-		Values:    map[string]string{},
+		Values:    values,
 		ExpiresAt: timestamppb.New(time.Now().UTC().Add(15 * time.Minute)),
 	}, nil
 }

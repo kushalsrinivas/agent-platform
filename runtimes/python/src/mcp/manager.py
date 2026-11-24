@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Iterable
 from typing import Any, Protocol
@@ -19,6 +20,7 @@ from typing import Any, Protocol
 import httpx
 
 from mcp.client import MCPServerConfig, MCPTool
+from mcp.network_policy import URLPolicyError, validate_outbound_url
 from tool_runtime.policy import MCP_DEFAULT_POLICY, ToolPolicy
 
 log = logging.getLogger(__name__)
@@ -26,6 +28,16 @@ log = logging.getLogger(__name__)
 PROTOCOL_VERSION = "2025-06-18"
 MAX_TEXT_BYTES = 1 << 20
 MAX_RESULT_BYTES = 4 << 20
+
+_SECRET_PATTERN = re.compile(r"(?i)(apk_[A-Za-z0-9_-]{8,}|bearer\s+[A-Za-z0-9._~+/=-]{12,}|sk-[A-Za-z0-9_-]{12,})")
+
+
+def _redact(value: str) -> str:
+    return _SECRET_PATTERN.sub("[redacted]", value)
+
+
+def _stdio_allowed() -> bool:
+    return os.getenv("AGENT_MCP_ALLOW_STDIO", "false").strip().lower() in {"1", "true", "yes"}
 
 
 class MCPError(RuntimeError):
@@ -108,6 +120,8 @@ class StdioConnection(_JSONRPC):
         self._stderr_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
+        if not _stdio_allowed():
+            raise MCPError("MCP_STDIO_DISABLED", f"stdio server {self.name!r} is disabled by runtime policy")
         if not self._config.command:
             raise MCPError("MCP_CONFIG_INVALID", f"stdio server {self.name!r} has no command")
         environment = dict(os.environ)
@@ -131,7 +145,8 @@ class StdioConnection(_JSONRPC):
             line = await stream.readline()
             if not line:
                 return
-            log.info("mcp_server_stderr", extra={"server": self.name, "line": line.decode("utf-8", "replace")[:512]})
+            text = _redact(line.decode("utf-8", "replace")[:512])
+            log.debug("mcp_server_stderr", extra={"server": self.name, "line": text})
 
     async def _send(self, payload: dict[str, Any]) -> None:
         assert self._process is not None and self._process.stdin is not None
@@ -234,7 +249,7 @@ class HTTPConnection(_JSONRPC):
         super().__init__(config.name)
         self._config = config
         self._token = token
-        self._client = httpx.AsyncClient(timeout=config.timeout_seconds)
+        self._client = httpx.AsyncClient(timeout=config.timeout_seconds, follow_redirects=False)
         self._session_id: str | None = None
 
     def _headers(self) -> dict[str, str]:
@@ -251,6 +266,10 @@ class HTTPConnection(_JSONRPC):
 
     async def _post(self, payload: dict[str, Any]) -> httpx.Response:
         assert self._config.url
+        try:
+            validate_outbound_url(self._config.url)
+        except URLPolicyError as exc:
+            raise MCPError("MCP_URL_BLOCKED", str(exc)) from exc
         try:
             response = await self._client.post(self._config.url, json=payload, headers=self._headers())
         except httpx.TimeoutException as exc:
@@ -324,6 +343,11 @@ class HTTPConnection(_JSONRPC):
         await self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
     async def start(self) -> None:
+        assert self._config.url
+        try:
+            validate_outbound_url(self._config.url)
+        except URLPolicyError as exc:
+            raise MCPError("MCP_URL_BLOCKED", str(exc)) from exc
         await self._initialize()
 
     async def list_tools(self) -> list[MCPTool]:

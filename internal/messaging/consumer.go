@@ -9,6 +9,10 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -245,6 +249,16 @@ func (c *Consumer) Stop() {
 }
 
 func (c *Consumer) handle(ctx context.Context, msg jetstream.Msg) {
+	if encoded := msg.Headers().Get("traceparent"); encoded != "" {
+		ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier{"traceparent": encoded})
+	}
+	ctx, span := otel.Tracer("messaging").Start(ctx, "nats.consume",
+		trace.WithAttributes(
+			attribute.String("messaging.system", "nats"),
+			attribute.String("messaging.destination", msg.Subject()),
+			attribute.String("messaging.consumer", c.cfg.Durable),
+		))
+	defer span.End()
 	c.mu.Lock()
 	c.stats.received++
 	c.mu.Unlock()

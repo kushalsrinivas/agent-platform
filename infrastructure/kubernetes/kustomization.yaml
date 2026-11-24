@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces/platform.yaml
+  - namespaces/monitoring.yaml
+  - configmap.yaml
+  - policies/service-accounts.yaml
+  - storage/infrastructure.yaml
+  - storage/backup-cronjob.yaml
+  - jobs/migrate.yaml
+  - control-plane/api.yaml
+  - control-plane/orchestrator.yaml
+  - control-plane/dashboard.yaml
+  - workers/python-worker.yaml
+  - workers/worker-service.yaml
+  - workers/keda-scaledobject.yaml
+  - networking/network-policies.yaml
+  - networking/ingress.yaml
+  - monitoring/otel-collector.yaml
+  - monitoring/servicemonitor.yaml
+  - monitoring/prometheusrule.yaml

@@ -1,0 +1,67 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata: {name: agent-platform-alerts, namespace: monitoring, labels: {release: kube-prometheus-stack}}
+spec:
+  groups:
+    - name: agent-platform.availability
+      rules:
+        - alert: AgentPlatformApiUnavailable
+          expr: up{namespace="agent-platform",service="api"} == 0
+          for: 5m
+          labels: {severity: critical}
+          annotations: {summary: "Agent Platform API is unavailable", runbook_url: "https://github.com/kushalsrinivas/agent-platform/blob/main/docs/deployment-kubernetes.md#alerts"}
+        - alert: AgentPlatformOrchestratorUnavailable
+          expr: up{namespace="agent-platform",service="orchestrator"} == 0
+          for: 5m
+          labels: {severity: critical}
+          annotations: {summary: "Agent Platform orchestrator is unavailable"}
+        - alert: AgentPlatformNatsDisconnected
+          expr: max(agent_platform_nats_connected) == 0
+          for: 2m
+          labels: {severity: critical}
+          annotations: {summary: "A platform service lost NATS connectivity"}
+        - alert: AgentPlatformQueueBacklog
+          expr: max(agent_platform_queue_pending_tasks) > 50
+          for: 10m
+          labels: {severity: warning}
+          annotations: {summary: "Task queue backlog is growing"}
+        - alert: AgentPlatformQueueAge
+          expr: max(agent_platform_queue_oldest_pending_seconds) > 300
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: "Oldest pending task is older than five minutes"}
+        - alert: AgentPlatformWorkerFleetUnhealthy
+          expr: sum(up{namespace="agent-platform",service="python-worker-metrics"}) < 1
+          for: 5m
+          labels: {severity: critical}
+          annotations: {summary: "No healthy worker is registered"}
+        - alert: AgentPlatformLeaseExpirationSpike
+          expr: increase(agent_platform_orchestrator_lease_expirations_total[10m]) > 5
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: "Repeated task lease expiration"}
+        - alert: AgentPlatformDatabaseConnectionsExhausted
+          expr: agent_platform_db_connections{state="acquired"} / clamp_min(agent_platform_db_connections{state="max"}, 1) > 0.9
+          for: 10m
+          labels: {severity: warning}
+          annotations: {summary: "Database connection pool is nearly exhausted"}
+        - alert: AgentPlatformExecutionFailureRate
+          expr: sum(rate(agent_platform_worker_tasks_total{outcome="failed"}[10m])) / clamp_min(sum(rate(agent_platform_worker_tasks_total[10m])), 0.001) > 0.2
+          for: 10m
+          labels: {severity: warning}
+          annotations: {summary: "Execution failure rate is above 20%"}
+        - alert: AgentPlatformProviderRateLimit
+          expr: sum(rate(agent_platform_ai_provider_errors_total{code=~".*RATE.*|.*429.*"}[5m])) > 0.2
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: "Model provider is returning rate-limit errors"}
+        - alert: AgentPlatformProviderErrors
+          expr: sum(rate(agent_platform_ai_provider_errors_total[5m])) > 1
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: "Model provider errors are elevated"}
+        - alert: AgentPlatformStoragePressure
+          expr: kubelet_volume_stats_available_bytes{namespace="agent-platform"} / kubelet_volume_stats_capacity_bytes{namespace="agent-platform"} < 0.15
+          for: 10m
+          labels: {severity: warning}
+          annotations: {summary: "Persistent volume is approaching capacity"}

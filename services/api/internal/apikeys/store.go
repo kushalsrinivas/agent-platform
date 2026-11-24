@@ -164,6 +164,4 @@ func (s *Store) Revoke(ctx context.Context, orgID, keyID string) (APIKey, error)
 	return key, err
 }
 
-func ValidRole(role string) bool {
-	return role == string(auth.RoleViewer) || role == string(auth.RoleOperator) || role == string(auth.RoleOwner)
-}
+func ValidRole(role string) bool { return auth.ValidRole(role) }

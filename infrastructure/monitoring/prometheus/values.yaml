@@ -1,0 +1,43 @@
+# helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+# helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring \
+#   -f infrastructure/monitoring/prometheus/values.yaml
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    replicas: 2
+    podAntiAffinity: hard
+    resources:
+      requests: {cpu: 250m, memory: 1Gi}
+      limits: {cpu: "2", memory: 4Gi}
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources: {requests: {storage: 50Gi}}
+alertmanager:
+  enabled: true
+  config:
+    route:
+      receiver: default
+      group_by: [alertname, namespace]
+      routes:
+        - matchers: [severity="critical"]
+          receiver: critical
+          repeat_interval: 1h
+    receivers:
+      - name: default
+        webhook_configs: []
+      - name: critical
+        webhook_configs: []
+grafana:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 10Gi
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: monitoring

@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  ci:
+    name: Release gate
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Publish images, chart and notes
+    needs: ci
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+      VERSION: ${{ github.ref_name }}
+      BUILD_DATE: ${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: aquasecurity/setup-trivy@v0.2.3
+
+      - name: Validate migrations and backups
+        run: |
+          docker compose up -d postgres
+          ./scripts/migrate-check.sh
+          ./scripts/verify-backup.sh
+          docker compose down -v --remove-orphans
+
+      - name: Build, scan and push images
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          repo="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          commit="${GITHUB_SHA}"
+          build_date="${BUILD_DATE}"
+          build() {
+            image="$1"; shift
+            docker build -f "$1" "${@:2}" -t "${REGISTRY}/${repo}/${image}:${version}" .
+          }
+          build api infrastructure/docker/go-service.Dockerfile \
+            --build-arg SERVICE=api --build-arg VERSION="${version}" \
+            --build-arg COMMIT="${commit}" --build-arg BUILD_DATE="${build_date}"
+          build orchestrator infrastructure/docker/go-service.Dockerfile \
+            --build-arg SERVICE=orchestrator --build-arg VERSION="${version}" \
+            --build-arg COMMIT="${commit}" --build-arg BUILD_DATE="${build_date}"
+          build worker infrastructure/docker/worker.Dockerfile \
+            --build-arg VERSION="${version}" --build-arg COMMIT="${commit}" --build-arg BUILD_DATE="${build_date}"
+          build dashboard infrastructure/docker/dashboard.Dockerfile --build-arg VERSION="${version}"
+          build cli infrastructure/docker/cli.Dockerfile \
+            --build-arg VERSION="${version}" --build-arg COMMIT="${commit}" --build-arg BUILD_DATE="${build_date}"
+          build migrate infrastructure/docker/migrate.Dockerfile
+
+          for image in api orchestrator worker dashboard cli migrate; do
+            ref="${REGISTRY}/${repo}/${image}:${version}"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "${ref}"
+            docker tag "${ref}" "${REGISTRY}/${repo}/${image}:${commit}"
+            docker push "${ref}"
+            docker push "${REGISTRY}/${repo}/${image}:${commit}"
+          done
+
+      - name: Package and push Helm chart
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          repo="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          mkdir -p dist
+          helm package infrastructure/helm/agent-platform --version "${version}" -d dist
+          helm registry login "${REGISTRY}" -u "${{ github.actor }}" -p "${{ secrets.GITHUB_TOKEN }}"
+          helm push dist/agent-platform-*.tgz "oci://${REGISTRY}/${repo}/charts"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${VERSION#v}"
+          ./scripts/release-notes.sh "${version}" > release-notes.md
+          gh release create "${VERSION}" dist/agent-platform-*.tgz \
+            --title "Agent Platform ${version}" \
+            --notes-file release-notes.md \
+            --verify-tag

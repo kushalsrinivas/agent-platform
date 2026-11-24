@@ -38,7 +38,7 @@ export default function SettingsPage() {
             <CardDescription>
               The key is sent to the same-origin proxy as{" "}
               <span className="font-mono">X-Dashboard-Api-Key</span> and exchanged for the platform
-              API. It is kept in local storage for this browser only.
+              API. It is kept in memory for this tab only and is lost on reload.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">

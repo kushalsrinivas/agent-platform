@@ -53,6 +53,13 @@ func startTestWorkerWithCapacity(t *testing.T, suffix, pool string, capacity int
 	return startTestWorkerNamed(t, "wrk_msg_"+suffix, pool, capacity)
 }
 
+func controlToken() string {
+	if token := os.Getenv("WORKER_CONTROL_TOKEN"); token != "" {
+		return token
+	}
+	return "dev-worker-control-token"
+}
+
 func startTestWorkerNamed(t *testing.T, workerID, pool string, capacity int) *testWorker {
 	t.Helper()
 	if capacity < 1 {
@@ -82,6 +89,7 @@ func startTestWorkerNamed(t *testing.T, workerID, pool string, capacity int) *te
 		RuntimeABIs:     []int32{1},
 		HeartbeatPeriod: time.Second,
 		ReconnectDelay:  500 * time.Millisecond,
+		ControlToken:    controlToken(),
 	}, zap.NewNop())
 	done := make(chan struct{})
 	go func() {
@@ -953,7 +961,8 @@ func TestWorkerManagerStaleWorkerCannotCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close() }()
-	ctx := metadata.AppendToOutgoingContext(context.Background(), control.WorkerIDMetadataKey, workerA.id)
+	ctx := metadata.AppendToOutgoingContext(context.Background(),
+		control.WorkerIDMetadataKey, workerA.id, "x-worker-token", controlToken())
 	output, err := structpb.NewStruct(map[string]any{"stale": true})
 	if err != nil {
 		t.Fatal(err)

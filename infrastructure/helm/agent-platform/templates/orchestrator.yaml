@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-orchestrator
+  labels:
+    {{- include "agent-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
+spec:
+  replicas: {{ .Values.orchestrator.replicas }}
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  selector:
+    matchLabels:
+      {{- include "agent-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: orchestrator
+  template:
+    metadata:
+      labels:
+        {{- include "agent-platform.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: orchestrator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: {{ include "agent-platform.fullname" . }}-orchestrator
+      automountServiceAccountToken: false
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "agent-platform.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: orchestrator
+      containers:
+        - name: orchestrator
+          image: "{{ .Values.images.orchestrator.repository }}:{{ .Values.images.orchestrator.tag }}"
+          imagePullPolicy: {{ .Values.images.orchestrator.pullPolicy }}
+          ports: [{name: grpc, containerPort: 9090}, {name: http, containerPort: 8081}]
+          envFrom:
+            - configMapRef: {name: {{ include "agent-platform.fullname" . }}-config}
+          env:
+            {{- include "agent-platform.orchestratorEnv" . | nindent 12 }}
+            - {name: OTEL_SERVICE_NAME, value: agent-platform-orchestrator}
+          resources: {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            {{- if .Values.orchestrator.persistence.artifacts.enabled }}
+            - {name: artifacts, mountPath: /var/lib/agent-platform/artifacts}
+            {{- end }}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, initialDelaySeconds: 5, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10, periodSeconds: 20}
+          lifecycle: {preStop: {exec: {command: [sh, -c, "sleep 5"]}}}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
+        {{- if .Values.orchestrator.persistence.artifacts.enabled }}
+        - name: artifacts
+          persistentVolumeClaim: {claimName: {{ include "agent-platform.fullname" . }}-artifacts}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-orchestrator
+  labels:
+    {{- include "agent-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
+spec:
+  type: {{ .Values.orchestrator.service.type }}
+  selector:
+    {{- include "agent-platform.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
+  ports:
+    - {name: grpc, port: {{ .Values.orchestrator.service.grpcPort }}, targetPort: grpc}
+    - {name: http, port: {{ .Values.orchestrator.service.httpPort }}, targetPort: http}
+{{- if .Values.orchestrator.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: {{ include "agent-platform.fullname" . }}-orchestrator}
+spec:
+  minAvailable: {{ .Values.orchestrator.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "agent-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: orchestrator
+{{- end }}
+{{- if .Values.orchestrator.persistence.artifacts.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-artifacts
+spec:
+  accessModes: {{- toYaml .Values.orchestrator.persistence.artifacts.accessModes | nindent 4 }}
+  {{- with .Values.orchestrator.persistence.artifacts.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources: {requests: {storage: {{ .Values.orchestrator.persistence.artifacts.size }}}}
+{{- end }}

@@ -15,9 +15,12 @@ import (
 	"github.com/agent-platform/agent-platform/internal/platform/logging"
 	"github.com/agent-platform/agent-platform/internal/platform/postgres"
 	"github.com/agent-platform/agent-platform/internal/platform/run"
+	"github.com/agent-platform/agent-platform/internal/platform/secretbox"
+	"github.com/agent-platform/agent-platform/internal/platform/telemetry"
 	"github.com/agent-platform/agent-platform/services/api/internal/auth"
 	"github.com/agent-platform/agent-platform/services/api/internal/database"
 	"github.com/agent-platform/agent-platform/services/api/internal/executions"
+	"github.com/agent-platform/agent-platform/services/api/internal/secrets"
 	"github.com/agent-platform/agent-platform/services/api/internal/server"
 )
 
@@ -30,6 +33,7 @@ type serviceConfig struct {
 
 	OrchestratorAddr     string `env:"API_ORCHESTRATOR_GRPC_ADDR" envDefault:"localhost:9090"`
 	OrchestratorInsecure bool   `env:"API_ORCHESTRATOR_INSECURE" envDefault:"true"`
+	OrchestratorToken    string `env:"API_ORCHESTRATOR_TOKEN"`
 
 	AuthMode      string `env:"AUTH_MODE" envDefault:""`
 	AuthDevSecret string `env:"AUTH_DEV_SECRET"`
@@ -40,6 +44,10 @@ type serviceConfig struct {
 
 	RateLimitPerMinute int `env:"API_RATE_LIMIT_PER_MINUTE" envDefault:"120"`
 	RateLimitBurst     int `env:"API_RATE_LIMIT_BURST" envDefault:"30"`
+
+	SecretsMasterKey    string `env:"SECRETS_MASTER_KEY"`
+	SecretsActiveKeyID  string `env:"SECRETS_ACTIVE_KEY_ID" envDefault:"primary"`
+	SecretsPreviousKeys string `env:"SECRETS_PREVIOUS_KEYS"`
 }
 
 func main() {
@@ -59,8 +67,21 @@ func main() {
 		panic(err)
 	}
 	defer func() { _ = log.Sync() }()
+	if cfg.Environment != "development" {
+		if cfg.SecretsMasterKey == "" || cfg.SecretsMasterKey == "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" {
+			log.Fatal("SECRETS_MASTER_KEY must be replaced outside development")
+		}
+		if cfg.OrchestratorToken == "" {
+			log.Fatal("API_ORCHESTRATOR_TOKEN is required outside development")
+		}
+	}
 
 	ctx := run.SignalContext()
+	shutdownTelemetry, err := telemetry.Init(ctx, "api", cfg.Environment, buildinfo.Version)
+	if err != nil {
+		log.Fatal("telemetry configuration failed", zap.Error(err))
+	}
+	defer func() { _ = shutdownTelemetry(context.Background()) }()
 
 	pool, err := postgres.Connect(ctx, postgres.Config{URL: cfg.DatabaseURL, MaxConns: 20, Logger: log})
 	if err != nil {
@@ -94,16 +115,28 @@ func main() {
 		log.Info("OIDC bearer authentication enabled")
 	}
 
-	orchestrator, err := executions.DialOrchestrator(cfg.OrchestratorAddr, cfg.OrchestratorInsecure, log)
+	orchestrator, err := executions.DialOrchestrator(cfg.OrchestratorAddr, cfg.OrchestratorInsecure,
+		cfg.OrchestratorToken, log)
 	if err != nil {
 		log.Fatal("orchestrator client configuration failed", zap.Error(err))
 	}
 	defer func() { _ = orchestrator.Close() }()
 
 	db := database.New(pool)
+	var keyring *secretbox.Keyring
+	if cfg.SecretsMasterKey != "" {
+		keyring, err = secretbox.New(cfg.SecretsActiveKeyID, cfg.SecretsMasterKey, cfg.SecretsPreviousKeys)
+		if err != nil {
+			log.Fatal("invalid secret encryption configuration", zap.Error(err))
+		}
+	} else {
+		log.Warn("secret store is not configured; credential endpoints return 503")
+	}
+	secretStore := secrets.NewStore(db, keyring)
 	srv := httpserver.New(httpserver.Options{
-		Addr:   cfg.HTTPAddr,
-		Logger: log,
+		Addr:    cfg.HTTPAddr,
+		Service: "api",
+		Logger:  log,
 		Middlewares: []func(http.Handler) http.Handler{
 			cors.Handler(cors.Options{
 				AllowedOrigins:   cfg.CORSOrigins,
@@ -123,6 +156,7 @@ func main() {
 		Verifier:     verifier,
 		DevIssuer:    devIssuer,
 		Orchestrator: orchestrator,
+		Secrets:      secrets.NewHandlers(secretStore, db),
 		Logger:       log,
 		Config: server.Config{
 			RateLimitPerMinute: cfg.RateLimitPerMinute,

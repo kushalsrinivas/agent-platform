@@ -1,0 +1,56 @@
+{
+  "run_id": "636de8f819",
+  "started_at": "2026-11-24T17:35:45.543152Z",
+  "finished_at": "2026-11-24T17:35:49.788505Z",
+  "duration_seconds": 4.245353,
+  "config": {
+    "api_url": "http://localhost:18080",
+    "count": 100,
+    "concurrency": 16,
+    "pool": "loadtest",
+    "provider": "echo",
+    "model": "echo-1",
+    "max_attempts": 2,
+    "timeout": "5m0s"
+  },
+  "submission": {
+    "Attempted": 100,
+    "Accepted": 100,
+    "Rejected": 0,
+    "Errors": 0,
+    "Elapsed": 720404583
+  },
+  "submit_p50_seconds": 0.090782666,
+  "submit_p95_seconds": 0.213551834,
+  "submit_p99_seconds": 0.245904042,
+  "completion": {
+    "Succeeded": 100,
+    "Failed": 0,
+    "Cancelled": 0,
+    "Open": 0,
+    "TimedOut": false
+  },
+  "peak_pending_executions": 80,
+  "peak_pending_tasks": 79,
+  "metrics": {
+    "executions": 100,
+    "succeeded": 100,
+    "failed": 0,
+    "cancelled": 0,
+    "open": 0,
+    "end_to_end_p50_seconds": 2.0318354999999997,
+    "end_to_end_p95_seconds": 3.3649787,
+    "end_to_end_p99_seconds": 3.39107746,
+    "tasks": 100,
+    "queue_wait_p50_seconds": 1.990855,
+    "queue_wait_p95_seconds": 3.2850878,
+    "queue_wait_p99_seconds": 3.28916389,
+    "attempts": 100,
+    "retried_attempts": 0,
+    "task_attempts_avg": 1,
+    "attempt_latency_p95_seconds": 0.00033599999999999976
+  },
+  "submission_rate_per_second": 23.555167261709453,
+  "completion_rate_per_second": 23.555167261709453,
+  "task_rate_per_second": 23.555167261709453
+}

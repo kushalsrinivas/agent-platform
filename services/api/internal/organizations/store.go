@@ -122,6 +122,20 @@ func (s *Store) ListMembers(ctx context.Context, orgID string) ([]Member, error)
 	return members, err
 }
 
+// MemberRole returns a principal's current role, or ErrNotFound.
+func (s *Store) MemberRole(ctx context.Context, orgID, principalID string) (auth.Role, error) {
+	var role string
+	err := s.db.WithTenant(ctx, orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT role FROM control.memberships
+			WHERE org_id = $1 AND principal_id = $2`, orgID, principalID).Scan(&role)
+	})
+	if database.IsNotFound(err) {
+		return "", ErrNotFound
+	}
+	return auth.Role(role), err
+}
+
 func (s *Store) AddMember(ctx context.Context, orgID, principalID, role string) (Member, error) {
 	member := Member{PrincipalID: principalID, Role: role}
 	err := s.db.WithTenant(ctx, orgID, func(tx pgx.Tx) error {

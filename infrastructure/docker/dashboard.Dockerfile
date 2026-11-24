@@ -13,6 +13,10 @@ COPY apps/dashboard/ ./
 RUN npm run build
 
 FROM node:22-alpine AS run
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="agent-platform-dashboard" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/kushalsrinivas/agent-platform"
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \

@@ -2,6 +2,10 @@
 
 # The Python runtime image. One image per runtime ABI; the worker records the image digest it executed.
 FROM python:3.12-slim AS base
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="agent-platform-python-runtime" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/kushalsrinivas/agent-platform"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

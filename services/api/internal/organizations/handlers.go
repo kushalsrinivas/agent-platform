@@ -38,7 +38,7 @@ func (h *Handlers) ResolveMembership(next http.Handler) http.Handler {
 				respond.Error(w, r, http.StatusNotFound, "not_found", "organization not found")
 				return
 			}
-			if projectID := chi.URLParam(r, "project_id"); principal.APIKeyProjectID != "" &&
+			if projectID := requestProjectID(r); principal.APIKeyProjectID != "" &&
 				projectID != "" && projectID != principal.APIKeyProjectID {
 				respond.Error(w, r, http.StatusNotFound, "not_found", "project not found")
 				return
@@ -60,6 +60,19 @@ func (h *Handlers) ResolveMembership(next http.Handler) http.Handler {
 		ctx := auth.WithMembership(r.Context(), auth.Membership{OrgID: orgID, Role: role})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func requestProjectID(r *http.Request) string {
+	if id := chi.URLParam(r, "project_id"); id != "" {
+		return id
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	for index, part := range parts {
+		if part == "projects" && index+1 < len(parts) {
+			return parts[index+1]
+		}
+	}
+	return ""
 }
 
 func (h *Handlers) List(w http.ResponseWriter, r *http.Request) {
@@ -130,8 +143,8 @@ type memberRequest struct {
 }
 
 func (h *Handlers) AddMember(w http.ResponseWriter, r *http.Request) {
-	if err := auth.RequireRole(r.Context(), auth.RoleOwner); err != nil {
-		respond.Error(w, r, http.StatusForbidden, "forbidden", "owner role required")
+	if err := auth.RequireRole(r.Context(), auth.RoleAdmin); err != nil {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "admin role required")
 		return
 	}
 	membership, _ := auth.MembershipFrom(r.Context())
@@ -146,7 +159,12 @@ func (h *Handlers) AddMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !auth.ValidRole(request.Role) {
-		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "role must be owner, operator or viewer")
+		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
+			"role must be owner, admin, developer, operator or viewer")
+		return
+	}
+	if request.Role == string(auth.RoleOwner) && membership.Role != auth.RoleOwner {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "only an owner may grant the owner role")
 		return
 	}
 	member, err := h.store.AddMember(r.Context(), membership.OrgID, request.PrincipalID, request.Role)
@@ -162,8 +180,8 @@ func (h *Handlers) AddMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) UpdateMember(w http.ResponseWriter, r *http.Request) {
-	if err := auth.RequireRole(r.Context(), auth.RoleOwner); err != nil {
-		respond.Error(w, r, http.StatusForbidden, "forbidden", "owner role required")
+	if err := auth.RequireRole(r.Context(), auth.RoleAdmin); err != nil {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "admin role required")
 		return
 	}
 	membership, _ := auth.MembershipFrom(r.Context())
@@ -173,10 +191,25 @@ func (h *Handlers) UpdateMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !auth.ValidRole(request.Role) {
-		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "role must be owner, operator or viewer")
+		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
+			"role must be owner, admin, developer, operator or viewer")
 		return
 	}
 	principalID := chi.URLParam(r, "principal_id")
+	currentRole, err := h.store.MemberRole(r.Context(), membership.OrgID, principalID)
+	if errors.Is(err, ErrNotFound) {
+		respond.Error(w, r, http.StatusNotFound, "not_found", "member not found")
+		return
+	}
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, "internal", "could not load member")
+		return
+	}
+	if (currentRole == auth.RoleOwner || request.Role == string(auth.RoleOwner)) &&
+		membership.Role != auth.RoleOwner {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "only an owner may change ownership")
+		return
+	}
 	member, err := h.store.UpdateMember(r.Context(), membership.OrgID, principalID, request.Role)
 	if errors.Is(err, ErrLastOwner) {
 		respond.Error(w, r, http.StatusConflict, "last_owner", "the organization must keep at least one owner")
@@ -194,13 +227,26 @@ func (h *Handlers) UpdateMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) RemoveMember(w http.ResponseWriter, r *http.Request) {
-	if err := auth.RequireRole(r.Context(), auth.RoleOwner); err != nil {
-		respond.Error(w, r, http.StatusForbidden, "forbidden", "owner role required")
+	if err := auth.RequireRole(r.Context(), auth.RoleAdmin); err != nil {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "admin role required")
 		return
 	}
 	membership, _ := auth.MembershipFrom(r.Context())
 	principalID := chi.URLParam(r, "principal_id")
-	err := h.store.RemoveMember(r.Context(), membership.OrgID, principalID)
+	currentRole, err := h.store.MemberRole(r.Context(), membership.OrgID, principalID)
+	if errors.Is(err, ErrNotFound) {
+		respond.Error(w, r, http.StatusNotFound, "not_found", "member not found")
+		return
+	}
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, "internal", "could not load member")
+		return
+	}
+	if currentRole == auth.RoleOwner && membership.Role != auth.RoleOwner {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "only an owner may remove an owner")
+		return
+	}
+	err = h.store.RemoveMember(r.Context(), membership.OrgID, principalID)
 	if errors.Is(err, ErrLastOwner) {
 		respond.Error(w, r, http.StatusConflict, "last_owner", "the organization must keep at least one owner")
 		return

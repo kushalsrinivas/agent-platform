@@ -1,0 +1,77 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-api
+  labels: {release: {{ .Values.monitoring.serviceMonitor.releaseLabel }}}
+spec:
+  namespaceSelector: {matchNames: [{{ .Release.Namespace }}]}
+  selector:
+    matchLabels:
+      {{- include "agent-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  endpoints: [{port: http, path: /metrics, interval: {{ .Values.monitoring.serviceMonitor.interval }}}]
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-orchestrator
+  labels: {release: {{ .Values.monitoring.serviceMonitor.releaseLabel }}}
+spec:
+  namespaceSelector: {matchNames: [{{ .Release.Namespace }}]}
+  selector:
+    matchLabels:
+      {{- include "agent-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: orchestrator
+  endpoints: [{port: http, path: /metrics, interval: {{ .Values.monitoring.serviceMonitor.interval }}}]
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-worker
+  labels: {release: {{ .Values.monitoring.serviceMonitor.releaseLabel }}}
+spec:
+  namespaceSelector: {matchNames: [{{ .Release.Namespace }}]}
+  selector:
+    matchLabels:
+      {{- include "agent-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  endpoints: [{port: metrics, path: /metrics, interval: {{ .Values.monitoring.serviceMonitor.interval }}}]
+{{- end }}
+{{- if .Values.monitoring.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-alerts
+  labels: {release: {{ .Values.monitoring.prometheusRule.releaseLabel }}}
+spec:
+  groups:
+    - name: agent-platform
+      rules:
+        - alert: AgentPlatformQueueBacklog
+          expr: max(agent_platform_queue_pending_tasks) > 50
+          for: 10m
+          labels: {severity: warning}
+          annotations: {summary: "Agent Platform task queue backlog is growing"}
+        - alert: AgentPlatformLeaseExpirationSpike
+          expr: increase(agent_platform_orchestrator_lease_expirations_total[10m]) > 5
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: "Repeated task lease expiration"}
+        - alert: AgentPlatformWorkerFleetUnhealthy
+          expr: sum(up{namespace="{{ .Release.Namespace }}",service="{{ include "agent-platform.fullname" . }}-worker-metrics"}) < 1
+          for: 5m
+          labels: {severity: critical}
+          annotations: {summary: "No healthy worker is available"}
+        - alert: AgentPlatformProviderRateLimit
+          expr: sum(rate(agent_platform_ai_provider_errors_total{code=~".*RATE.*|.*429.*"}[5m])) > 0.2
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: "Model provider is returning rate-limit errors"}
+        - alert: AgentPlatformProviderErrors
+          expr: sum(rate(agent_platform_ai_provider_errors_total[5m])) > 1
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: "Model provider errors are elevated"}
+{{- end }}

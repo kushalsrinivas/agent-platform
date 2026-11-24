@@ -29,7 +29,7 @@ API keys are created by an organisation owner:
 curl -X POST "$AGENT_PLATFORM_URL/api/v1/organizations/$AGENT_PLATFORM_ORG/api-keys" \
   -H "Authorization: Bearer $OIDC_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"my-laptop","project_id":"'$AGENT_PLATFORM_PROJECT'","role":"operator"}'
+  -d '{"name":"my-laptop","project_id":"'$AGENT_PLATFORM_PROJECT'","role":"developer"}'
 ```
 
 The response contains `key` once. Store it in your secret manager or `~/.config/agentctl/config.json`,

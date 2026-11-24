@@ -2,11 +2,11 @@
 
 | Directory | Contents |
 |---|---|
-| `docker/` | Dockerfiles for the Go services (one shared file), the Python runtime and the dashboard. |
+| `docker/` | Multi-stage Dockerfiles for the Go services, Python worker, dashboard, CLI and migration job. |
 | `compose/` | Reserved for per-environment Compose overrides. The canonical local stack is the root `docker-compose.yml`. |
-| `kubernetes/` | Deferred with Kubernetes itself; see [ADR 0012](../docs/adr/0012-deployment-topology.md). |
-| `helm/` | Deferred with Kubernetes. |
-| `monitoring/` | Reserved for the OTel collector and dashboards. Services emit structured logs today; traces and metrics are wired in Phase 03. |
+| `kubernetes/` | Kustomize base, self-contained stateful services, KEDA, network policies and monitoring resources. |
+| `helm/agent-platform/` | Production Helm chart with values for images, resources, secrets, autoscaling and monitoring. |
+| `monitoring/` | OpenTelemetry collector, Prometheus/Loki values, seven Grafana dashboards and alert rules. |
 
-Images are pinned by tag. The object-storage service uses `pgsty/silo` because official MinIO images were
-withdrawn in September 2026; see [development.md](../docs/development.md#object-storage).
+Production deployment is documented in [docs/deployment-kubernetes.md](../docs/deployment-kubernetes.md). Local
+Compose remains documented in [docs/development.md](../docs/development.md).

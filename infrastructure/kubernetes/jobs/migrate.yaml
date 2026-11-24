@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  namespace: agent-platform
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: migrate, app.kubernetes.io/part-of: agent-platform}
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: migrate
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: migrate
+          image: ghcr.io/your-org/agent-platform-migrate:0.1.0
+          command: [sh, -c]
+          args:
+            - >-
+              migrate -path /migrations/control -database "$MIGRATE_CONTROL_DATABASE_URL" up &&
+              migrate -path /migrations/execution -database "$MIGRATE_EXECUTION_DATABASE_URL" up
+          env:
+            - {name: MIGRATE_CONTROL_DATABASE_URL, valueFrom: {secretKeyRef: {name: agent-platform-secrets, key: MIGRATE_CONTROL_DATABASE_URL}}}
+            - {name: MIGRATE_EXECUTION_DATABASE_URL, valueFrom: {secretKeyRef: {name: agent-platform-secrets, key: MIGRATE_EXECUTION_DATABASE_URL}}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 500m, memory: 256Mi}}

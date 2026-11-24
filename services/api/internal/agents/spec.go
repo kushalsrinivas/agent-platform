@@ -3,6 +3,8 @@ package agents
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -10,7 +12,11 @@ import (
 	"github.com/agent-platform/agent-platform/packages/contracts"
 )
 
-var imageDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+var (
+	imageDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	secretKeyPattern   = regexp.MustCompile(`(?i)(token|secret|password|passwd|api[-_]?key|authorization|credential|cookie)`)
+	secretValuePattern = regexp.MustCompile(`(?i)(apk_[a-z0-9_-]{8,}|bearer\s+[a-z0-9._~+/=-]{12,}|sk-[a-z0-9_-]{12,})`)
+)
 
 // AgentSpec is the immutable agent version content.
 type AgentSpec struct {
@@ -165,6 +171,14 @@ func (s *AgentSpec) Validate() error {
 	if !imageDigestPattern.MatchString(s.Runtime.ImageDigest) {
 		add("runtime.image_digest must be a sha256 digest, not a tag")
 	}
+	if s.Model.Parameters != nil && containsSecret(*s.Model.Parameters) {
+		add("model.parameters must not contain credentials; use model.credential_ref")
+	}
+	for i, tool := range s.Tools {
+		if tool.Config != nil && containsSecret(*tool.Config) {
+			add("tools[%d].config must not contain credentials", i)
+		}
+	}
 	if s.Limits != nil {
 		if s.Limits.MaxTurns != nil && (*s.Limits.MaxTurns < 1 || *s.Limits.MaxTurns > 1000) {
 			add("limits.max_turns must be between 1 and 1000")
@@ -232,8 +246,8 @@ func (s *AgentSpec) Validate() error {
 				add("mcp_servers[%d].command is required for stdio", i)
 			}
 		case "streamable_http":
-			if !strings.HasPrefix(server.URL, "http://") && !strings.HasPrefix(server.URL, "https://") {
-				add("mcp_servers[%d].url must be an http(s) URL", i)
+			if err := validateMCPURL(server.URL); err != nil {
+				add("mcp_servers[%d].url %v", i, err)
 			}
 		default:
 			add("mcp_servers[%d].transport must be stdio or streamable_http", i)
@@ -250,6 +264,9 @@ func (s *AgentSpec) Validate() error {
 		for key, value := range server.Env {
 			if len(key) == 0 || len(key) > 128 || len(value) > 4096 {
 				add("mcp_servers[%d].env entries must be 1..128 character keys and at most 4096 character values", i)
+			}
+			if secretKeyPattern.MatchString(key) || secretValuePattern.MatchString(value) {
+				add("mcp_servers[%d].env must not contain credentials; use auth_credential_ref", i)
 			}
 		}
 		for name, policy := range server.ToolPolicies {
@@ -273,6 +290,54 @@ func (s *AgentSpec) Validate() error {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+func validateMCPURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Hostname() == "" {
+		return errors.New("must be an absolute http(s) URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errors.New("must use http or https")
+	}
+	if parsed.User != nil {
+		return errors.New("must not embed credentials")
+	}
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return errors.New("must not target loopback")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast() {
+			return errors.New("must not target private, loopback or link-local address space")
+		}
+	}
+	return nil
+}
+
+func containsSecret(values map[string]any) bool {
+	for key, value := range values {
+		if secretKeyPattern.MatchString(key) {
+			return true
+		}
+		switch typed := value.(type) {
+		case string:
+			if secretValuePattern.MatchString(typed) {
+				return true
+			}
+		case map[string]any:
+			if containsSecret(typed) {
+				return true
+			}
+		case []any:
+			for _, item := range typed {
+				if nested, ok := item.(map[string]any); ok && containsSecret(nested) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // Digest is SHA-256 over canonical JSON of {spec, runtime_abi}, as promised by the API contract.

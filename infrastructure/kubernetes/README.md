@@ -1,8 +1,16 @@
-# Kubernetes (deferred)
+# Kubernetes base manifests
 
-Kubernetes is deliberately out of scope for Phase 1; see
-[ADR 0012](../../docs/adr/0012-deployment-topology.md). The binaries are configuration-driven and container-ready,
-so the manifests added here later are packaging, not code changes.
+Self-contained base for a development/proof cluster. The production path is the Helm chart in
+[`../helm/agent-platform`](../helm/agent-platform); the base includes single-node PostgreSQL, NATS, Redis and MinIO
+StatefulSets so the platform can be exercised without managed dependencies.
 
-Prerequisites before this directory is populated: a real ingress/auth story, per-service resource limits, secret
-delivery, and a migration job that runs before new replicas start.
+```bash
+kubectl apply -f infrastructure/kubernetes/namespaces/platform.yaml
+kubectl apply -f infrastructure/kubernetes/storage/infrastructure.yaml
+kubectl apply -f infrastructure/kubernetes/jobs/migrate.yaml
+kubectl apply -k infrastructure/kubernetes
+```
+
+Replace image placeholders and `REPLACE_ME` secrets first. KEDA, Prometheus Operator and an ingress controller are
+cluster prerequisites; disable the corresponding resources if they are absent. See
+[docs/deployment-kubernetes.md](../../docs/deployment-kubernetes.md) for production guidance.

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -44,6 +46,14 @@ type Config struct {
 	KillGrace       time.Duration
 	// Env is appended to the runtime process environment (tests and operator overrides).
 	Env []string
+	// Sandbox limits are enforced by prlimit on the child process. RequireSandbox fails closed if prlimit is
+	// unavailable instead of silently running without limits.
+	MemoryMB       int64
+	CPUSeconds     int
+	ProcessLimit   int
+	FileSizeMB     int64
+	OpenFiles      int
+	RequireSandbox bool
 }
 
 // Executor runs attempts through the Python runtime.
@@ -63,6 +73,21 @@ func NewExecutor(client *control.Client, cfg Config, log *zap.Logger) *Executor 
 	}
 	if cfg.KillGrace <= 0 {
 		cfg.KillGrace = 5 * time.Second
+	}
+	if cfg.MemoryMB <= 0 {
+		cfg.MemoryMB = 1024
+	}
+	if cfg.CPUSeconds <= 0 {
+		cfg.CPUSeconds = 300
+	}
+	if cfg.ProcessLimit <= 0 {
+		cfg.ProcessLimit = 256
+	}
+	if cfg.FileSizeMB <= 0 {
+		cfg.FileSizeMB = 64
+	}
+	if cfg.OpenFiles <= 0 {
+		cfg.OpenFiles = 1024
 	}
 	return &Executor{client: client, cfg: cfg, log: log}
 }
@@ -96,8 +121,22 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 	if len(parts) == 0 {
 		return delivery.ExecutionOutcome{}, errors.New("runtime command template is empty")
 	}
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...) //nolint:gosec // runtime command is operator configuration.
-	cmd.Env = append(os.Environ(), e.cfg.Env...)
+	program, args, err := e.sandboxCommand(parts)
+	if err != nil {
+		return delivery.ExecutionOutcome{}, err
+	}
+	credentials := map[string]string{}
+	if names := credentialNames(taskCtx.GetVersionSpec()); len(names) > 0 {
+		response, credErr := e.client.GetTaskCredentials(ctx, dispatch.TaskID, dispatch.AttemptID, dispatch.LeaseID, names)
+		if credErr != nil {
+			e.log.Warn("task credentials unavailable", zap.String("task_id", dispatch.TaskID), zap.Error(credErr))
+		} else {
+			credentials = response.GetValues()
+		}
+	}
+	cmd := exec.CommandContext(ctx, program, args...) //nolint:gosec // runtime command is operator configuration.
+	cmd.Dir = workDir
+	cmd.Env = runtimeEnvironment(e.cfg.Env)
 	cmd.Env = append(cmd.Env, "AGENT_RUNTIME_CHECKPOINT_DIR="+checkpointDir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	tail := &tailBuffer{}
@@ -132,6 +171,7 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 
 	conn, err := grpc.NewClient("unix:"+socketPath,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(36<<20), grpc.MaxCallSendMsgSize(36<<20)))
 	if err != nil {
 		return delivery.ExecutionOutcome{}, fmt.Errorf("dial runtime socket: %w", err)
@@ -160,6 +200,7 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 		Deadline:        taskCtx.GetDeadline(),
 		Traceparent:     taskCtx.GetTraceparent(),
 		LeaseId:         dispatch.LeaseID,
+		Credentials:     credentials,
 	}
 	if dispatch.NodeType == contracts.NodeTypeTool {
 		toolID, toolVersion, err := splitToolVersion(dispatch.ToolVersionID)
@@ -191,6 +232,7 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 				Traceparent:    taskCtx.GetTraceparent(),
 				IdempotencyKey: taskCtx.GetIdempotencyKey(),
 				NodeInput:      taskCtx.GetNodeInput(),
+				Credentials:    credentials,
 			},
 		})
 		if err != nil {
@@ -277,6 +319,85 @@ func splitToolVersion(value *string) (string, int32, error) {
 		return "", 0, fmt.Errorf("tool version id %q is invalid", *value)
 	}
 	return toolID, int32(version), nil //nolint:gosec // tool versions are bounded by the control plane.
+}
+
+// sandboxCommand wraps the runtime process with OS resource limits. The worker image is non-root and drops all
+// capabilities, so this is the per-task second layer behind the container/network boundary.
+func (e *Executor) sandboxCommand(parts []string) (string, []string, error) {
+	prlimit, err := exec.LookPath("prlimit")
+	if err != nil {
+		if e.cfg.RequireSandbox {
+			return "", nil, errors.New("prlimit is required by WORKER_REQUIRE_SANDBOX")
+		}
+		return parts[0], parts[1:], nil
+	}
+	args := []string{
+		fmt.Sprintf("--as=%d", e.cfg.MemoryMB<<20),
+		fmt.Sprintf("--cpu=%d", e.cfg.CPUSeconds),
+		fmt.Sprintf("--nproc=%d", e.cfg.ProcessLimit),
+		fmt.Sprintf("--fsize=%d", e.cfg.FileSizeMB<<20),
+		fmt.Sprintf("--nofile=%d", e.cfg.OpenFiles),
+		"--core=0",
+		"--",
+	}
+	args = append(args, parts...)
+	return prlimit, args, nil
+}
+
+// runtimeEnvironment deliberately does not inherit the worker environment. The runtime receives only the
+// filesystem/Python variables it needs, never worker identity, NATS URLs or control-plane tokens.
+func runtimeEnvironment(extra []string) []string {
+	keys := []string{
+		"PATH", "LANG", "LC_ALL", "TZ", "SSL_CERT_FILE", "SSL_CERT_DIR", "VIRTUAL_ENV", "PYTHONPATH",
+		"PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE", "PYTHONHASHSEED",
+		"WORKER_ORCHESTRATOR_GRPC_ADDR", "ORCHESTRATOR_GRPC_ADDR",
+		"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+		"OTEL_SERVICE_NAME", "OTEL_SDK_DISABLED", "OTEL_TRACES_SAMPLER_ARG",
+		"OTEL_RESOURCE_ATTRIBUTES",
+	}
+	env := []string{"HOME=/tmp", "TMPDIR=/tmp"}
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	env = append(env, extra...)
+	for _, key := range []string{"AGENT_MCP_ALLOW_PRIVATE_NETWORKS", "AGENT_MCP_ALLOW_STDIO"} {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
+}
+
+func credentialNames(spec *structpb.Struct) []string {
+	if spec == nil {
+		return nil
+	}
+	values := spec.AsMap()
+	names := map[string]bool{}
+	if model, ok := values["model"].(map[string]any); ok {
+		if ref, ok := model["credential_ref"].(string); ok && strings.TrimSpace(ref) != "" {
+			names[ref] = true
+		}
+	}
+	if servers, ok := values["mcp_servers"].([]any); ok {
+		for _, raw := range servers {
+			server, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if ref, ok := server["auth_credential_ref"].(string); ok && strings.TrimSpace(ref) != "" {
+				names[ref] = true
+			}
+		}
+	}
+	result := make([]string, 0, len(names))
+	for name := range names {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func mustStruct(value map[string]any) *structpb.Struct {

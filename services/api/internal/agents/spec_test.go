@@ -56,6 +56,19 @@ func TestAgentSpecRejections(t *testing.T) {
 		"checkpoint none": func(s *AgentSpec) {
 			s.Checkpoint = &Checkpoint{Mode: "none", RequireCheckpoint: boolPtr(true)}
 		},
+		"private mcp url": func(s *AgentSpec) {
+			s.MCPServers = []MCPServer{{Name: "local", Transport: "streamable_http", URL: "http://127.0.0.1:9000/mcp"}}
+		},
+		"mcp secret env": func(s *AgentSpec) {
+			s.MCPServers = []MCPServer{{Name: "remote", Transport: "streamable_http",
+				URL: "https://mcp.example.com/mcp", Env: map[string]string{"API_TOKEN": "plaintext"}}}
+		},
+		"model parameter secret": func(s *AgentSpec) {
+			s.Model.Parameters = &map[string]any{"api_key": "sk-live"}
+		},
+		"tool config secret": func(s *AgentSpec) {
+			s.Tools[0].Config = &map[string]any{"password": "plaintext"}
+		},
 	}
 	for name, mutate := range cases {
 		spec := validSpec()

@@ -18,6 +18,13 @@ ADR wins and the document is a bug. Code written in later phases must cite and f
 | [phase-11-developer-api.md](phase-11-developer-api.md) | Phase 11 canonical `/api/v1`, API keys, environments, developer resources, Python/Go SDKs, `agentctl`, local dev mode, examples and developer docs. |
 | [phase-12-dashboard.md](phase-12-dashboard.md) | Phase 12 live dashboard, api proxy, execution explorer, SSE history, node/model/failure inspectors, redaction and operator actions. |
 | [phase-13-visual-builder.md](phase-13-visual-builder.md) | Phase 13 visual canvas, node library, inspectors, validation, serialization, immutable versions, deployment/rollback, comparison and live builder execution. |
+| [phase-14-security.md](phase-14-security.md) | Phase 14 RBAC, project isolation, encrypted secrets, worker/runtime hardening, network segmentation, service identities, append-only audit and security tests. |
+| [phase-15-kubernetes-observability.md](phase-15-kubernetes-observability.md) | Phase 15 Docker images, Kubernetes base, Helm chart, KEDA autoscaling, provider quotas, OpenTelemetry, Prometheus, Loki, Grafana dashboards, alerts and CI image scanning. |
+| [phase-16-testing-and-release.md](phase-16-testing-and-release.md) | Phase 16 unit/integration/E2E coverage, chaos matrix, load stages, performance and security evidence, release engineering and exit criteria. |
+| [performance-report.md](performance-report.md) | Measured API, orchestration, queue-pressure and Python-runtime benchmarks, bottlenecks and next optimisations. |
+| [security-audit.md](security-audit.md) | Dependency, secret and manifest scans, verified isolation controls, accepted risks and the release decision. |
+| [runbooks.md](runbooks.md) | First response plus orchestrator, NATS, database, worker, queue, provider, corruption, deployment, secret and restore runbooks. |
+| [release-process.md](release-process.md) | Semantic versioning, pre-release gate, tag workflow, image/chart publishing and rollback. |
 | [architecture.md](architecture.md) | What the system is, its boundaries, its invariants, and how the pieces cooperate. |
 | [service-responsibilities.md](service-responsibilities.md) | What each deployable does, reads, writes, and when it may become a separate service. |
 | [communication.md](communication.md) | External and internal protocols, envelope, subjects, delivery guarantees, versioning. |

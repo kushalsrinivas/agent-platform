@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-worker
+  labels:
+    {{- include "agent-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  strategy: {type: RollingUpdate, rollingUpdate: {maxUnavailable: 0, maxSurge: 1}}
+  selector:
+    matchLabels:
+      {{- include "agent-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "agent-platform.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: {{ include "agent-platform.fullname" . }}-worker
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "agent-platform.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: worker
+      containers:
+        - name: worker
+          image: "{{ .Values.images.worker.repository }}:{{ .Values.images.worker.tag }}"
+          imagePullPolicy: {{ .Values.images.worker.pullPolicy }}
+          ports: [{name: http, containerPort: 8082}]
+          envFrom:
+            - configMapRef: {name: {{ include "agent-platform.fullname" . }}-config}
+          env:
+            {{- include "agent-platform.workerEnv" . | nindent 12 }}
+            - {name: WORKER_ID, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: OTEL_SERVICE_NAME, value: agent-platform-worker}
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: home, mountPath: /home/app}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, initialDelaySeconds: 5, periodSeconds: 10, failureThreshold: 6}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 15, periodSeconds: 20}
+          lifecycle: {preStop: {exec: {command: [sh, -c, "sleep 30"]}}}
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 512Mi, medium: Memory}}
+        - {name: home, emptyDir: {sizeLimit: 64Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-worker-metrics
+  labels:
+    {{- include "agent-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  clusterIP: None
+  selector:
+    {{- include "agent-platform.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  ports: [{name: metrics, port: 8082, targetPort: http}]
+{{- if .Values.worker.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: {{ include "agent-platform.fullname" . }}-worker}
+spec:
+  minAvailable: {{ .Values.worker.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "agent-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+{{- end }}
+{{- if .Values.worker.autoscaling.keda.enabled }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-worker
+spec:
+  scaleTargetRef: {name: {{ include "agent-platform.fullname" . }}-worker}
+  minReplicaCount: {{ .Values.worker.autoscaling.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.worker.autoscaling.keda.maxReplicas }}
+  pollingInterval: {{ .Values.worker.autoscaling.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.worker.autoscaling.keda.cooldownPeriod }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp: {stabilizationWindowSeconds: 15, policies: [{type: Percent, value: 100, periodSeconds: 30}]}
+        scaleDown: {stabilizationWindowSeconds: 180, policies: [{type: Percent, value: 25, periodSeconds: 60}]}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.worker.autoscaling.keda.prometheusAddress }}
+        metricName: agent_platform_queue_pending_tasks
+        query: max(agent_platform_queue_pending_tasks)
+        threshold: {{ .Values.worker.autoscaling.keda.queueDepthThreshold | quote }}
+        activationThreshold: "1"
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.worker.autoscaling.keda.prometheusAddress }}
+        metricName: agent_platform_queue_oldest_pending_seconds
+        query: max(agent_platform_queue_oldest_pending_seconds)
+        threshold: {{ .Values.worker.autoscaling.keda.queueAgeSeconds | quote }}
+        activationThreshold: "10"
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.worker.autoscaling.keda.prometheusAddress }}
+        metricName: agent_platform_worker_utilization
+        query: sum(agent_platform_worker_active_tasks) / clamp_min(sum(agent_platform_worker_slots_total), 1)
+        threshold: {{ .Values.worker.autoscaling.keda.utilizationThreshold | quote }}
+        activationThreshold: "0.2"
+
+{{- end }}

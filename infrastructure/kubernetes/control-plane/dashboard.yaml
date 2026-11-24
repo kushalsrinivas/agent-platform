@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: agent-platform
+  labels: {app.kubernetes.io/name: dashboard, app.kubernetes.io/part-of: agent-platform}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: {app.kubernetes.io/name: dashboard}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: dashboard, app.kubernetes.io/part-of: agent-platform}
+    spec:
+      serviceAccountName: dashboard
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 1001, runAsGroup: 1001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: dashboard
+          image: ghcr.io/your-org/agent-platform-dashboard:0.1.0
+          ports: [{name: http, containerPort: 3000}]
+          env:
+            - {name: DASHBOARD_API_URL, value: "http://api:8080"}
+            - {name: DASHBOARD_API_KEY, valueFrom: {secretKeyRef: {name: agent-platform-secrets, key: DASHBOARD_API_KEY}}}
+            - {name: NEXT_TELEMETRY_DISABLED, value: "1"}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+          readinessProbe: {httpGet: {path: /, port: http}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /, port: http}, periodSeconds: 20}
+      volumes: [{name: tmp, emptyDir: {sizeLimit: 128Mi}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: dashboard, namespace: agent-platform}
+spec:
+  selector: {app.kubernetes.io/name: dashboard}
+  ports: [{name: http, port: 3000, targetPort: http}]

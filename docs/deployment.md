@@ -3,7 +3,7 @@
 This describes a **test or initial deployment** on one host. It is the same images and configuration as local
 development, with datastore ports closed and credentials rotated.
 
-It is not a production hardening guide: TLS termination, secrets management, backups and observability are still the
+It is not a full production hardening guide: TLS termination, key management, backups and observability are still the
 operator's responsibility. The API authenticates OIDC bearer tokens, but it has no browser session flow, API keys or
 fine-grained project ACLs yet. Do not expose a development-auth deployment to untrusted users.
 
@@ -191,13 +191,13 @@ docker compose exec -T postgres pg_dump -U postgres -Fc agent_platform > "agent_
   carries the Python venv and LangGraph. The orchestrator writes large checkpoints to
   `ORCHESTRATOR_ARTIFACT_DIR`; Compose mounts the `checkpoint-artifacts` volume, and the directory is created with
   the service user's ownership in the image.
-- API keys are bearer-like secrets. Create them through an owner endpoint, scope them to a project for CI, and
-  revoke them immediately when a device or pipeline is retired. Store them in a secret manager, not in shell
+- API keys are bearer-like secrets. Create them through an owner/admin endpoint, scope them to a project for CI,
+  and revoke them immediately when a device or pipeline is retired. Store them in a secret manager, not in shell
   profiles or source control. The API hashes keys at rest and shows the plaintext once.
-- MCP servers are launched by the runtime (stdio) or reached over Streamable HTTP. stdio servers need their
-  executable and workspace inside the worker image; HTTP servers need egress from the worker network. Store MCP
-  credentials in the secret store or supply `MCP_CREDENTIAL_<REF>` for development only. Do not put tokens in the
-  agent spec.
+- MCP servers are launched by the runtime (stdio) or reached over Streamable HTTP. In production keep
+  `AGENT_MCP_ALLOW_STDIO=false`; use HTTPS servers and `AGENT_MCP_ALLOW_PRIVATE_NETWORKS=false` behind an egress
+  proxy. Store MCP credentials under an `auth_credential_ref` in the encrypted secret store. Do not put tokens in
+  the agent spec or MCP `env`.
 - A supervisor holds one worker slot while it waits for children. Size each supervisor pool for
   `1 + orchestration.max_parallel` or run supervisors and children in separate pools. Approval and delay nodes do
   not occupy worker slots.
@@ -211,8 +211,10 @@ docker compose exec -T postgres pg_dump -U postgres -Fc agent_platform > "agent_
 - Set `ORCHESTRATOR_MAX_ACTIVE_TASKS_PER_TENANT`, `ORCHESTRATOR_PROVIDER_CONCURRENCY` and
   `ORCHESTRATOR_TOOL_CONCURRENCY` to bound noisy-neighbour and upstream-provider load. They are advisory
   admission caps derived from committed active task rows.
-- Worker control-plane gRPC is plaintext inside the private Compose network in this phase. Terminate TLS at the
-  network boundary or add mTLS before running workers across hosts.
+- Worker control-plane and API-to-orchestrator gRPC require shared `x-worker-token` / `x-internal-token`
+  identities. The transport is still plaintext inside the private Compose network; enable TLS or mTLS before
+  running workers across hosts or trust boundaries. The worker is on the `work` network only and cannot route to
+  PostgreSQL or object storage.
 
 ## 8. Updating images and base images
 

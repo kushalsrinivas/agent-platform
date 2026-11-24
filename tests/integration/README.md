@@ -1,6 +1,7 @@
 # Integration tests
 
-Five suites run against the Compose stack after migrations:
+The suites run against the Compose stack after migrations. `make integration-test` runs everything;
+`make chaos-test` runs the Phase 16 chaos subset.
 
 ```bash
 make integration-test
@@ -34,6 +35,10 @@ make integration-test
     schema-validated report, runtime version, token usage and attempt event.
   - `TestRuntimeOutputSchemaRejectsInvalidOutput` proves invalid runtime output is reported as
     `RESULT_SCHEMA_INVALID` and never committed as a success.
+- `security_flow_test.go` — Phase 14 security suite: cross-tenant reads/mutations across every tenant resource,
+  project-scope confinement, owner/admin/developer/viewer permission groups, encrypted secret lifecycle,
+  append-only audit evidence and deployed-worker runtime isolation (non-root, no capabilities, read-only root,
+  no PostgreSQL route).
 - `recovery_flow_test.go` — the Phase 08 durable-execution suite:
   - `TestRecoveryWorkerDiesBeforeReceiving` and `TestRecoveryWorkerDiesAfterReceiving` reclaim an assigned or
     running attempt, retry it on a live worker and finish the execution.
@@ -52,8 +57,17 @@ make integration-test
   - The remaining mandatory scenarios are covered by `TestMessagingRedeliveryAndDuplicateSuppression`,
     `TestWorkerManagerStaleWorkerCannotCommit` and the checkpoint tests above.
 
-The recovery suite restarts/pauses Compose services through the Docker CLI; it skips only when the Docker daemon is
-unavailable. The runtime tests use the host venv at `runtimes/python/.venv`; `make integration-test` runs `uv sync --frozen`
+- `chaos_test.go` — Phase 16 chaos suite: cancel all three branches during a parallel execution, a provider
+  outage with bounded retry/backoff and durable failure, ten concurrent duplicate submissions resolving to one
+  logical execution, and a worker-container restart with a three-attempt recovery budget and duplicate-success
+  check.
+- `graph_flow_test.go`, `graph_children_test.go`, `graph_delegation_test.go`, `approval_flow_test.go`,
+  `mcp_flow_test.go`, `runtime_flow_test.go`, `developer_api_test.go`, `python_sdk_test.go`,
+  `worker_concurrency_test.go`, `org_api_key_test.go` cover the eight E2E workflow shapes, MCP, SDK, API keys
+  and worker capacity.
+
+The recovery and chaos suites restart/pause Compose services through the Docker CLI; they skip only when the
+Docker daemon is unavailable. The runtime tests use the host venv at `runtimes/python/.venv`; `make integration-test` runs `uv sync --frozen`
 first. Set `RUNTIME_PYTHON` to override the interpreter path.
 
 `make integration-test` builds and starts `api`, `orchestrator` and `worker` as well as the data stores, waits for

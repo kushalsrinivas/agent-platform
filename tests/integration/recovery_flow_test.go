@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -455,6 +456,19 @@ func pausePostgres(t *testing.T) func() {
 	return restore
 }
 
+func natsTCPAddress(t *testing.T) string {
+	t.Helper()
+	raw := os.Getenv("ORCHESTRATOR_NATS_URL")
+	if raw == "" {
+		return "localhost:4222"
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		t.Fatalf("invalid ORCHESTRATOR_NATS_URL %q", raw)
+	}
+	return parsed.Host
+}
+
 func waitForTCP(t *testing.T, address string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -519,7 +533,7 @@ func TestRecoveryNATSReconnect(t *testing.T) {
 	}
 
 	dockerCompose(t, "restart", "nats")
-	waitForTCP(t, strings.TrimPrefix(os.Getenv("ORCHESTRATOR_NATS_URL"), "nats://"), 60*time.Second)
+	waitForTCP(t, natsTCPAddress(t), 60*time.Second)
 	waitExecutionStateFor(t, client, fixture, "succeeded", 90*time.Second)
 }
 

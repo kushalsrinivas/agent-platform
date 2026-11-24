@@ -9,6 +9,7 @@ import (
 	"net"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -35,6 +36,7 @@ func New(addr, env string, log *zap.Logger, opts ...grpc.ServerOption) (*Server,
 	serverOpts := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(36 << 20),
 		grpc.MaxSendMsgSize(36 << 20),
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 	}
 	serverOpts = append(serverOpts, opts...)
 	srv := grpc.NewServer(serverOpts...)

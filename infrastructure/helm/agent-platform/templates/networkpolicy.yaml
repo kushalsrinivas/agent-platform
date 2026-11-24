@@ -1,0 +1,89 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-default-deny-ingress
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agent-platform.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-api
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agent-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}}}
+        - podSelector:
+            matchLabels:
+              {{- include "agent-platform.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: dashboard
+      ports: [{protocol: TCP, port: {{ .Values.api.service.port }}}]
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}}}
+      ports: [{protocol: TCP, port: {{ .Values.api.service.port }}}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agent-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}}}
+      ports: [{protocol: TCP, port: 8082}]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "agent-platform.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: orchestrator
+      ports: [{protocol: TCP, port: {{ .Values.orchestrator.service.grpcPort }}}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}}}
+      ports: [{protocol: TCP, port: 4318}]
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - {protocol: TCP, port: 4222}
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agent-platform.fullname" . }}-orchestrator
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agent-platform.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: orchestrator
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "agent-platform.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+        - podSelector:
+            matchLabels:
+              {{- include "agent-platform.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: worker
+      ports: [{protocol: TCP, port: {{ .Values.orchestrator.service.grpcPort }}}]
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}}}
+      ports: [{protocol: TCP, port: {{ .Values.orchestrator.service.httpPort }}}]
+{{- end }}

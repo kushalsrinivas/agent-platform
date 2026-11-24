@@ -12,6 +12,7 @@ import (
 
 	"github.com/agent-platform/agent-platform/internal/outbox"
 	"github.com/agent-platform/agent-platform/internal/platform/idgen"
+	"github.com/agent-platform/agent-platform/internal/platform/metrics"
 	"github.com/agent-platform/agent-platform/packages/contracts"
 )
 
@@ -24,7 +25,7 @@ type dispatchCandidate struct {
 // concurrently with other dispatchers, result handlers and the reaper: the execution row is locked first and the
 // task is re-checked under that lock.
 func (s *Service) DispatchOnce(ctx context.Context, limit int) (int, error) {
-	if limit < 1 || limit > 100 {
+	if limit < 1 || limit > 1000 {
 		limit = 20
 	}
 	rows, err := s.pool.Query(ctx, `
@@ -89,6 +90,7 @@ func (s *Service) DispatchOnce(ctx context.Context, limit int) (int, error) {
 		}
 		if assigned {
 			dispatched++
+			metrics.DispatchTotal.Inc()
 		}
 	}
 	return dispatched, nil
@@ -582,6 +584,18 @@ func (s *Service) limitsAllow(ctx context.Context, tx pgx.Tx, e *execution, t *t
 				return false, nil
 			}
 		}
+		if limit := s.providerRatePerMinute[*t.Provider]; limit > 0 {
+			var recent int
+			if err := tx.QueryRow(ctx, `
+				SELECT count(*) FROM execution.execution_tasks
+				WHERE provider = $1 AND started_at > now() - interval '1 minute'`,
+				*t.Provider).Scan(&recent); err != nil {
+				return false, err
+			}
+			if recent >= limit {
+				return false, nil
+			}
+		}
 	}
 	if t.ToolVersionID != nil {
 		if limit := s.toolConcurrency[*t.ToolVersionID]; limit > 0 {
@@ -696,15 +710,19 @@ func (s *Service) skipTask(ctx context.Context, tx pgx.Tx, e *execution, t *task
 }
 
 // RunDispatcher schedules eligible tasks until the context is cancelled.
-func (s *Service) RunDispatcher(ctx context.Context, interval time.Duration) error {
+func (s *Service) RunDispatcher(ctx context.Context, interval time.Duration, batch int) error {
 	if interval <= 0 {
 		interval = 500 * time.Millisecond
 	}
-	s.log.Info("scheduler started", zap.Duration("interval", interval), zap.Duration("lease_ttl", s.leaseTTL))
+	if batch <= 0 {
+		batch = 20
+	}
+	s.log.Info("scheduler started", zap.Duration("interval", interval), zap.Int("batch", batch),
+		zap.Duration("lease_ttl", s.leaseTTL))
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		count, err := s.DispatchOnce(ctx, 20)
+		count, err := s.DispatchOnce(ctx, batch)
 		if err != nil && ctx.Err() == nil {
 			s.log.Warn("scheduler pass failed", zap.Error(err))
 		} else if count > 0 {

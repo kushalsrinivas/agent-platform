@@ -11,6 +11,7 @@ import asyncio
 import json
 import sys
 
+from agent_runtime import telemetry
 from agent_runtime.grpc_service import RUNTIME_ABI, RUNTIME_VERSION, serve
 from agent_runtime.logging import configure_logging
 
@@ -30,6 +31,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     configure_logging()
+    telemetry.configure()
     try:
         asyncio.run(serve(args.socket))
     except KeyboardInterrupt:
@@ -37,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"agent_runtime serve failed: {exc}", file=sys.stderr)
         return 1
+    finally:
+        telemetry.shutdown()
     return 0
 
 

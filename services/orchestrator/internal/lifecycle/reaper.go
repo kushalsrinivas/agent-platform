@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/agent-platform/agent-platform/internal/platform/metrics"
 	"github.com/agent-platform/agent-platform/internal/platform/postgres"
 	"github.com/agent-platform/agent-platform/packages/contracts"
 )
@@ -69,6 +70,7 @@ func (s *Service) ReapOnce(ctx context.Context, limit int) (int, error) {
 		}
 		if ok {
 			reaped++
+			metrics.LeaseExpirationTotal.Inc()
 		}
 	}
 	return reaped, nil
@@ -174,6 +176,7 @@ func (s *Service) reapTask(ctx context.Context, taskID string, force bool) (bool
 		var nextAttempt *time.Time
 		to := "failed"
 		if retry {
+			metrics.RetryTotal.Inc()
 			to = "pending"
 			next := time.Now().UTC().Add(retryDelay(policy, t.AttemptCount))
 			nextAttempt = &next

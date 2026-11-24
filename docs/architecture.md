@@ -349,7 +349,7 @@ observability. State transitions read and write the state rows themselves.
 
 - **Authentication:** OIDC JWT at the API. Browser sessions use HttpOnly cookies; programmatic clients use bearer
   tokens. The dashboard never talks to the orchestrator or database.
-- **Authorisation:** route org must match a membership row; org-wide roles (`owner`, `operator`, `viewer`) gate
+- **Authorisation:** route org must match a membership row; org-wide roles (`owner`, `admin`, `developer`, legacy `operator`, `viewer`) gate
   mutations. The server never trusts `org_id` in a body or token alone. Role matrix:
 
   | Action | viewer | operator | owner |

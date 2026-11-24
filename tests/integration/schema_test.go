@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,8 +28,16 @@ func databaseURL(env, fallback string) string {
 	return fallback
 }
 
+// testPools caches one pool per test and role. Helpers call adminPool inside polling loops; without the cache a
+// long test opens a new pool every tick and exhausts max_connections.
+var testPools sync.Map
+
 func connectPool(t *testing.T, env, fallback string) *pgxpool.Pool {
 	t.Helper()
+	key := t.Name() + "|" + env
+	if cached, ok := testPools.Load(key); ok {
+		return cached.(*pgxpool.Pool)
+	}
 	// The suite starts many short-lived pools; under a loaded Docker Desktop a ping can take longer than the
 	// old 10s budget even though PostgreSQL is healthy.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -41,7 +50,11 @@ func connectPool(t *testing.T, env, fallback string) *pgxpool.Pool {
 		pool.Close()
 		t.Fatalf("ping %s: %v", env, err)
 	}
-	t.Cleanup(pool.Close)
+	testPools.Store(key, pool)
+	t.Cleanup(func() {
+		testPools.Delete(key)
+		pool.Close()
+	})
 	return pool
 }
 

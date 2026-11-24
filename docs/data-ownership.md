@@ -23,7 +23,7 @@ keys are intentionally **not** used; the boundary is enforced by roles and valid
 | Role | `control` | `execution` | Used by |
 |---|---|---|---|
 | `app_api` | `SELECT, INSERT, UPDATE, DELETE` | `SELECT` on executions/tasks/attempts/checkpoints/events/workers; **no** `outbox` | `api` |
-| `app_orchestrator` | `SELECT` (definitions + credentials) | `SELECT, INSERT, UPDATE, DELETE` on mutable tables; `SELECT, INSERT` only on `execution_events` | `orchestrator` |
+| `app_orchestrator` | `SELECT` (definitions + credentials), `UPDATE (last_accessed_at)` on credentials, `INSERT` on audit events | `SELECT, INSERT, UPDATE, DELETE` on mutable tables; `SELECT, INSERT` only on `execution_events` | `orchestrator` |
 | `app_retention` | — | `DELETE` on execution tables after retention checks | retention job |
 | `app_migrate_control` | DDL | — | control migration job |
 | `app_migrate_execution` | — | DDL | execution migration job |
@@ -45,14 +45,15 @@ keys are intentionally **not** used; the boundary is enforced by roles and valid
 |---|---|---|
 | `organizations` | `id pk, name, slug unique, status, created_at, updated_at` | API only. |
 | `projects` | `id pk, org_id fk, name, slug, status, created_at, updated_at, unique(org_id, slug)` | API only. Soft delete. Deletion blocked while non-terminal executions exist. |
-| `memberships` | `org_id, principal_id, role ∈ {owner, operator, viewer}, unique(org_id, principal_id)` | API only. Phase 1 roles are org-wide; project-level ACLs are deferred. |
+| `memberships` | `org_id, principal_id, role ∈ {owner, admin, developer, operator, viewer}, unique(org_id, principal_id)` | API only. Phase 1 roles are org-wide; project-level ACLs are deferred. |
 | `agents` | `id pk, org_id, project_id, name, description, latest_version, timestamps, unique(project_id, name)` | API only. `latest_version` is a convenience pointer; never used for execution. |
 | `agent_versions` | `id pk, agent_id, org_id, project_id, version int, status ∈ {draft, published, deprecated}, digest, spec jsonb, runtime_abi, created_by, created_at, published_at, unique(agent_id, version), unique(agent_id, digest)` | Insert by API. Spec/digest are immutable from the first write; only status transitions are allowed (`draft → published → deprecated`). No update path for content, no delete. |
 | `environments` | `id pk, org_id, project_id fk, name, slug, kind ∈ {development, staging, production}, timestamps, unique(project_id, slug)` | API only. Labels/metadata; executions pin versions, not environments. |
-| `api_keys` | `id pk, org_id, project_id?, name, key_prefix, key_hash unique, role ∈ {viewer, operator, owner}, created_by, created_at, last_used_at, expires_at, revoked_at` | API owner only. Hash only; plaintext shown once. Revocation is immediate and removes the key principal's membership. |
+| `api_keys` | `id pk, org_id, project_id?, name, key_prefix, key_hash unique, role ∈ {viewer, developer, operator, admin, owner}, created_by, created_at, last_used_at, expires_at, revoked_at` | API owner only. Hash only; plaintext shown once. Revocation is immediate and removes the key principal's membership. |
 | `workflows` | `id pk, org_id, project_id, name, description, latest_version, timestamps, unique(project_id, name)` | API only. |
 | `workflow_versions` | `id pk, workflow_id, org_id, project_id, version int, status ∈ {draft, published, deprecated}, digest, graph jsonb, created_by, created_at, published_at, unique(workflow_id, version), unique(workflow_id, digest)` | Insert by API. Graph/digest are immutable from the first write; only status transitions are allowed. Publish is a one-way transition with validation and no content update path. |
-| `credentials` | `id pk, org_id, project_id, name, ciphertext bytea, nonce bytea, kms_key_id, created_by, created_at, rotated_at, unique(project_id, name)` | API writes (write-only values). Orchestrator reads only to issue task-scoped credentials. Never returned by any read API. |
+| `credentials` | `id pk, org_id, project_id, environment_id?, name, description, ciphertext bytea, nonce bytea, kms_key_id, version, created_by, created_at, rotated_at, last_accessed_at, revoked_at, unique(project_id, environment_id, name)` | API writes (write-only values). Orchestrator reads only to issue task-scoped credentials and updates `last_accessed_at`. Values are never returned by any read API. |
+| `audit_events` | `id pk, org_id, project_id?, actor_type, actor_id, action, resource_type, resource_id, outcome, details jsonb, created_at` | Tenant-RLS append-only administrative audit. Application roles have SELECT/INSERT only; UPDATE/DELETE are rejected. |
 | `idempotency_keys` | `org_id, key, principal_id, method, path, request_hash, response_status, response_body jsonb, resource_id, created_at, expires_at, pk(org_id, key)` | API only. Used for non-execution POST replay; execution dedupe is `execution.executions.request_id`. |
 
 Control-plane writes are single-schema transactions. There is deliberately no outbox: definitions are immutable

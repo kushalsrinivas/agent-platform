@@ -27,7 +27,7 @@ export function ConnectionDialog() {
       open={open}
       onOpenChange={(next) => (next ? null : close())}
       title="Connect to the platform"
-      description="Use an API key for this browser session. It is sent only to the dashboard proxy, which exchanges it for the platform API."
+      description="Use an API key for this browser tab. It is kept in memory only, sent to the dashboard proxy, and never persisted to browser storage."
       footer={
         <>
           <Button variant="ghost" onClick={() => connect("")}>

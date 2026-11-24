@@ -8,6 +8,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/agent-platform/agent-platform/internal/platform/metrics"
 )
 
 // Connect dials NATS and waits for the server to answer a ping.
@@ -17,6 +19,9 @@ func Connect(ctx context.Context, url, name string) (*nats.Conn, error) {
 		nats.Timeout(5 * time.Second),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(2 * time.Second),
+		nats.DisconnectErrHandler(func(*nats.Conn, error) { metrics.NATSConnected.Set(0) }),
+		nats.ReconnectHandler(func(*nats.Conn) { metrics.NATSConnected.Set(1) }),
+		nats.ClosedHandler(func(*nats.Conn) { metrics.NATSConnected.Set(0) }),
 	}
 
 	conn, err := nats.Connect(url, opts...)
@@ -30,6 +35,7 @@ func Connect(ctx context.Context, url, name string) (*nats.Conn, error) {
 		conn.Close()
 		return nil, fmt.Errorf("nats: flush: %w", err)
 	}
+	metrics.NATSConnected.Set(1)
 	return conn, nil
 }
 

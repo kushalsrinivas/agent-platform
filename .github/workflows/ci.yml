@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -87,6 +88,67 @@ jobs:
       - name: Validate docker-compose.yml
         run: docker compose config --quiet
 
+  manifests:
+    name: Kubernetes and Helm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.3.2
+      - name: Helm lint and render
+        run: |
+          helm lint infrastructure/helm/agent-platform
+          helm template agent-platform infrastructure/helm/agent-platform --namespace agent-platform >/dev/null
+      - name: Kustomize render
+        run: kubectl kustomize infrastructure/kubernetes >/dev/null
+
+  image-security:
+    name: Image build and scan
+    runs-on: ubuntu-latest
+    needs: [go]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build images
+        run: |
+          docker build -f infrastructure/docker/go-service.Dockerfile --build-arg SERVICE=api --build-arg VERSION=ci -t agent-platform-api:ci .
+          docker build -f infrastructure/docker/go-service.Dockerfile --build-arg SERVICE=orchestrator --build-arg VERSION=ci -t agent-platform-orchestrator:ci .
+          docker build -f infrastructure/docker/worker.Dockerfile --build-arg VERSION=ci -t agent-platform-worker:ci .
+          docker build -f infrastructure/docker/dashboard.Dockerfile --build-arg VERSION=ci -t agent-platform-dashboard:ci .
+          docker build -f infrastructure/docker/cli.Dockerfile --build-arg VERSION=ci -t agent-platform-cli:ci .
+          docker build -f infrastructure/docker/migrate.Dockerfile -t agent-platform-migrate:ci .
+      - uses: aquasecurity/setup-trivy@v0.2.3
+      - name: Scan HIGH and CRITICAL vulnerabilities
+        run: |
+          for image in api orchestrator worker dashboard cli migrate; do
+            trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "agent-platform-${image}:ci"
+          done
+
+  security:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+      - uses: aquasecurity/setup-trivy@v0.2.3
+      - name: Install dashboard dependencies
+        working-directory: apps/dashboard
+        run: npm ci
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Run audit
+        run: ./scripts/security-audit.sh
+
   integration:
     name: Integration (infrastructure)
     runs-on: ubuntu-latest
@@ -96,7 +158,7 @@ jobs:
       POSTGRES_PORT: 55432
       ORCHESTRATOR_GRPC_PORT: 19090
       ORCHESTRATOR_GRPC_ADDR: localhost:19090
-      ORCHESTRATOR_NATS_URL: nats://localhost:4222
+      ORCHESTRATOR_NATS_URL: nats://platform:dev-nats-password@localhost:4222
       API_URL: http://localhost:8080
       API_RATE_LIMIT_PER_MINUTE: 1000
       API_DATABASE_URL: postgres://app_api:dev_api_password@localhost:55432/agent_platform?sslmode=disable
@@ -115,7 +177,7 @@ jobs:
         run: docker compose up -d --build postgres nats redis minio minio-init api orchestrator worker
       - name: Wait for the API
         run: |
-          for i in $(seq 1 90); do
+          for _ in $(seq 1 90); do
             if curl -fsS http://localhost:8080/healthz >/dev/null; then exit 0; fi
             sleep 2
           done

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	workerv1 "github.com/agent-platform/agent-platform/gen/worker/v1"
+	"github.com/agent-platform/agent-platform/internal/platform/metrics"
 	"github.com/agent-platform/agent-platform/packages/contracts"
 )
 
@@ -164,6 +165,7 @@ func (s *Service) RejectTask(ctx context.Context, workerID, taskID, attemptID, l
 			e.State != "failing" && e.State != "cancel_requested"
 		var nextAttempt *time.Time
 		if retry {
+			metrics.RetryTotal.Inc()
 			next := time.Now().UTC().Add(retryDelay(policy, t.AttemptCount))
 			nextAttempt = &next
 			if _, err := tx.Exec(ctx, `
@@ -359,7 +361,7 @@ func (s *Service) ReportTaskResult(ctx context.Context, workerID string,
 				Classification: contracts.FailureCancelled, EffectUncertain: effectUncertain,
 			}
 		}
-		if err := s.closeAttemptWithResult(ctx, tx, a, result, req); err != nil {
+		if err := s.closeAttemptWithResult(ctx, tx, t, a, result, req); err != nil {
 			return err
 		}
 		if err := s.releaseWorkerSlot(ctx, tx, workerID); err != nil {
@@ -485,7 +487,7 @@ func (s *Service) ReportTaskResult(ctx context.Context, workerID string,
 	return response, nil
 }
 
-func (s *Service) closeAttemptWithResult(ctx context.Context, tx pgx.Tx, a *attempt,
+func (s *Service) closeAttemptWithResult(ctx context.Context, tx pgx.Tx, t *task, a *attempt,
 	result *contracts.TaskResult, req *workerv1.ReportTaskResultRequest) error {
 	attemptOutcome := "succeeded"
 	switch result.Outcome {
@@ -505,22 +507,22 @@ func (s *Service) closeAttemptWithResult(ctx context.Context, tx pgx.Tx, a *atte
 	if result.Output != nil {
 		resultInline = *result.Output
 	}
-	metrics := map[string]any{}
+	metricValues := map[string]any{}
 	if result.Metrics != nil {
 		if result.Metrics.DurationMS != nil {
-			metrics["duration_ms"] = *result.Metrics.DurationMS
+			metricValues["duration_ms"] = *result.Metrics.DurationMS
 		}
 		if result.Metrics.TokensIn != nil {
-			metrics["tokens_in"] = *result.Metrics.TokensIn
+			metricValues["tokens_in"] = *result.Metrics.TokensIn
 		}
 		if result.Metrics.TokensOut != nil {
-			metrics["tokens_out"] = *result.Metrics.TokensOut
+			metricValues["tokens_out"] = *result.Metrics.TokensOut
 		}
 		if result.Metrics.Steps != nil {
-			metrics["steps"] = *result.Metrics.Steps
+			metricValues["steps"] = *result.Metrics.Steps
 		}
 		if result.Metrics.Extra != nil {
-			metrics["extra"] = *result.Metrics.Extra
+			metricValues["extra"] = *result.Metrics.Extra
 		}
 	}
 	var runtimeVersion *string
@@ -534,8 +536,40 @@ func (s *Service) closeAttemptWithResult(ctx context.Context, tx pgx.Tx, a *atte
 		    error_code = $3, error_message = $4, result_inline = $5, metrics = $6,
 		    runtime_version = $7, effect_uncertain = $8, outcome_unknown = false
 		WHERE id = $1`,
-		a.ID, attemptOutcome, errorCode, errorMessage, resultInline, metrics, runtimeVersion, effectUncertain)
-	return err
+		a.ID, attemptOutcome, errorCode, errorMessage, resultInline, metricValues, runtimeVersion, effectUncertain)
+	if err != nil {
+		return err
+	}
+	provider, model := "unknown", "unknown"
+	if t.Provider != nil && *t.Provider != "" {
+		provider = *t.Provider
+	}
+	if t.Model != nil && *t.Model != "" {
+		model = *t.Model
+	}
+	_ = model
+	if result.Metrics != nil {
+		if result.Metrics.TokensIn != nil {
+			metrics.AITokensTotal.WithLabelValues(provider, "input").Add(float64(*result.Metrics.TokensIn))
+		}
+		if result.Metrics.TokensOut != nil {
+			metrics.AITokensTotal.WithLabelValues(provider, "output").Add(float64(*result.Metrics.TokensOut))
+		}
+		if result.Metrics.DurationMS != nil && *result.Metrics.DurationMS > 0 {
+			metrics.ModelLatency.WithLabelValues(provider).Observe(float64(*result.Metrics.DurationMS) / 1000)
+		}
+	}
+	if result.Failure != nil {
+		metrics.ProviderErrors.WithLabelValues(provider, result.Failure.Code).Inc()
+	}
+	if t.NodeType == "tool" {
+		tool := "tool"
+		if t.ToolVersionID != nil && *t.ToolVersionID != "" {
+			tool = *t.ToolVersionID
+		}
+		metrics.ToolCallsTotal.WithLabelValues(tool).Inc()
+	}
+	return nil
 }
 
 func (s *Service) appendAttemptFinished(ctx context.Context, tx pgx.Tx, e *execution, t *task, a *attempt,

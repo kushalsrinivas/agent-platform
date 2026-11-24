@@ -13,27 +13,38 @@ import (
 type Role string
 
 const (
-	RoleViewer   Role = "viewer"
-	RoleOperator Role = "operator"
-	RoleOwner    Role = "owner"
+	RoleViewer    Role = "viewer"
+	RoleOperator  Role = "operator" // legacy name, same permissions as developer
+	RoleDeveloper Role = "developer"
+	RoleAdmin     Role = "admin"
+	RoleOwner     Role = "owner"
 )
 
 func (r Role) Rank() int {
 	switch r {
 	case RoleViewer:
 		return 1
-	case RoleOperator:
+	case RoleOperator, RoleDeveloper:
 		return 2
-	case RoleOwner:
+	case RoleAdmin:
 		return 3
+	case RoleOwner:
+		return 4
 	default:
 		return 0
 	}
 }
 
 func ValidRole(role string) bool {
-	return role == string(RoleViewer) || role == string(RoleOperator) || role == string(RoleOwner)
+	return role == string(RoleViewer) || role == string(RoleOperator) ||
+		role == string(RoleDeveloper) || role == string(RoleAdmin) || role == string(RoleOwner)
 }
+
+// CanManageSecrets reports whether the role may create, rotate or revoke project credentials.
+func CanManageSecrets(role Role) bool { return role.Rank() >= RoleAdmin.Rank() }
+
+// CanManageMembers reports whether the role may add, update or remove members.
+func CanManageMembers(role Role) bool { return role.Rank() >= RoleAdmin.Rank() }
 
 var (
 	ErrUnauthenticated = errors.New("authentication required")

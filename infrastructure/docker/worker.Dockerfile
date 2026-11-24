@@ -28,6 +28,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -o /out/service ./services/worker/cmd/worker
 
 FROM python:3.12-slim AS runtime
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+LABEL org.opencontainers.image.title="agent-platform-worker" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="https://github.com/kushalsrinivas/agent-platform"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

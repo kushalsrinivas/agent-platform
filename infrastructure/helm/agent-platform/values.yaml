@@ -1,0 +1,163 @@
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  imagePullSecrets: []
+  environment: production
+
+images:
+  api:
+    repository: ghcr.io/your-org/agent-platform-api
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  orchestrator:
+    repository: ghcr.io/your-org/agent-platform-orchestrator
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  worker:
+    repository: ghcr.io/your-org/agent-platform-worker
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  dashboard:
+    repository: ghcr.io/your-org/agent-platform-dashboard
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  migrate:
+    repository: ghcr.io/your-org/agent-platform-migrate
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+# The chart never creates credentials. External Secrets/Sealed Secrets should materialise this Secret with the
+# keys documented in values.secretKeys.
+secrets:
+  existingSecret: agent-platform-secrets
+
+secretKeys:
+  apiDatabaseURL: API_DATABASE_URL
+  orchestratorDatabaseURL: ORCHESTRATOR_DATABASE_URL
+  migrateControlURL: MIGRATE_CONTROL_DATABASE_URL
+  migrateExecutionURL: MIGRATE_EXECUTION_DATABASE_URL
+  natsURL: NATS_URL
+  secretsMasterKey: SECRETS_MASTER_KEY
+  secretsActiveKeyID: SECRETS_ACTIVE_KEY_ID
+  secretsPreviousKeys: SECRETS_PREVIOUS_KEYS
+  workerControlToken: WORKER_CONTROL_TOKEN
+  internalAPIToken: INTERNAL_API_TOKEN
+  oidcIssuerURL: OIDC_ISSUER_URL
+  oidcClientID: OIDC_CLIENT_ID
+  dashboardAPIKey: DASHBOARD_API_KEY
+
+config:
+  ENVIRONMENT: production
+  LOG_LEVEL: info
+  LOG_FORMAT: json
+  AUTH_MODE: oidc
+  API_ORCHESTRATOR_GRPC_ADDR: '{{ include "agent-platform.fullname" . }}-orchestrator:9090'
+  API_ORCHESTRATOR_INSECURE: "true"
+  API_RATE_LIMIT_PER_MINUTE: "120"
+  API_RATE_LIMIT_BURST: "30"
+  ORCHESTRATOR_GRPC_ADDR: ":9090"
+  ORCHESTRATOR_HTTP_ADDR: ":8081"
+  ORCHESTRATOR_MAX_ACTIVE_EXECUTIONS: "100"
+  ORCHESTRATOR_MAX_QUEUED_EXECUTIONS: "500"
+  ORCHESTRATOR_MAX_EXECUTION_SECONDS: "86400"
+  ORCHESTRATOR_MAX_ACTIVE_TASKS_PER_TENANT: "20"
+  ORCHESTRATOR_STREAM_REPLICAS: "3"
+  ORCHESTRATOR_PROVIDER_CONCURRENCY: ""
+  ORCHESTRATOR_PROVIDER_RATE_PER_MINUTE: ""
+  ORCHESTRATOR_DISPATCH_INTERVAL_MS: "500"
+  ORCHESTRATOR_DISPATCH_BATCH: "20"
+  WORKER_ORCHESTRATOR_GRPC_ADDR: '{{ include "agent-platform.fullname" . }}-orchestrator:9090'
+  WORKER_POOL: default
+  WORKER_RUNTIME: python
+  WORKER_RUNTIME_VERSION: 0.1.0
+  WORKER_RUNTIME_COMMAND: "python -m agent_runtime serve --socket {socket}"
+  WORKER_CAPABILITIES: agent_execution,tool_execution
+  WORKER_MAX_CONCURRENCY: "4"
+  WORKER_REQUIRE_SANDBOX: "true"
+  WORKER_RUNTIME_MEMORY_MB: "1024"
+  WORKER_RUNTIME_CPU_SECONDS: "300"
+  WORKER_RUNTIME_PIDS: "256"
+  WORKER_RUNTIME_FILE_SIZE_MB: "64"
+  WORKER_RUNTIME_OPEN_FILES: "1024"
+  AGENT_MCP_ALLOW_STDIO: "false"
+  AGENT_MCP_ALLOW_PRIVATE_NETWORKS: "false"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.monitoring.svc.cluster.local:4318
+  DASHBOARD_API_URL: 'http://{{ include "agent-platform.fullname" . }}-api:8080'
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+api:
+  replicas: 2
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+  podDisruptionBudget: {enabled: true, minAvailable: 1}
+  service: {type: ClusterIP, port: 8080}
+
+orchestrator:
+  replicas: 2
+  # The dispatcher uses PostgreSQL row locks and SKIP LOCKED; running replicas do not duplicate assignments.
+  resources:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {cpu: "2", memory: 1Gi}
+  podDisruptionBudget: {enabled: true, minAvailable: 1}
+  service: {type: ClusterIP, grpcPort: 9090, httpPort: 8081}
+  persistence:
+    artifacts:
+      enabled: true
+      accessModes: [ReadWriteMany]
+      size: 10Gi
+      storageClass: ""
+
+worker:
+  replicas: 1
+  resources:
+    requests: {cpu: 500m, memory: 1Gi}
+    limits: {cpu: "2", memory: 4Gi}
+  terminationGracePeriodSeconds: 45
+  podDisruptionBudget: {enabled: false, minAvailable: 1}
+  autoscaling:
+    keda:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 20
+      pollingInterval: 15
+      cooldownPeriod: 120
+      prometheusAddress: http://prometheus.monitoring.svc.cluster.local:9090
+      queueDepthThreshold: 4
+      queueAgeSeconds: 30
+      utilizationThreshold: 0.75
+
+dashboard:
+  replicas: 2
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+
+ingress:
+  enabled: false
+  className: nginx
+  host: agents.example.com
+  tlsSecret: agent-platform-tls
+
+networkPolicy:
+  enabled: true
+  monitoringNamespace: monitoring
+  ingressNamespace: ingress-nginx
+
+monitoring:
+  serviceMonitor:
+    enabled: false
+    releaseLabel: kube-prometheus-stack
+    interval: 15s
+  prometheusRule:
+    enabled: false
+    releaseLabel: kube-prometheus-stack
+
+migration:
+  enabled: true
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 3600

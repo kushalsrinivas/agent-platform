@@ -41,8 +41,15 @@ export const useWorkspace = create<WorkspaceState>()(
     }),
     {
       name: "agent-platform-workspace",
+      version: 2,
+      migrate: (persisted) => {
+        const next = { ...(persisted as Record<string, unknown>) };
+        delete next.apiKey;
+        return next as unknown as WorkspaceState;
+      },
+      // Never persist the API key in browser storage. It lives only in this tab's memory; a reload asks the
+      // operator to reconnect or use the deployment's server-side credential.
       partialize: (state) => ({
-        apiKey: state.apiKey,
         orgId: state.orgId,
         projectId: state.projectId,
         environmentId: state.environmentId,

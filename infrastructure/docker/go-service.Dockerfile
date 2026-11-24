@@ -22,13 +22,23 @@ ARG BUILD_DATE=unknown
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -trimpath \
-    -ldflags "-s -w \
+    -ldflags "-s -w -buildid= \
       -X github.com/agent-platform/agent-platform/internal/platform/buildinfo.Version=${VERSION} \
       -X github.com/agent-platform/agent-platform/internal/platform/buildinfo.Commit=${COMMIT} \
       -X github.com/agent-platform/agent-platform/internal/platform/buildinfo.BuildDate=${BUILD_DATE}" \
     -o /out/service ./services/${SERVICE}/cmd/${SERVICE}
 
 FROM alpine:3.22
+
+ARG SERVICE
+ARG VERSION
+ARG COMMIT
+ARG BUILD_DATE
+LABEL org.opencontainers.image.title="agent-platform-${SERVICE}" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="https://github.com/kushalsrinivas/agent-platform"
 
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S -g 10001 app \

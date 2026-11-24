@@ -16,6 +16,7 @@ import (
 
 	workerv1 "github.com/agent-platform/agent-platform/gen/worker/v1"
 	"github.com/agent-platform/agent-platform/internal/messaging"
+	"github.com/agent-platform/agent-platform/internal/platform/metrics"
 	"github.com/agent-platform/agent-platform/internal/worker/control"
 	"github.com/agent-platform/agent-platform/packages/contracts"
 )
@@ -39,6 +40,7 @@ type Executor func(ctx context.Context, dispatch *contracts.TaskDispatch) (Execu
 type Handler struct {
 	Client   *control.Client
 	WorkerID string
+	Pool     string
 	Execute  Executor
 	Log      *zap.Logger
 }
@@ -225,6 +227,19 @@ func (h *Handler) Handle(ctx context.Context, msg jetstream.Msg) error {
 			request.Output = structOutput
 		}
 	}
+	pool := h.Pool
+	if pool == "" {
+		pool = "default"
+	}
+	outcomeLabel := "succeeded"
+	switch request.Outcome {
+	case workerv1.TaskOutcome_TASK_OUTCOME_FAILED:
+		outcomeLabel = "failed"
+		metrics.WorkerRuntimeErrors.WithLabelValues(pool, request.Failure.GetCode()).Inc()
+	case workerv1.TaskOutcome_TASK_OUTCOME_CANCELLED:
+		outcomeLabel = "cancelled"
+	}
+	metrics.WorkerTasksTotal.WithLabelValues(pool, outcomeLabel).Inc()
 	if len(outcome.Checkpoint) > 0 {
 		// Durable checkpoint upload is deferred with the object-store integration; log that state exists so
 		// the gap is visible in operations.

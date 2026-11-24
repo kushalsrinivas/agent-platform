@@ -8,16 +8,19 @@ x-go-env: &go-env
   ENVIRONMENT: development
   LOG_LEVEL: ${LOG_LEVEL:-info}
   LOG_FORMAT: ${LOG_FORMAT:-json}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
 
 services:
   postgres:
     image: postgres:16-alpine
+    networks: [state]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: agent_platform
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -29,10 +32,11 @@ services:
 
   nats:
     image: nats:2.15-alpine
-    command: ["-js", "-m", "8222", "--store_dir", "/data"]
+    networks: [state, work]
+    command: ["-js", "-m", "8222", "--store_dir", "/data", "--user", "${NATS_USER:-platform}", "--pass", "${NATS_PASSWORD:-dev-nats-password}"]
     ports:
-      - "${NATS_PORT:-4222}:4222"
-      - "${NATS_MONITOR_PORT:-8222}:8222"
+      - "127.0.0.1:${NATS_PORT:-4222}:4222"
+      - "127.0.0.1:${NATS_MONITOR_PORT:-8222}:8222"
     volumes:
       - nats-data:/data
     healthcheck:
@@ -44,9 +48,10 @@ services:
 
   redis:
     image: redis:8-alpine
+    networks: [state]
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -61,13 +66,14 @@ services:
   # Production uses any S3-compatible store. See docs/development.md#object-storage.
   minio:
     image: pgsty/silo:RELEASE.2026-11-12T00-00-00Z
+    networks: [state]
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -79,6 +85,7 @@ services:
 
   minio-init:
     image: pgsty/mc:RELEASE.2026-11-12T00-00-00Z
+    networks: [state]
     depends_on:
       minio:
         condition: service_healthy
@@ -93,6 +100,7 @@ services:
   # Migrations are a one-shot job. Services wait for successful completion.
   migrate:
     image: migrate/migrate:v4.20.1
+    networks: [state]
     depends_on:
       postgres:
         condition: service_healthy
@@ -126,6 +134,7 @@ services:
       API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:3000}
       API_ORCHESTRATOR_GRPC_ADDR: orchestrator:9090
       API_ORCHESTRATOR_INSECURE: "true"
+      API_ORCHESTRATOR_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-api-token}
       AUTH_MODE: ${AUTH_MODE:-dev}
       AUTH_DEV_SECRET: ${AUTH_DEV_SECRET:-dev-only-auth-secret-change-me}
       AUTH_DEV_ISSUER: ${AUTH_DEV_ISSUER:-agent-platform-dev}
@@ -134,6 +143,10 @@ services:
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       API_RATE_LIMIT_PER_MINUTE: ${API_RATE_LIMIT_PER_MINUTE:-120}
       API_RATE_LIMIT_BURST: ${API_RATE_LIMIT_BURST:-30}
+      SECRETS_MASTER_KEY: ${SECRETS_MASTER_KEY:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+      SECRETS_ACTIVE_KEY_ID: ${SECRETS_ACTIVE_KEY_ID:-dev}
+      SECRETS_PREVIOUS_KEYS: ${SECRETS_PREVIOUS_KEYS:-}
+    networks: [state, edge]
     ports:
       - "${API_PORT:-8080}:8080"
     depends_on:
@@ -164,24 +177,33 @@ services:
       ORCHESTRATOR_GRPC_ADDR: ":9090"
       ORCHESTRATOR_HTTP_ADDR: ":8081"
       ORCHESTRATOR_DATABASE_URL: postgres://app_orchestrator:dev_orchestrator_password@postgres:5432/agent_platform?sslmode=disable
-      ORCHESTRATOR_NATS_URL: nats://nats:4222
-      ORCHESTRATOR_MAX_ACTIVE_EXECUTIONS: "20"
-      ORCHESTRATOR_MAX_QUEUED_EXECUTIONS: "100"
+      ORCHESTRATOR_NATS_URL: nats://${NATS_USER:-platform}:${NATS_PASSWORD:-dev-nats-password}@nats:4222
+      ORCHESTRATOR_MAX_ACTIVE_EXECUTIONS: ${ORCHESTRATOR_MAX_ACTIVE_EXECUTIONS:-20}
+      ORCHESTRATOR_MAX_QUEUED_EXECUTIONS: ${ORCHESTRATOR_MAX_QUEUED_EXECUTIONS:-100}
       ORCHESTRATOR_MAX_EXECUTION_SECONDS: "86400"
       ORCHESTRATOR_STREAM_REPLICAS: "1"
       ORCHESTRATOR_ADMIN_TOKEN: ${ORCHESTRATOR_ADMIN_TOKEN:-}
+      ORCHESTRATOR_WORKER_TOKEN: ${WORKER_CONTROL_TOKEN:-dev-worker-control-token}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-api-token}
       ORCHESTRATOR_LEASE_SECONDS: ${ORCHESTRATOR_LEASE_SECONDS:-30}
       ORCHESTRATOR_HEARTBEAT_TIMEOUT_SECONDS: ${ORCHESTRATOR_HEARTBEAT_TIMEOUT_SECONDS:-15}
+      ORCHESTRATOR_DISPATCH_INTERVAL_MS: ${ORCHESTRATOR_DISPATCH_INTERVAL_MS:-500}
+      ORCHESTRATOR_DISPATCH_BATCH: ${ORCHESTRATOR_DISPATCH_BATCH:-20}
       ORCHESTRATOR_WORKER_TERMINATE_SECONDS: ${ORCHESTRATOR_WORKER_TERMINATE_SECONDS:-60}
       ORCHESTRATOR_MAX_ACTIVE_TASKS_PER_TENANT: ${ORCHESTRATOR_MAX_ACTIVE_TASKS_PER_TENANT:-0}
       ORCHESTRATOR_PROVIDER_CONCURRENCY: ${ORCHESTRATOR_PROVIDER_CONCURRENCY:-}
+      ORCHESTRATOR_PROVIDER_RATE_PER_MINUTE: ${ORCHESTRATOR_PROVIDER_RATE_PER_MINUTE:-}
       ORCHESTRATOR_TOOL_CONCURRENCY: ${ORCHESTRATOR_TOOL_CONCURRENCY:-}
       ORCHESTRATOR_ARTIFACT_DIR: /var/lib/agent-platform/artifacts
+      SECRETS_MASTER_KEY: ${SECRETS_MASTER_KEY:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+      SECRETS_ACTIVE_KEY_ID: ${SECRETS_ACTIVE_KEY_ID:-dev}
+      SECRETS_PREVIOUS_KEYS: ${SECRETS_PREVIOUS_KEYS:-}
+    networks: [state, work]
     volumes:
       - checkpoint-artifacts:/var/lib/agent-platform/artifacts
     ports:
-      - "${ORCHESTRATOR_GRPC_PORT:-9090}:9090"
-      - "${ORCHESTRATOR_HTTP_PORT:-8081}:8081"
+      - "127.0.0.1:${ORCHESTRATOR_GRPC_PORT:-9090}:9090"
+      - "127.0.0.1:${ORCHESTRATOR_HTTP_PORT:-8081}:8081"
     depends_on:
       postgres:
         condition: service_healthy
@@ -209,9 +231,10 @@ services:
       <<: *go-env
       WORKER_ID: wrk_worker_01
       WORKER_HTTP_ADDR: ":8082"
-      WORKER_NATS_URL: nats://nats:4222
+      WORKER_NATS_URL: nats://${NATS_USER:-platform}:${NATS_PASSWORD:-dev-nats-password}@nats:4222
       WORKER_ORCHESTRATOR_GRPC_ADDR: orchestrator:9090
       WORKER_ORCHESTRATOR_TLS: "false"
+      WORKER_CONTROL_TOKEN: ${WORKER_CONTROL_TOKEN:-dev-worker-control-token}
       WORKER_POOL: default
       WORKER_RUNTIME: ${WORKER_RUNTIME:-python}
       WORKER_RUNTIME_VERSION: ${WORKER_RUNTIME_VERSION:-0.1.0}
@@ -223,9 +246,78 @@ services:
       WORKER_RUNTIME_COMMAND: ${WORKER_RUNTIME_COMMAND:-python -m agent_runtime serve --socket {socket}}
       WORKER_RUNTIME_STARTUP_SECONDS: ${WORKER_RUNTIME_STARTUP_SECONDS:-15}
       WORKER_RUNTIME_KILL_SECONDS: ${WORKER_RUNTIME_KILL_SECONDS:-5}
-      WORKER_MAX_CONCURRENCY: "4"
+      WORKER_MAX_CONCURRENCY: ${WORKER_MAX_CONCURRENCY:-4}
+      WORKER_RUNTIME_MEMORY_MB: ${WORKER_RUNTIME_MEMORY_MB:-1024}
+      WORKER_RUNTIME_CPU_SECONDS: ${WORKER_RUNTIME_CPU_SECONDS:-300}
+      WORKER_RUNTIME_PIDS: ${WORKER_RUNTIME_PIDS:-256}
+      WORKER_RUNTIME_FILE_SIZE_MB: ${WORKER_RUNTIME_FILE_SIZE_MB:-64}
+      WORKER_RUNTIME_OPEN_FILES: ${WORKER_RUNTIME_OPEN_FILES:-1024}
+      WORKER_REQUIRE_SANDBOX: "true"
+      AGENT_MCP_ALLOW_PRIVATE_NETWORKS: ${AGENT_MCP_ALLOW_PRIVATE_NETWORKS:-true}
+      AGENT_MCP_ALLOW_STDIO: ${AGENT_MCP_ALLOW_STDIO:-true}
+    networks: [work]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+      - /home/app:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    pids_limit: 512
+    mem_limit: ${WORKER_MEMORY_LIMIT:-4g}
+    cpus: ${WORKER_CPU_LIMIT:-2.0}
     ports:
-      - "${WORKER_PORT:-8082}:8082"
+      - "127.0.0.1:${WORKER_PORT:-8082}:8082"
+    depends_on:
+      nats:
+        condition: service_healthy
+      orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/readyz >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # Deterministic Go-only executor used by the Phase 16 load tests. It exercises orchestration, PostgreSQL,
+  # NATS and the worker protocol without Python runtime startup or model latency.
+  worker-echo:
+    profiles: ["loadtest"]
+    build:
+      context: .
+      dockerfile: infrastructure/docker/worker.Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    environment:
+      <<: *go-env
+      WORKER_ID: wrk_loadtest_01
+      WORKER_HTTP_ADDR: ":8082"
+      WORKER_NATS_URL: nats://${NATS_USER:-platform}:${NATS_PASSWORD:-dev-nats-password}@nats:4222
+      WORKER_ORCHESTRATOR_GRPC_ADDR: orchestrator:9090
+      WORKER_ORCHESTRATOR_TLS: "false"
+      WORKER_CONTROL_TOKEN: ${WORKER_CONTROL_TOKEN:-dev-worker-control-token}
+      WORKER_POOL: loadtest
+      WORKER_RUNTIME: echo
+      WORKER_RUNTIME_VERSION: "0.1.0"
+      WORKER_CAPABILITIES: agent_execution,tool_execution
+      WORKER_HEARTBEAT_MS: ${WORKER_HEARTBEAT_MS:-5000}
+      WORKER_MAX_CONCURRENCY: ${LOADTEST_WORKER_CONCURRENCY:-64}
+      WORKER_SHUTDOWN_GRACE_SECONDS: 10
+      WORKER_RUNTIME_COMMAND: ""
+    networks: [work]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2.0
     depends_on:
       nats:
         condition: service_healthy
@@ -240,9 +332,12 @@ services:
     restart: unless-stopped
 
   dashboard:
+    networks: [edge]
     build:
       context: .
       dockerfile: infrastructure/docker/dashboard.Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
     environment:
       DASHBOARD_API_URL: http://api:8080
       DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-}
@@ -260,6 +355,17 @@ services:
       retries: 5
       start_period: 20s
     restart: unless-stopped
+
+networks:
+  # state: databases, object storage and the services that must reach them.
+  # work: worker <-> NATS/orchestrator only; the runtime process cannot reach PostgreSQL or object storage.
+  # edge: public API and dashboard.
+  state:
+    internal: false
+  work:
+    internal: false
+  edge:
+    internal: false
 
 volumes:
   checkpoint-artifacts:

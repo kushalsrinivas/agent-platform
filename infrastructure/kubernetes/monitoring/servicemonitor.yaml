@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata: {name: agent-platform-api, namespace: monitoring, labels: {release: kube-prometheus-stack}}
+spec:
+  namespaceSelector: {matchNames: [agent-platform]}
+  selector: {matchLabels: {app.kubernetes.io/name: api}}
+  endpoints:
+    - {port: http, path: /metrics, interval: 15s}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata: {name: agent-platform-orchestrator, namespace: monitoring, labels: {release: kube-prometheus-stack}}
+spec:
+  namespaceSelector: {matchNames: [agent-platform]}
+  selector: {matchLabels: {app.kubernetes.io/name: orchestrator}}
+  endpoints:
+    - {port: http, path: /metrics, interval: 15s}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata: {name: agent-platform-worker, namespace: monitoring, labels: {release: kube-prometheus-stack}}
+spec:
+  namespaceSelector: {matchNames: [agent-platform]}
+  selector: {matchLabels: {app.kubernetes.io/name: python-worker}}
+  endpoints:
+    - {port: metrics, path: /metrics, interval: 15s}

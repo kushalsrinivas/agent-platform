@@ -16,6 +16,7 @@ from typing import Any
 import grpc
 from google.protobuf.json_format import MessageToDict
 
+from agent_runtime import telemetry
 from agent_runtime.events import EventEmitter
 from agent_runtime.langgraph_runtime import LangGraphRuntime
 from agent_runtime.proto_gen import runtime_pb2, runtime_pb2_grpc
@@ -97,6 +98,7 @@ class AgentRuntimeServicer(runtime_pb2_grpc.AgentRuntimeServicer):  # type: igno
             deadline=task.deadline.ToDatetime(UTC) if task.HasField("deadline") else None,
             traceparent=task.traceparent or None,
             lease_id=task.lease_id,
+            credentials=dict(task.credentials),
         )
 
         try:
@@ -119,12 +121,17 @@ class AgentRuntimeServicer(runtime_pb2_grpc.AgentRuntimeServicer):  # type: igno
             runtime = LangGraphRuntime(emitter=emitter, tools=self._tools)
 
         try:
-            await runtime.initialize(spec, node_context)
-            if request.resume_checkpoint:
-                checkpoint = decode(bytes(request.resume_checkpoint))
-                await runtime.restore_state(checkpoint.model_dump())
-            result = await runtime.execute(_struct_to_dict(task.execution_input), node_context)
-            await runtime.shutdown()
+            with telemetry.span(
+                "agent.node.execute",
+                task.traceparent or None,
+                {"agent.version_id": task.agent_version_id, "execution.id": task.execution_id},
+            ):
+                await runtime.initialize(spec, node_context)
+                if request.resume_checkpoint:
+                    checkpoint = decode(bytes(request.resume_checkpoint))
+                    await runtime.restore_state(checkpoint.model_dump())
+                result = await runtime.execute(_struct_to_dict(task.execution_input), node_context)
+                await runtime.shutdown()
         except ProviderError as exc:
             emitter.task_failed(exc.code, exc.message)
             return runtime_pb2.ExecuteNodeResponse(

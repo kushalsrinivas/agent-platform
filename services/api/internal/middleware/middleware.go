@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/agent-platform/agent-platform/internal/platform/metrics"
 	"github.com/agent-platform/agent-platform/services/api/internal/auth"
 	"github.com/agent-platform/agent-platform/services/api/internal/respond"
 )
@@ -73,6 +74,7 @@ func RateLimit(perMinute, burst int) func(http.Handler) http.Handler {
 			mu.Unlock()
 
 			if !allowed {
+				metrics.RateLimited.WithLabelValues("api").Inc()
 				w.Header().Set("Retry-After", strconv.Itoa(1))
 				respond.Error(w, r, http.StatusTooManyRequests, "rate_limited", "request rate exceeded; retry shortly")
 				return

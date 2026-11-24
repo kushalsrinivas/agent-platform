@@ -27,6 +27,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
 
+from agent_runtime import telemetry
 from agent_runtime.delegation import DelegationError, SupervisorClient
 from agent_runtime.events import EventEmitter
 from agent_runtime.runtime import AgentRuntime
@@ -153,6 +154,7 @@ class LangGraphRuntime(AgentRuntime):
         self._restored_steps = 0
         self._last_messages: list[BaseMessage] = []
         self._last_steps = 0
+        self._traceparent: str | None = None
         self._sink: CheckpointSink | None = None
         self._restored_output: dict[str, Any] | None = None
         self._restored_metrics: dict[str, Any] = {}
@@ -169,6 +171,7 @@ class LangGraphRuntime(AgentRuntime):
         self._spec = spec
         self._spec_version_id = context.agent_version_id
         self._spec_attempt_id = context.attempt_id
+        self._traceparent = context.traceparent
         self._tool_scope = f"{context.execution_id}:{context.task_id}:{context.node_id}"
         provider = get_provider(spec.model.provider)
         self._provider = provider
@@ -714,11 +717,20 @@ class LangGraphRuntime(AgentRuntime):
         if self._emitter:
             self._emitter.model_request_started(self._spec.model.provider, self._provider_config.model, steps)
 
-        completion: Completion = await self._provider.complete(
-            _from_langchain(state.get("messages", [])),
-            self._provider_config,
-            tools=self._tool_specs or None,
-        )
+        with telemetry.span(
+            "model.invoke",
+            self._traceparent,
+            {
+                "ai.provider": self._spec.model.provider,
+                "ai.model": self._provider_config.model,
+                "ai.step": steps,
+            },
+        ):
+            completion: Completion = await self._provider.complete(
+                _from_langchain(state.get("messages", [])),
+                self._provider_config,
+                tools=self._tool_specs or None,
+            )
         self._input_tokens += completion.input_tokens
         self._output_tokens += completion.output_tokens
         if self._emitter:
@@ -774,16 +786,17 @@ class LangGraphRuntime(AgentRuntime):
         if self._emitter:
             for call in calls:
                 self._emitter.tool_invocation_started(str(call.get("name", "")), int(state.get("steps", 0)))
-        outcomes = await asyncio.gather(
-            *(
-                self._executor.execute(
-                    str(call.get("name", "")),
-                    dict(call.get("args", {})),
-                    idempotency_key=self._tool_idempotency_key(str(call.get("id", ""))),
+        with telemetry.span("tool.invoke", self._traceparent, {"tool.call_count": len(calls)}):
+            outcomes = await asyncio.gather(
+                *(
+                    self._executor.execute(
+                        str(call.get("name", "")),
+                        dict(call.get("args", {})),
+                        idempotency_key=self._tool_idempotency_key(str(call.get("id", ""))),
+                    )
+                    for call in calls
                 )
-                for call in calls
             )
-        )
         results: list[BaseMessage] = []
         for call, outcome in zip(calls, outcomes, strict=True):
             name = str(call.get("name", ""))

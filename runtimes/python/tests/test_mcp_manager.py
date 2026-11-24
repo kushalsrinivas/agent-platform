@@ -15,6 +15,12 @@ from mcp.client import MCPServerConfig
 from mcp.manager import MCPError, MCPManager
 
 
+@pytest.fixture(autouse=True)
+def _allow_local_transports(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_MCP_ALLOW_STDIO", "true")
+    monkeypatch.setenv("AGENT_MCP_ALLOW_PRIVATE_NETWORKS", "true")
+
+
 def _server_config() -> MCPServerConfig:
     return MCPServerConfig(
         name="fixture",
@@ -135,3 +141,27 @@ async def test_streamable_http_discovery_and_call() -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_private_http_is_blocked_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENT_MCP_ALLOW_PRIVATE_NETWORKS", raising=False)
+    config = MCPServerConfig(
+        name="blocked",
+        transport="streamable_http",
+        url="http://127.0.0.1:9/mcp",
+        timeout_seconds=2,
+    )
+    manager = MCPManager([config])
+    with pytest.raises(MCPError) as caught:
+        await manager.start()
+    assert caught.value.code == "MCP_URL_BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_stdio_is_blocked_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENT_MCP_ALLOW_STDIO", raising=False)
+    manager = MCPManager([_server_config()])
+    with pytest.raises(MCPError) as caught:
+        await manager.start()
+    assert caught.value.code == "MCP_STDIO_DISABLED"

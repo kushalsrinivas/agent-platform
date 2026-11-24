@@ -251,7 +251,7 @@ API keys are created by an organisation owner:
 ```bash
 curl -X POST "$API_URL/api/v1/organizations/$ORG/api-keys" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"local","project_id":"'$PROJECT'","role":"operator"}'
+  -d '{"name":"local","project_id":"'$PROJECT'","role":"developer"}'
 ```
 
 `/api/v1` is canonical; `/v1` remains an alias. The Python SDK is `platform_sdk` (sync and async), the Go SDK is

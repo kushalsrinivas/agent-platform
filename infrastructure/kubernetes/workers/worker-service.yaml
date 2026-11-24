@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: python-worker-metrics
+  namespace: agent-platform
+  labels: {app.kubernetes.io/name: python-worker, app.kubernetes.io/part-of: agent-platform}
+spec:
+  clusterIP: None
+  selector: {app.kubernetes.io/name: python-worker}
+  ports:
+    - {name: metrics, port: 8082, targetPort: http}
