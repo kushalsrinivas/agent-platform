@@ -106,6 +106,7 @@ type Consumer struct {
 	cancel     context.CancelFunc
 	consumeCtx jetstream.ConsumeContext
 	stopOnce   sync.Once
+	inFlight   sync.WaitGroup
 }
 
 // NewConsumer creates or updates the durable pull consumer and validates its delivery policy.
@@ -182,8 +183,16 @@ func (c *Consumer) Start(parent context.Context) error {
 	ctx := c.ctx
 	c.mu.Unlock()
 
-	consumeCtx, err := c.consumer.Consume(func(msg jetstream.Msg) { c.handle(ctx, msg) },
-		jetstream.PullMaxMessages(c.cfg.MaxAckPending))
+	// NATS invokes this callback serially. Dispatch each message to its own goroutine so the worker capacity
+	// (which is also MaxAckPending) is real: a supervisor waiting on delegated children must not block the
+	// child dispatch that would unblock it. ACKs still happen only after Handle returns.
+	consumeCtx, err := c.consumer.Consume(func(msg jetstream.Msg) {
+		c.inFlight.Add(1)
+		go func() {
+			defer c.inFlight.Done()
+			c.handle(ctx, msg)
+		}()
+	}, jetstream.PullMaxMessages(c.cfg.MaxAckPending))
 	if err != nil {
 		return fmt.Errorf("messaging: consume %s: %w", c.cfg.Durable, err)
 	}
@@ -219,6 +228,17 @@ func (c *Consumer) Stop() {
 			case <-time.After(10 * time.Second):
 				consumeCtx.Stop()
 			}
+		}
+		done := make(chan struct{})
+		go func() {
+			c.inFlight.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			c.log.Warn("consumer stop timed out waiting for in-flight handlers",
+				zap.String("durable", c.cfg.Durable))
 		}
 		c.log.Info("durable consumer stopped", zap.String("durable", c.cfg.Durable))
 	})

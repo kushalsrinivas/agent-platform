@@ -235,7 +235,9 @@ func (h *Handler) Handle(ctx context.Context, msg jetstream.Msg) error {
 	}
 
 	// Reporting must still work after the execution deadline cancels runCtx; the result is the proof of the timeout.
-	reportCtx, reportCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	// The result commit is the durable proof of the attempt. A transiently slow database must not turn a
+	// completed attempt into a lease expiry; retries still stop at 30 seconds.
+	reportCtx, reportCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer reportCancel()
 	response, err := h.Client.ReportTaskResult(reportCtx, request)
 	if err != nil {

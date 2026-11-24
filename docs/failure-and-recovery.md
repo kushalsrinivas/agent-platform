@@ -42,6 +42,9 @@ change the logical outcome, and which cannot"**.
 | Duplicate dispatch | duplicate pull delivery | One attempt; worker checks fence | Discard/ack if not open | Wasted work only |
 | Python runtime OOM/crash | exit code, supervisor | Attempt fails `RUNTIME_CRASH` | Retry policy; checkpoint may allow resume | Lost since last checkpoint; external effects possible |
 | Python hangs | task deadline | Worker SIGTERM/SIGKILL; reaper also expires lease | `TASK_TIMEOUT`; retry policy | Same as above |
+| Control node crashes mid-decision | pending task, committed dispatcher transaction | Nothing partially committed | Re-evaluated on the next pass | None |
+| Child execution fails/cancels | parent task polls child state | Parent remains pending | Parent fails `SUBWORKFLOW_FAILED`; loop follows its policy | Child side effects may have occurred |
+| Approval/delay waits forever | no operator/signal | Task stays pending | Operator signal, execution cancellation or deadline | Delayed work, never duplicated |
 | Artifact volume unavailable | filesystem errors | Large checkpoints cannot be offloaded; small states stay inline | Retry upload; task retry from an earlier inline checkpoint; `require_checkpoint` fails the attempt | Resume granularity; large-state nodes fail until the volume returns |
 | Checkpoint corrupt/mismatched | hash mismatch, schema/ABI mismatch | Attempt fails `CHECKPOINT_INVALID`/`CHECKPOINT_INCOMPATIBLE` | Restart node only if policy allows; otherwise fail | Progress loss |
 | Database migration fails mid-deploy | migration job | Deploy blocks; old version continues if compatible | Roll forward with a corrective migration; expand/contract avoids destructive steps | Operational only |
@@ -158,6 +161,26 @@ Downstream behaviour:
   Otherwise the task fails with `EFFECT_UNCERTAIN` and is dead-lettered for operator reconciliation.
 - Compensation is a workflow concern, not a platform feature in Phase 1. The platform will not invent a rollback.
 
+### 3.9 Delegation and MCP failures
+
+- A supervisor loses its lease while a child runs: `GetDelegation` fails with `FAILED_PRECONDITION`; the parent
+  attempt is fenced and retried. The child keeps its own execution and lease. The delegation idempotency key makes
+  the retried supervisor tool call return the existing child instead of creating a duplicate.
+- A child execution fails, is cancelled or times out: `GetDelegation` reports `failed` with the child's failure
+  code. The supervisor decides whether to retry, use a fallback agent or fail. `delegate_tasks` supports a fallback
+  retry for this case.
+- The orchestrator dies after a child is created but before the delegation row commits: the child execution exists
+  with `parent_execution_id` but no `delegations` row. The retried supervisor call can create a new child because
+  the idempotency key was not committed; this is the one duplicate-child window and is bounded by `max_children`.
+- An MCP server crashes or times out: the runtime returns a normalised tool error (`MCP_TIMEOUT`,
+  `MCP_CONNECTION_CLOSED`, `MCP_HTTP_*`); the model sees the error and may retry within its turn budget. The
+  connection is not reused after a dead process; the runtime process ends with the attempt.
+- An MCP tool has side effects and the attempt crashes after the call: the tool's idempotency key is passed to the
+  invocation; the MCP server is responsible for deduplication. The platform does not claim exactly-once external
+  effects.
+- Approval expiry releases the task on the next scheduler tick. The approval row is marked `expired`, an `expire`
+  decision is audited, and `on_reject` decides whether the execution continues or fails.
+
 ## 4. Startup reconciliation
 
 | Service | On startup |
@@ -255,5 +278,10 @@ task failure, except for `EXECUTION_TIMEOUT`.
 | `WORKER_CANCELLED` | attempt | Worker abandoned an attempt without a matching cancel request. | Per policy; treated as failure |
 | `UNSUPPORTED_RUNTIME` | attempt/task | No worker supports the pinned ABI/image digest. | No until capacity changes |
 | `EDGE_EVALUATION_FAILED` | task | CEL edge failed at runtime; terminal pre-execution failure. | No; fix the graph |
+| `EDGE_EVALUATION_FAILED` | task | A CEL edge/condition/mapping could not be evaluated. | No; fix the graph |
+| `INPUT_SCHEMA_INVALID` | task | Resolved node input does not match `input_schema`. | No |
+| `INPUT_MAPPING_INVALID` | task | Edge data mapping expression failed. | No |
+| `NODE_EXECUTION_FAILED` | task | A Go control node failed. | Usually no |
+| `SUBWORKFLOW_FAILED` | task | A child execution failed or disappeared. | Per parent policy |
 | `INTERNAL_ERROR` | any | Unexpected orchestrator error; state not committed. | Retry the operation |
 

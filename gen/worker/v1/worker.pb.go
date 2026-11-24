@@ -2402,8 +2402,10 @@ type GetTaskContextResponse struct {
 	ResumeCheckpointSequence      int32  `protobuf:"varint,19,opt,name=resume_checkpoint_sequence,json=resumeCheckpointSequence,proto3" json:"resume_checkpoint_sequence,omitempty"`
 	// Logical idempotency key for a tool node; external side effects must deduplicate on it across retries.
 	IdempotencyKey string `protobuf:"bytes,20,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Resolved, typed node input after upstream selection, edge data mappings and loop context.
+	NodeInput     *structpb.Struct `protobuf:"bytes,21,opt,name=node_input,json=nodeInput,proto3" json:"node_input,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetTaskContextResponse) Reset() {
@@ -2574,6 +2576,13 @@ func (x *GetTaskContextResponse) GetIdempotencyKey() string {
 		return x.IdempotencyKey
 	}
 	return ""
+}
+
+func (x *GetTaskContextResponse) GetNodeInput() *structpb.Struct {
+	if x != nil {
+		return x.NodeInput
+	}
+	return nil
 }
 
 type CheckpointRef struct {
@@ -2952,6 +2961,811 @@ func (x *PutCheckpointResponse) GetSizeBytes() int64 {
 	return 0
 }
 
+type DelegationAgent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Version       int32                  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DelegationAgent) Reset() {
+	*x = DelegationAgent{}
+	mi := &file_worker_v1_worker_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DelegationAgent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DelegationAgent) ProtoMessage() {}
+
+func (x *DelegationAgent) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DelegationAgent.ProtoReflect.Descriptor instead.
+func (*DelegationAgent) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *DelegationAgent) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *DelegationAgent) GetVersion() int32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *DelegationAgent) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type DelegateTaskRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	TaskId         string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	AttemptId      string                 `protobuf:"bytes,2,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	LeaseId        string                 `protobuf:"bytes,3,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	AgentId        string                 `protobuf:"bytes,4,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	AgentVersion   int32                  `protobuf:"varint,5,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	Task           *structpb.Struct       `protobuf:"bytes,6,opt,name=task,proto3" json:"task,omitempty"`
+	Context        *structpb.Struct       `protobuf:"bytes,7,opt,name=context,proto3" json:"context,omitempty"`
+	ContextRefs    []string               `protobuf:"bytes,8,rep,name=context_refs,json=contextRefs,proto3" json:"context_refs,omitempty"`
+	OutputSchema   *structpb.Struct       `protobuf:"bytes,9,opt,name=output_schema,json=outputSchema,proto3" json:"output_schema,omitempty"`
+	TimeoutSeconds int32                  `protobuf:"varint,10,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	MaxRetries     int32                  `protobuf:"varint,11,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`
+	// Stable across retries of the same supervisor tool call; prevents duplicate children.
+	IdempotencyKey string `protobuf:"bytes,12,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DelegateTaskRequest) Reset() {
+	*x = DelegateTaskRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DelegateTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DelegateTaskRequest) ProtoMessage() {}
+
+func (x *DelegateTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DelegateTaskRequest.ProtoReflect.Descriptor instead.
+func (*DelegateTaskRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *DelegateTaskRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *DelegateTaskRequest) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *DelegateTaskRequest) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
+}
+
+func (x *DelegateTaskRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *DelegateTaskRequest) GetAgentVersion() int32 {
+	if x != nil {
+		return x.AgentVersion
+	}
+	return 0
+}
+
+func (x *DelegateTaskRequest) GetTask() *structpb.Struct {
+	if x != nil {
+		return x.Task
+	}
+	return nil
+}
+
+func (x *DelegateTaskRequest) GetContext() *structpb.Struct {
+	if x != nil {
+		return x.Context
+	}
+	return nil
+}
+
+func (x *DelegateTaskRequest) GetContextRefs() []string {
+	if x != nil {
+		return x.ContextRefs
+	}
+	return nil
+}
+
+func (x *DelegateTaskRequest) GetOutputSchema() *structpb.Struct {
+	if x != nil {
+		return x.OutputSchema
+	}
+	return nil
+}
+
+func (x *DelegateTaskRequest) GetTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
+func (x *DelegateTaskRequest) GetMaxRetries() int32 {
+	if x != nil {
+		return x.MaxRetries
+	}
+	return 0
+}
+
+func (x *DelegateTaskRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+type DelegateTaskResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	DelegationId     string                 `protobuf:"bytes,1,opt,name=delegation_id,json=delegationId,proto3" json:"delegation_id,omitempty"`
+	ChildExecutionId string                 `protobuf:"bytes,2,opt,name=child_execution_id,json=childExecutionId,proto3" json:"child_execution_id,omitempty"`
+	Status           string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	Message          string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *DelegateTaskResponse) Reset() {
+	*x = DelegateTaskResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DelegateTaskResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DelegateTaskResponse) ProtoMessage() {}
+
+func (x *DelegateTaskResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DelegateTaskResponse.ProtoReflect.Descriptor instead.
+func (*DelegateTaskResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *DelegateTaskResponse) GetDelegationId() string {
+	if x != nil {
+		return x.DelegationId
+	}
+	return ""
+}
+
+func (x *DelegateTaskResponse) GetChildExecutionId() string {
+	if x != nil {
+		return x.ChildExecutionId
+	}
+	return ""
+}
+
+func (x *DelegateTaskResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *DelegateTaskResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type GetDelegationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	AttemptId     string                 `protobuf:"bytes,2,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	LeaseId       string                 `protobuf:"bytes,3,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	DelegationId  string                 `protobuf:"bytes,4,opt,name=delegation_id,json=delegationId,proto3" json:"delegation_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetDelegationRequest) Reset() {
+	*x = GetDelegationRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDelegationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDelegationRequest) ProtoMessage() {}
+
+func (x *GetDelegationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDelegationRequest.ProtoReflect.Descriptor instead.
+func (*GetDelegationRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *GetDelegationRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *GetDelegationRequest) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *GetDelegationRequest) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
+}
+
+func (x *GetDelegationRequest) GetDelegationId() string {
+	if x != nil {
+		return x.DelegationId
+	}
+	return ""
+}
+
+type GetDelegationResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	DelegationId     string                 `protobuf:"bytes,1,opt,name=delegation_id,json=delegationId,proto3" json:"delegation_id,omitempty"`
+	ChildExecutionId string                 `protobuf:"bytes,2,opt,name=child_execution_id,json=childExecutionId,proto3" json:"child_execution_id,omitempty"`
+	Status           string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	Output           *structpb.Struct       `protobuf:"bytes,4,opt,name=output,proto3" json:"output,omitempty"`
+	ErrorCode        string                 `protobuf:"bytes,5,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	ErrorMessage     string                 `protobuf:"bytes,6,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	TokensIn         int64                  `protobuf:"varint,7,opt,name=tokens_in,json=tokensIn,proto3" json:"tokens_in,omitempty"`
+	TokensOut        int64                  `protobuf:"varint,8,opt,name=tokens_out,json=tokensOut,proto3" json:"tokens_out,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *GetDelegationResponse) Reset() {
+	*x = GetDelegationResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetDelegationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetDelegationResponse) ProtoMessage() {}
+
+func (x *GetDelegationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetDelegationResponse.ProtoReflect.Descriptor instead.
+func (*GetDelegationResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *GetDelegationResponse) GetDelegationId() string {
+	if x != nil {
+		return x.DelegationId
+	}
+	return ""
+}
+
+func (x *GetDelegationResponse) GetChildExecutionId() string {
+	if x != nil {
+		return x.ChildExecutionId
+	}
+	return ""
+}
+
+func (x *GetDelegationResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *GetDelegationResponse) GetOutput() *structpb.Struct {
+	if x != nil {
+		return x.Output
+	}
+	return nil
+}
+
+func (x *GetDelegationResponse) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
+func (x *GetDelegationResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *GetDelegationResponse) GetTokensIn() int64 {
+	if x != nil {
+		return x.TokensIn
+	}
+	return 0
+}
+
+func (x *GetDelegationResponse) GetTokensOut() int64 {
+	if x != nil {
+		return x.TokensOut
+	}
+	return 0
+}
+
+type ListDelegationAgentsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	AttemptId     string                 `protobuf:"bytes,2,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	LeaseId       string                 `protobuf:"bytes,3,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListDelegationAgentsRequest) Reset() {
+	*x = ListDelegationAgentsRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListDelegationAgentsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListDelegationAgentsRequest) ProtoMessage() {}
+
+func (x *ListDelegationAgentsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListDelegationAgentsRequest.ProtoReflect.Descriptor instead.
+func (*ListDelegationAgentsRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *ListDelegationAgentsRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *ListDelegationAgentsRequest) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *ListDelegationAgentsRequest) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
+}
+
+type ListDelegationAgentsResponse struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Agents            []*DelegationAgent     `protobuf:"bytes,1,rep,name=agents,proto3" json:"agents,omitempty"`
+	MaxParallel       int32                  `protobuf:"varint,2,opt,name=max_parallel,json=maxParallel,proto3" json:"max_parallel,omitempty"`
+	RemainingChildren int32                  `protobuf:"varint,3,opt,name=remaining_children,json=remainingChildren,proto3" json:"remaining_children,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *ListDelegationAgentsResponse) Reset() {
+	*x = ListDelegationAgentsResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListDelegationAgentsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListDelegationAgentsResponse) ProtoMessage() {}
+
+func (x *ListDelegationAgentsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListDelegationAgentsResponse.ProtoReflect.Descriptor instead.
+func (*ListDelegationAgentsResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *ListDelegationAgentsResponse) GetAgents() []*DelegationAgent {
+	if x != nil {
+		return x.Agents
+	}
+	return nil
+}
+
+func (x *ListDelegationAgentsResponse) GetMaxParallel() int32 {
+	if x != nil {
+		return x.MaxParallel
+	}
+	return 0
+}
+
+func (x *ListDelegationAgentsResponse) GetRemainingChildren() int32 {
+	if x != nil {
+		return x.RemainingChildren
+	}
+	return 0
+}
+
+type PublishAgentEventRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	AttemptId     string                 `protobuf:"bytes,2,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	LeaseId       string                 `protobuf:"bytes,3,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	Topic         string                 `protobuf:"bytes,4,opt,name=topic,proto3" json:"topic,omitempty"`
+	Payload       *structpb.Struct       `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PublishAgentEventRequest) Reset() {
+	*x = PublishAgentEventRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PublishAgentEventRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PublishAgentEventRequest) ProtoMessage() {}
+
+func (x *PublishAgentEventRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PublishAgentEventRequest.ProtoReflect.Descriptor instead.
+func (*PublishAgentEventRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *PublishAgentEventRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *PublishAgentEventRequest) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *PublishAgentEventRequest) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
+}
+
+func (x *PublishAgentEventRequest) GetTopic() string {
+	if x != nil {
+		return x.Topic
+	}
+	return ""
+}
+
+func (x *PublishAgentEventRequest) GetPayload() *structpb.Struct {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+type PublishAgentEventResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PublishAgentEventResponse) Reset() {
+	*x = PublishAgentEventResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PublishAgentEventResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PublishAgentEventResponse) ProtoMessage() {}
+
+func (x *PublishAgentEventResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PublishAgentEventResponse.ProtoReflect.Descriptor instead.
+func (*PublishAgentEventResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *PublishAgentEventResponse) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+type WaitAgentEventRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	TaskId         string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	AttemptId      string                 `protobuf:"bytes,2,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	LeaseId        string                 `protobuf:"bytes,3,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
+	Topic          string                 `protobuf:"bytes,4,opt,name=topic,proto3" json:"topic,omitempty"`
+	TimeoutSeconds int32                  `protobuf:"varint,5,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *WaitAgentEventRequest) Reset() {
+	*x = WaitAgentEventRequest{}
+	mi := &file_worker_v1_worker_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WaitAgentEventRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WaitAgentEventRequest) ProtoMessage() {}
+
+func (x *WaitAgentEventRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WaitAgentEventRequest.ProtoReflect.Descriptor instead.
+func (*WaitAgentEventRequest) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *WaitAgentEventRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *WaitAgentEventRequest) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *WaitAgentEventRequest) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
+}
+
+func (x *WaitAgentEventRequest) GetTopic() string {
+	if x != nil {
+		return x.Topic
+	}
+	return ""
+}
+
+func (x *WaitAgentEventRequest) GetTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
+type WaitAgentEventResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EventId       string                 `protobuf:"bytes,1,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	Payload       *structpb.Struct       `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	Found         bool                   `protobuf:"varint,3,opt,name=found,proto3" json:"found,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WaitAgentEventResponse) Reset() {
+	*x = WaitAgentEventResponse{}
+	mi := &file_worker_v1_worker_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WaitAgentEventResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WaitAgentEventResponse) ProtoMessage() {}
+
+func (x *WaitAgentEventResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_v1_worker_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WaitAgentEventResponse.ProtoReflect.Descriptor instead.
+func (*WaitAgentEventResponse) Descriptor() ([]byte, []int) {
+	return file_worker_v1_worker_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *WaitAgentEventResponse) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+func (x *WaitAgentEventResponse) GetPayload() *structpb.Struct {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *WaitAgentEventResponse) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
 var File_worker_v1_worker_proto protoreflect.FileDescriptor
 
 const file_worker_v1_worker_proto_rawDesc = "" +
@@ -3144,7 +3958,7 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
 	"\n" +
 	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12\x19\n" +
-	"\blease_id\x18\x03 \x01(\tR\aleaseId\"\x85\t\n" +
+	"\blease_id\x18\x03 \x01(\tR\aleaseId\"\xbd\t\n" +
 	"\x16GetTaskContextResponse\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
@@ -3168,7 +3982,9 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x14resume_checkpoint_id\x18\x11 \x01(\tR\x12resumeCheckpointId\x12G\n" +
 	" resume_checkpoint_schema_version\x18\x12 \x01(\x05R\x1dresumeCheckpointSchemaVersion\x12<\n" +
 	"\x1aresume_checkpoint_sequence\x18\x13 \x01(\x05R\x18resumeCheckpointSequence\x12'\n" +
-	"\x0fidempotency_key\x18\x14 \x01(\tR\x0eidempotencyKey\x1a[\n" +
+	"\x0fidempotency_key\x18\x14 \x01(\tR\x0eidempotencyKey\x126\n" +
+	"\n" +
+	"node_input\x18\x15 \x01(\v2\x17.google.protobuf.StructR\tnodeInput\x1a[\n" +
 	"\x14UpstreamOutputsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
 	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01\"\xe7\x01\n" +
@@ -3211,7 +4027,78 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12\x1c\n" +
 	"\tduplicate\x18\x02 \x01(\bR\tduplicate\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x03 \x01(\x03R\tsizeBytes*\xb3\x02\n" +
+	"size_bytes\x18\x03 \x01(\x03R\tsizeBytes\"Z\n" +
+	"\x0fDelegationAgent\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\x05R\aversion\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\"\xdc\x03\n" +
+	"\x13DelegateTaskRequest\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12\x19\n" +
+	"\blease_id\x18\x03 \x01(\tR\aleaseId\x12\x19\n" +
+	"\bagent_id\x18\x04 \x01(\tR\aagentId\x12#\n" +
+	"\ragent_version\x18\x05 \x01(\x05R\fagentVersion\x12+\n" +
+	"\x04task\x18\x06 \x01(\v2\x17.google.protobuf.StructR\x04task\x121\n" +
+	"\acontext\x18\a \x01(\v2\x17.google.protobuf.StructR\acontext\x12!\n" +
+	"\fcontext_refs\x18\b \x03(\tR\vcontextRefs\x12<\n" +
+	"\routput_schema\x18\t \x01(\v2\x17.google.protobuf.StructR\foutputSchema\x12'\n" +
+	"\x0ftimeout_seconds\x18\n" +
+	" \x01(\x05R\x0etimeoutSeconds\x12\x1f\n" +
+	"\vmax_retries\x18\v \x01(\x05R\n" +
+	"maxRetries\x12'\n" +
+	"\x0fidempotency_key\x18\f \x01(\tR\x0eidempotencyKey\"\x9b\x01\n" +
+	"\x14DelegateTaskResponse\x12#\n" +
+	"\rdelegation_id\x18\x01 \x01(\tR\fdelegationId\x12,\n" +
+	"\x12child_execution_id\x18\x02 \x01(\tR\x10childExecutionId\x12\x16\n" +
+	"\x06status\x18\x03 \x01(\tR\x06status\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"\x8e\x01\n" +
+	"\x14GetDelegationRequest\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12\x19\n" +
+	"\blease_id\x18\x03 \x01(\tR\aleaseId\x12#\n" +
+	"\rdelegation_id\x18\x04 \x01(\tR\fdelegationId\"\xb3\x02\n" +
+	"\x15GetDelegationResponse\x12#\n" +
+	"\rdelegation_id\x18\x01 \x01(\tR\fdelegationId\x12,\n" +
+	"\x12child_execution_id\x18\x02 \x01(\tR\x10childExecutionId\x12\x16\n" +
+	"\x06status\x18\x03 \x01(\tR\x06status\x12/\n" +
+	"\x06output\x18\x04 \x01(\v2\x17.google.protobuf.StructR\x06output\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x05 \x01(\tR\terrorCode\x12#\n" +
+	"\rerror_message\x18\x06 \x01(\tR\ferrorMessage\x12\x1b\n" +
+	"\ttokens_in\x18\a \x01(\x03R\btokensIn\x12\x1d\n" +
+	"\n" +
+	"tokens_out\x18\b \x01(\x03R\ttokensOut\"p\n" +
+	"\x1bListDelegationAgentsRequest\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12\x19\n" +
+	"\blease_id\x18\x03 \x01(\tR\aleaseId\"\xad\x01\n" +
+	"\x1cListDelegationAgentsResponse\x12;\n" +
+	"\x06agents\x18\x01 \x03(\v2#.platform.worker.v1.DelegationAgentR\x06agents\x12!\n" +
+	"\fmax_parallel\x18\x02 \x01(\x05R\vmaxParallel\x12-\n" +
+	"\x12remaining_children\x18\x03 \x01(\x05R\x11remainingChildren\"\xb6\x01\n" +
+	"\x18PublishAgentEventRequest\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12\x19\n" +
+	"\blease_id\x18\x03 \x01(\tR\aleaseId\x12\x14\n" +
+	"\x05topic\x18\x04 \x01(\tR\x05topic\x121\n" +
+	"\apayload\x18\x05 \x01(\v2\x17.google.protobuf.StructR\apayload\"6\n" +
+	"\x19PublishAgentEventResponse\x12\x19\n" +
+	"\bevent_id\x18\x01 \x01(\tR\aeventId\"\xa9\x01\n" +
+	"\x15WaitAgentEventRequest\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12\x19\n" +
+	"\blease_id\x18\x03 \x01(\tR\aleaseId\x12\x14\n" +
+	"\x05topic\x18\x04 \x01(\tR\x05topic\x12'\n" +
+	"\x0ftimeout_seconds\x18\x05 \x01(\x05R\x0etimeoutSeconds\"|\n" +
+	"\x16WaitAgentEventResponse\x12\x19\n" +
+	"\bevent_id\x18\x01 \x01(\tR\aeventId\x121\n" +
+	"\apayload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\apayload\x12\x14\n" +
+	"\x05found\x18\x03 \x01(\bR\x05found*\xb3\x02\n" +
 	"\x13TaskRejectionReason\x12%\n" +
 	"!TASK_REJECTION_REASON_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aTASK_REJECTION_REASON_BUSY\x10\x01\x12&\n" +
@@ -3252,7 +4139,8 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x19ARTIFACT_KIND_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18ARTIFACT_KIND_CHECKPOINT\x10\x01\x12\x18\n" +
 	"\x14ARTIFACT_KIND_OUTPUT\x10\x02\x12\x15\n" +
-	"\x11ARTIFACT_KIND_LOG\x10\x032\x99\x06\n" +
+	"\x11ARTIFACT_KIND_LOG\x10\x032\xb8\n" +
+	"\n" +
 	"\rWorkerControl\x12Y\n" +
 	"\aConnect\x12!.platform.worker.v1.WorkerMessage\x1a'.platform.worker.v1.OrchestratorMessage(\x010\x01\x12m\n" +
 	"\x10ReportTaskResult\x12+.platform.worker.v1.ReportTaskResultRequest\x1a,.platform.worker.v1.ReportTaskResultResponse\x12y\n" +
@@ -3260,7 +4148,12 @@ const file_worker_v1_worker_proto_rawDesc = "" +
 	"\x16CreateArtifactDownload\x121.platform.worker.v1.CreateArtifactDownloadRequest\x1a2.platform.worker.v1.CreateArtifactDownloadResponse\x12g\n" +
 	"\x0eGetTaskContext\x12).platform.worker.v1.GetTaskContextRequest\x1a*.platform.worker.v1.GetTaskContextResponse\x12s\n" +
 	"\x12GetTaskCredentials\x12-.platform.worker.v1.GetTaskCredentialsRequest\x1a..platform.worker.v1.GetTaskCredentialsResponse\x12d\n" +
-	"\rPutCheckpoint\x12(.platform.worker.v1.PutCheckpointRequest\x1a).platform.worker.v1.PutCheckpointResponseBAZ?github.com/agent-platform/agent-platform/gen/worker/v1;workerv1b\x06proto3"
+	"\rPutCheckpoint\x12(.platform.worker.v1.PutCheckpointRequest\x1a).platform.worker.v1.PutCheckpointResponse\x12a\n" +
+	"\fDelegateTask\x12'.platform.worker.v1.DelegateTaskRequest\x1a(.platform.worker.v1.DelegateTaskResponse\x12d\n" +
+	"\rGetDelegation\x12(.platform.worker.v1.GetDelegationRequest\x1a).platform.worker.v1.GetDelegationResponse\x12y\n" +
+	"\x14ListDelegationAgents\x12/.platform.worker.v1.ListDelegationAgentsRequest\x1a0.platform.worker.v1.ListDelegationAgentsResponse\x12p\n" +
+	"\x11PublishAgentEvent\x12,.platform.worker.v1.PublishAgentEventRequest\x1a-.platform.worker.v1.PublishAgentEventResponse\x12g\n" +
+	"\x0eWaitAgentEvent\x12).platform.worker.v1.WaitAgentEventRequest\x1a*.platform.worker.v1.WaitAgentEventResponseBAZ?github.com/agent-platform/agent-platform/gen/worker/v1;workerv1b\x06proto3"
 
 var (
 	file_worker_v1_worker_proto_rawDescOnce sync.Once
@@ -3275,7 +4168,7 @@ func file_worker_v1_worker_proto_rawDescGZIP() []byte {
 }
 
 var file_worker_v1_worker_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
 var file_worker_v1_worker_proto_goTypes = []any{
 	(TaskRejectionReason)(0),               // 0: platform.worker.v1.TaskRejectionReason
 	(WorkerStatus)(0),                      // 1: platform.worker.v1.WorkerStatus
@@ -3314,12 +4207,23 @@ var file_worker_v1_worker_proto_goTypes = []any{
 	(*GetTaskCredentialsResponse)(nil),     // 34: platform.worker.v1.GetTaskCredentialsResponse
 	(*PutCheckpointRequest)(nil),           // 35: platform.worker.v1.PutCheckpointRequest
 	(*PutCheckpointResponse)(nil),          // 36: platform.worker.v1.PutCheckpointResponse
-	nil,                                    // 37: platform.worker.v1.Hello.LabelsEntry
-	nil,                                    // 38: platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
-	nil,                                    // 39: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
-	nil,                                    // 40: platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
-	(*timestamppb.Timestamp)(nil),          // 41: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),                // 42: google.protobuf.Struct
+	(*DelegationAgent)(nil),                // 37: platform.worker.v1.DelegationAgent
+	(*DelegateTaskRequest)(nil),            // 38: platform.worker.v1.DelegateTaskRequest
+	(*DelegateTaskResponse)(nil),           // 39: platform.worker.v1.DelegateTaskResponse
+	(*GetDelegationRequest)(nil),           // 40: platform.worker.v1.GetDelegationRequest
+	(*GetDelegationResponse)(nil),          // 41: platform.worker.v1.GetDelegationResponse
+	(*ListDelegationAgentsRequest)(nil),    // 42: platform.worker.v1.ListDelegationAgentsRequest
+	(*ListDelegationAgentsResponse)(nil),   // 43: platform.worker.v1.ListDelegationAgentsResponse
+	(*PublishAgentEventRequest)(nil),       // 44: platform.worker.v1.PublishAgentEventRequest
+	(*PublishAgentEventResponse)(nil),      // 45: platform.worker.v1.PublishAgentEventResponse
+	(*WaitAgentEventRequest)(nil),          // 46: platform.worker.v1.WaitAgentEventRequest
+	(*WaitAgentEventResponse)(nil),         // 47: platform.worker.v1.WaitAgentEventResponse
+	nil,                                    // 48: platform.worker.v1.Hello.LabelsEntry
+	nil,                                    // 49: platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
+	nil,                                    // 50: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
+	nil,                                    // 51: platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
+	(*timestamppb.Timestamp)(nil),          // 52: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                // 53: google.protobuf.Struct
 }
 var file_worker_v1_worker_proto_depIdxs = []int32{
 	8,  // 0: platform.worker.v1.WorkerMessage.hello:type_name -> platform.worker.v1.Hello
@@ -3332,61 +4236,79 @@ var file_worker_v1_worker_proto_depIdxs = []int32{
 	15, // 7: platform.worker.v1.OrchestratorMessage.cancel_task:type_name -> platform.worker.v1.CancelTask
 	16, // 8: platform.worker.v1.OrchestratorMessage.drain:type_name -> platform.worker.v1.DrainWorker
 	18, // 9: platform.worker.v1.OrchestratorMessage.error:type_name -> platform.worker.v1.ControlError
-	37, // 10: platform.worker.v1.Hello.labels:type_name -> platform.worker.v1.Hello.LabelsEntry
+	48, // 10: platform.worker.v1.Hello.labels:type_name -> platform.worker.v1.Hello.LabelsEntry
 	19, // 11: platform.worker.v1.Hello.capacity:type_name -> platform.worker.v1.Capacity
 	20, // 12: platform.worker.v1.Hello.resources:type_name -> platform.worker.v1.WorkerResources
-	41, // 13: platform.worker.v1.HelloAck.server_time:type_name -> google.protobuf.Timestamp
-	41, // 14: platform.worker.v1.Heartbeat.sent_at:type_name -> google.protobuf.Timestamp
+	52, // 13: platform.worker.v1.HelloAck.server_time:type_name -> google.protobuf.Timestamp
+	52, // 14: platform.worker.v1.Heartbeat.sent_at:type_name -> google.protobuf.Timestamp
 	11, // 15: platform.worker.v1.Heartbeat.active_attempts:type_name -> platform.worker.v1.ActiveAttempt
 	19, // 16: platform.worker.v1.Heartbeat.capacity:type_name -> platform.worker.v1.Capacity
 	1,  // 17: platform.worker.v1.Heartbeat.status:type_name -> platform.worker.v1.WorkerStatus
-	41, // 18: platform.worker.v1.TaskAccepted.started_at:type_name -> google.protobuf.Timestamp
-	41, // 19: platform.worker.v1.TaskProgress.reported_at:type_name -> google.protobuf.Timestamp
+	52, // 18: platform.worker.v1.TaskAccepted.started_at:type_name -> google.protobuf.Timestamp
+	52, // 19: platform.worker.v1.TaskProgress.reported_at:type_name -> google.protobuf.Timestamp
 	0,  // 20: platform.worker.v1.TaskRejected.reason:type_name -> platform.worker.v1.TaskRejectionReason
 	2,  // 21: platform.worker.v1.ReportTaskResultRequest.outcome:type_name -> platform.worker.v1.TaskOutcome
-	42, // 22: platform.worker.v1.ReportTaskResultRequest.output:type_name -> google.protobuf.Struct
+	53, // 22: platform.worker.v1.ReportTaskResultRequest.output:type_name -> google.protobuf.Struct
 	23, // 23: platform.worker.v1.ReportTaskResultRequest.output_artifact:type_name -> platform.worker.v1.ArtifactRef
 	23, // 24: platform.worker.v1.ReportTaskResultRequest.checkpoint:type_name -> platform.worker.v1.ArtifactRef
 	22, // 25: platform.worker.v1.ReportTaskResultRequest.failure:type_name -> platform.worker.v1.TaskFailure
 	24, // 26: platform.worker.v1.ReportTaskResultRequest.metrics:type_name -> platform.worker.v1.AttemptMetrics
-	41, // 27: platform.worker.v1.ReportTaskResultRequest.started_at:type_name -> google.protobuf.Timestamp
-	41, // 28: platform.worker.v1.ReportTaskResultRequest.finished_at:type_name -> google.protobuf.Timestamp
+	52, // 27: platform.worker.v1.ReportTaskResultRequest.started_at:type_name -> google.protobuf.Timestamp
+	52, // 28: platform.worker.v1.ReportTaskResultRequest.finished_at:type_name -> google.protobuf.Timestamp
 	3,  // 29: platform.worker.v1.TaskFailure.classification:type_name -> platform.worker.v1.FailureClassification
-	42, // 30: platform.worker.v1.AttemptMetrics.extra:type_name -> google.protobuf.Struct
+	53, // 30: platform.worker.v1.AttemptMetrics.extra:type_name -> google.protobuf.Struct
 	4,  // 31: platform.worker.v1.ReportTaskResultResponse.status:type_name -> platform.worker.v1.ResultStatus
 	5,  // 32: platform.worker.v1.CreateArtifactUploadRequest.kind:type_name -> platform.worker.v1.ArtifactKind
-	38, // 33: platform.worker.v1.CreateArtifactUploadResponse.headers:type_name -> platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
-	41, // 34: platform.worker.v1.CreateArtifactUploadResponse.expires_at:type_name -> google.protobuf.Timestamp
-	41, // 35: platform.worker.v1.CreateArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
-	42, // 36: platform.worker.v1.GetTaskContextResponse.version_spec:type_name -> google.protobuf.Struct
-	42, // 37: platform.worker.v1.GetTaskContextResponse.execution_input:type_name -> google.protobuf.Struct
-	42, // 38: platform.worker.v1.GetTaskContextResponse.node_params:type_name -> google.protobuf.Struct
-	39, // 39: platform.worker.v1.GetTaskContextResponse.upstream_outputs:type_name -> platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
+	49, // 33: platform.worker.v1.CreateArtifactUploadResponse.headers:type_name -> platform.worker.v1.CreateArtifactUploadResponse.HeadersEntry
+	52, // 34: platform.worker.v1.CreateArtifactUploadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	52, // 35: platform.worker.v1.CreateArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	53, // 36: platform.worker.v1.GetTaskContextResponse.version_spec:type_name -> google.protobuf.Struct
+	53, // 37: platform.worker.v1.GetTaskContextResponse.execution_input:type_name -> google.protobuf.Struct
+	53, // 38: platform.worker.v1.GetTaskContextResponse.node_params:type_name -> google.protobuf.Struct
+	50, // 39: platform.worker.v1.GetTaskContextResponse.upstream_outputs:type_name -> platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry
 	32, // 40: platform.worker.v1.GetTaskContextResponse.resume_checkpoint:type_name -> platform.worker.v1.CheckpointRef
-	41, // 41: platform.worker.v1.GetTaskContextResponse.deadline:type_name -> google.protobuf.Timestamp
-	42, // 42: platform.worker.v1.GetTaskContextResponse.node_output_schema:type_name -> google.protobuf.Struct
-	40, // 43: platform.worker.v1.GetTaskCredentialsResponse.values:type_name -> platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
-	41, // 44: platform.worker.v1.GetTaskCredentialsResponse.expires_at:type_name -> google.protobuf.Timestamp
-	42, // 45: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
-	6,  // 46: platform.worker.v1.WorkerControl.Connect:input_type -> platform.worker.v1.WorkerMessage
-	21, // 47: platform.worker.v1.WorkerControl.ReportTaskResult:input_type -> platform.worker.v1.ReportTaskResultRequest
-	26, // 48: platform.worker.v1.WorkerControl.CreateArtifactUpload:input_type -> platform.worker.v1.CreateArtifactUploadRequest
-	28, // 49: platform.worker.v1.WorkerControl.CreateArtifactDownload:input_type -> platform.worker.v1.CreateArtifactDownloadRequest
-	30, // 50: platform.worker.v1.WorkerControl.GetTaskContext:input_type -> platform.worker.v1.GetTaskContextRequest
-	33, // 51: platform.worker.v1.WorkerControl.GetTaskCredentials:input_type -> platform.worker.v1.GetTaskCredentialsRequest
-	35, // 52: platform.worker.v1.WorkerControl.PutCheckpoint:input_type -> platform.worker.v1.PutCheckpointRequest
-	7,  // 53: platform.worker.v1.WorkerControl.Connect:output_type -> platform.worker.v1.OrchestratorMessage
-	25, // 54: platform.worker.v1.WorkerControl.ReportTaskResult:output_type -> platform.worker.v1.ReportTaskResultResponse
-	27, // 55: platform.worker.v1.WorkerControl.CreateArtifactUpload:output_type -> platform.worker.v1.CreateArtifactUploadResponse
-	29, // 56: platform.worker.v1.WorkerControl.CreateArtifactDownload:output_type -> platform.worker.v1.CreateArtifactDownloadResponse
-	31, // 57: platform.worker.v1.WorkerControl.GetTaskContext:output_type -> platform.worker.v1.GetTaskContextResponse
-	34, // 58: platform.worker.v1.WorkerControl.GetTaskCredentials:output_type -> platform.worker.v1.GetTaskCredentialsResponse
-	36, // 59: platform.worker.v1.WorkerControl.PutCheckpoint:output_type -> platform.worker.v1.PutCheckpointResponse
-	53, // [53:60] is the sub-list for method output_type
-	46, // [46:53] is the sub-list for method input_type
-	46, // [46:46] is the sub-list for extension type_name
-	46, // [46:46] is the sub-list for extension extendee
-	0,  // [0:46] is the sub-list for field type_name
+	52, // 41: platform.worker.v1.GetTaskContextResponse.deadline:type_name -> google.protobuf.Timestamp
+	53, // 42: platform.worker.v1.GetTaskContextResponse.node_output_schema:type_name -> google.protobuf.Struct
+	53, // 43: platform.worker.v1.GetTaskContextResponse.node_input:type_name -> google.protobuf.Struct
+	51, // 44: platform.worker.v1.GetTaskCredentialsResponse.values:type_name -> platform.worker.v1.GetTaskCredentialsResponse.ValuesEntry
+	52, // 45: platform.worker.v1.GetTaskCredentialsResponse.expires_at:type_name -> google.protobuf.Timestamp
+	53, // 46: platform.worker.v1.DelegateTaskRequest.task:type_name -> google.protobuf.Struct
+	53, // 47: platform.worker.v1.DelegateTaskRequest.context:type_name -> google.protobuf.Struct
+	53, // 48: platform.worker.v1.DelegateTaskRequest.output_schema:type_name -> google.protobuf.Struct
+	53, // 49: platform.worker.v1.GetDelegationResponse.output:type_name -> google.protobuf.Struct
+	37, // 50: platform.worker.v1.ListDelegationAgentsResponse.agents:type_name -> platform.worker.v1.DelegationAgent
+	53, // 51: platform.worker.v1.PublishAgentEventRequest.payload:type_name -> google.protobuf.Struct
+	53, // 52: platform.worker.v1.WaitAgentEventResponse.payload:type_name -> google.protobuf.Struct
+	53, // 53: platform.worker.v1.GetTaskContextResponse.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
+	6,  // 54: platform.worker.v1.WorkerControl.Connect:input_type -> platform.worker.v1.WorkerMessage
+	21, // 55: platform.worker.v1.WorkerControl.ReportTaskResult:input_type -> platform.worker.v1.ReportTaskResultRequest
+	26, // 56: platform.worker.v1.WorkerControl.CreateArtifactUpload:input_type -> platform.worker.v1.CreateArtifactUploadRequest
+	28, // 57: platform.worker.v1.WorkerControl.CreateArtifactDownload:input_type -> platform.worker.v1.CreateArtifactDownloadRequest
+	30, // 58: platform.worker.v1.WorkerControl.GetTaskContext:input_type -> platform.worker.v1.GetTaskContextRequest
+	33, // 59: platform.worker.v1.WorkerControl.GetTaskCredentials:input_type -> platform.worker.v1.GetTaskCredentialsRequest
+	35, // 60: platform.worker.v1.WorkerControl.PutCheckpoint:input_type -> platform.worker.v1.PutCheckpointRequest
+	38, // 61: platform.worker.v1.WorkerControl.DelegateTask:input_type -> platform.worker.v1.DelegateTaskRequest
+	40, // 62: platform.worker.v1.WorkerControl.GetDelegation:input_type -> platform.worker.v1.GetDelegationRequest
+	42, // 63: platform.worker.v1.WorkerControl.ListDelegationAgents:input_type -> platform.worker.v1.ListDelegationAgentsRequest
+	44, // 64: platform.worker.v1.WorkerControl.PublishAgentEvent:input_type -> platform.worker.v1.PublishAgentEventRequest
+	46, // 65: platform.worker.v1.WorkerControl.WaitAgentEvent:input_type -> platform.worker.v1.WaitAgentEventRequest
+	7,  // 66: platform.worker.v1.WorkerControl.Connect:output_type -> platform.worker.v1.OrchestratorMessage
+	25, // 67: platform.worker.v1.WorkerControl.ReportTaskResult:output_type -> platform.worker.v1.ReportTaskResultResponse
+	27, // 68: platform.worker.v1.WorkerControl.CreateArtifactUpload:output_type -> platform.worker.v1.CreateArtifactUploadResponse
+	29, // 69: platform.worker.v1.WorkerControl.CreateArtifactDownload:output_type -> platform.worker.v1.CreateArtifactDownloadResponse
+	31, // 70: platform.worker.v1.WorkerControl.GetTaskContext:output_type -> platform.worker.v1.GetTaskContextResponse
+	34, // 71: platform.worker.v1.WorkerControl.GetTaskCredentials:output_type -> platform.worker.v1.GetTaskCredentialsResponse
+	36, // 72: platform.worker.v1.WorkerControl.PutCheckpoint:output_type -> platform.worker.v1.PutCheckpointResponse
+	39, // 73: platform.worker.v1.WorkerControl.DelegateTask:output_type -> platform.worker.v1.DelegateTaskResponse
+	41, // 74: platform.worker.v1.WorkerControl.GetDelegation:output_type -> platform.worker.v1.GetDelegationResponse
+	43, // 75: platform.worker.v1.WorkerControl.ListDelegationAgents:output_type -> platform.worker.v1.ListDelegationAgentsResponse
+	45, // 76: platform.worker.v1.WorkerControl.PublishAgentEvent:output_type -> platform.worker.v1.PublishAgentEventResponse
+	47, // 77: platform.worker.v1.WorkerControl.WaitAgentEvent:output_type -> platform.worker.v1.WaitAgentEventResponse
+	66, // [66:78] is the sub-list for method output_type
+	54, // [54:66] is the sub-list for method input_type
+	54, // [54:54] is the sub-list for extension type_name
+	54, // [54:54] is the sub-list for extension extendee
+	0,  // [0:54] is the sub-list for field type_name
 }
 
 func init() { file_worker_v1_worker_proto_init() }
@@ -3414,7 +4336,7 @@ func file_worker_v1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_v1_worker_proto_rawDesc), len(file_worker_v1_worker_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   35,
+			NumMessages:   46,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

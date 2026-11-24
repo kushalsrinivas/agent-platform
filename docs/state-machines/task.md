@@ -85,7 +85,8 @@ stateDiagram-v2
 | T9 | `pending → cancelled` | Reaper / lifecycle | Execution `cancel_requested` or `failing`; or cancel came before assignment | No attempt; `skip_reason=null`; event; completion evaluation. |
 | T10 | `assigned/running → cancelled` | Result handler or reaper | Execution `cancel_requested`/`failing`, or user cancel propagated | Close attempt `cancelled` (or `lease_expired` if unreachable, with `effect_uncertain`); event; completion evaluation. |
 | T11 | `pending → skipped` | Scheduler | Activation decided false or unavailable (§5) | Set `skip_reason`; event; completion evaluation. No attempt. |
-| T12 | `pending → failed` | Scheduler / lifecycle | Terminal pre-execution failure: CEL evaluation error (`EDGE_EVALUATION_FAILED`) or a pinned version/runtime became unassignable for a non-retryable reason | Set error code; no attempt; event; completion evaluation. |
+| T12 | `pending → failed` | Scheduler / lifecycle | Terminal pre-execution failure: CEL evaluation error (`EDGE_EVALUATION_FAILED`), input mapping/schema failure, or a pinned version/runtime became unassignable for a non-retryable reason | Set error code; no attempt; event; completion evaluation. |
+| T13 | `pending → succeeded` | Scheduler (Go control node) | `start`, `end`, `condition`, `transform`, `parallel`, `join`, `delay` or `approval` completed | Store control output in `result_inline`; no attempt; event; completion evaluation. |
 
 Notes:
 
@@ -216,12 +217,33 @@ grading belongs to the workflow.
 | `retry_on` | `[transient, timeout, worker_lost]`; `result_invalid` opt-in | Which failure classes may return the task to `pending`. A workflow `policy.retry` supplies the default. |
 | `timeout_seconds` | 600 | Per-attempt runtime deadline, enforced by worker and reaper. |
 | `side_effect_class` | `read_only` | `read_only`, `idempotent`, `non_idempotent`. Non-idempotent requires an idempotency key or `max_attempts=1` (ADR 0006). |
+| `input_schema` | none | Optional JSON Schema for the resolved `node_input`; validated before assignment/control execution. |
 | `output_schema` | none | Optional JSON Schema for result validation. |
+| `config` | none | Type-specific control-node configuration (`expression`, `mapping`, `join`, `delay`, `approval`, `workflow`, `loop`, `input`, `output_from`). |
+| `resources` | none | Optional CPU/memory fit constraints for worker placement. |
 | `checkpoint_mode` | Agent version default (`on_node_end`) | `none`, `on_node_end`, `inherit`. The workflow node overrides the agent version. Checkpoints are written after each model response and recoverable tool call and at node completion, uploaded while the attempt runs, and resumed by the next attempt. |
 | `require_checkpoint` | false | If true, a failed checkpoint encode/write fails the attempt instead of degrading to a warning. A success is never reported when a produced checkpoint could not be uploaded. |
 
 Publishing a workflow validates these fields and their combinations. The orchestrator re-validates at
 materialisation and again when applying retry policy.
+
+## 8a. Control nodes, joins and child executions
+
+- `start`, `end` and `parallel` are Go pass-through nodes. Explicit `end` uses join-all semantics.
+- `condition` stores `{"result": bool}`; `transform` evaluates a CEL mapping. Their output is a normal task result
+  (`execution_tasks.result_inline`) with no attempt row.
+- `join` supports `all` and `successful N`; `on_partial` is `fail`, `skip` or `continue`. The scheduler may activate
+  a `successful` join before every branch is terminal.
+- `delay` and `approval` keep the task `pending` with `control_state` and `next_attempt_at`; no worker is assigned.
+  An approval task also has one `execution.approvals` row. Votes are recorded in `approval_decisions`; `any` decides
+  on the first vote, `all` waits for every assigned approver, and expiry is recorded as an `expire` decision. The
+  task transitions to `succeeded` or `failed` on the next control tick according to `on_reject`.
+- `subworkflow` and `loop` keep the parent task pending while a child execution runs. The child is a normal
+  execution with its own attempts and checkpoints. The parent resumes after restart by polling the child.
+- A supervisor `agent` task creates delegated child executions through `DelegateTask`; the child is a normal
+  execution with `parent_execution_id`/`parent_task_id`. The supervisor stays `running` on its worker and polls
+  `GetDelegation`. A child failure is a result, not an automatic parent failure; the supervisor's policy decides.
+- A child reference is a pinned published workflow version; self-reference is rejected at publication.
 
 ## 9. Persistence rules
 

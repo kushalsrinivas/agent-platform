@@ -155,9 +155,11 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 		VersionSpec:     taskCtx.GetVersionSpec(),
 		ExecutionInput:  taskCtx.GetExecutionInput(),
 		NodeParams:      taskCtx.GetNodeParams(),
+		NodeInput:       taskCtx.GetNodeInput(),
 		UpstreamOutputs: taskCtx.GetUpstreamOutputs(),
 		Deadline:        taskCtx.GetDeadline(),
 		Traceparent:     taskCtx.GetTraceparent(),
+		LeaseId:         dispatch.LeaseID,
 	}
 	if dispatch.NodeType == contracts.NodeTypeTool {
 		toolID, toolVersion, err := splitToolVersion(dispatch.ToolVersionID)
@@ -165,7 +167,10 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 			return delivery.ExecutionOutcome{}, err
 		}
 		arguments := map[string]any{}
-		if taskCtx.GetNodeParams() != nil {
+		if taskCtx.GetNodeInput() != nil {
+			arguments = taskCtx.GetNodeInput().AsMap()
+		}
+		if len(arguments) == 0 && taskCtx.GetNodeParams() != nil {
 			arguments = taskCtx.GetNodeParams().AsMap()
 		}
 		if len(arguments) == 0 && taskCtx.GetExecutionInput() != nil {
@@ -185,6 +190,7 @@ func (e *Executor) Execute(ctx context.Context, dispatch *contracts.TaskDispatch
 				Deadline:       taskCtx.GetDeadline(),
 				Traceparent:    taskCtx.GetTraceparent(),
 				IdempotencyKey: taskCtx.GetIdempotencyKey(),
+				NodeInput:      taskCtx.GetNodeInput(),
 			},
 		})
 		if err != nil {

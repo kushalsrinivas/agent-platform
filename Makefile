@@ -132,6 +132,7 @@ build-go: ## Build Go binaries into bin/
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/orchestrator ./services/orchestrator/cmd/orchestrator
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/worker ./services/worker/cmd/worker
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/platformctl ./cli/cmd/platformctl
+	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/agentctl ./cli/cmd/agentctl
 
 integration-test: ## Run integration tests against the Docker stack
 	POSTGRES_PORT=$(POSTGRES_PORT) API_RATE_LIMIT_PER_MINUTE=1000 $(COMPOSE) up -d --build postgres nats redis minio minio-init api orchestrator worker
@@ -164,9 +165,11 @@ proto: ## Regenerate Go code from proto/ (requires protoc and plugins)
 	cd runtimes/python && $(UV) run python -m grpc_tools.protoc -I../../proto \
 		--python_out=src/agent_runtime/proto_gen \
 		--grpc_python_out=src/agent_runtime/proto_gen \
-		runtime/v1/runtime.proto
+		runtime/v1/runtime.proto worker/v1/worker.proto
 	mv runtimes/python/src/agent_runtime/proto_gen/runtime/v1/*.py runtimes/python/src/agent_runtime/proto_gen/ 2>/dev/null || true
+	mv runtimes/python/src/agent_runtime/proto_gen/worker/v1/*.py runtimes/python/src/agent_runtime/proto_gen/ 2>/dev/null || true
 	rmdir runtimes/python/src/agent_runtime/proto_gen/runtime/v1 runtimes/python/src/agent_runtime/proto_gen/runtime 2>/dev/null || true
+	rmdir runtimes/python/src/agent_runtime/proto_gen/worker/v1 runtimes/python/src/agent_runtime/proto_gen/worker 2>/dev/null || true
 	python3 scripts/patch_runtime_stubs.py
 
 fmt: ## Format Go, Python and TypeScript

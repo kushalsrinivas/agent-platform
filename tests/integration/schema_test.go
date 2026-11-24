@@ -517,7 +517,9 @@ func TestOutboxContract(t *testing.T) {
 			FROM execution.outbox WHERE message_id = $1`, msg1.MessageID).Scan(&attempts, &lastError, &publishedAt); err != nil {
 			t.Fatal(err)
 		}
-		if attempts != 1 || !lastError.Valid || publishedAt.Valid {
+		// A live publisher may have claimed the row once before this transaction; the contract under test is
+		// that the failed publish is recorded and the row remains unpublished.
+		if attempts < 1 || !lastError.Valid || publishedAt.Valid {
 			t.Fatalf("failed outbox row: attempts=%d last_error=%v published_at=%v", attempts, lastError, publishedAt)
 		}
 	})

@@ -46,6 +46,11 @@ func (c *OrchestratorClient) Cancel(ctx context.Context,
 	return c.client.CancelExecution(ctx, req)
 }
 
+func (c *OrchestratorClient) SignalTask(ctx context.Context,
+	req *orchestratorv1.SignalTaskRequest) (*orchestratorv1.SignalTaskResponse, error) {
+	return c.client.SignalTask(ctx, req)
+}
+
 func (c *OrchestratorClient) Close() error {
 	return c.conn.Close()
 }

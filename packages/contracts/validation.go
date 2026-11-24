@@ -47,6 +47,13 @@ func (v *validator) pattern(field, value string, re *regexp.Regexp) {
 	}
 }
 
+func (v *validator) enumDefault(field, value string, allowed ...string) {
+	if value == "" {
+		return
+	}
+	v.enum(field, value, allowed...)
+}
+
 func (v *validator) enum(field, value string, allowed ...string) {
 	for _, candidate := range allowed {
 		if value == candidate {

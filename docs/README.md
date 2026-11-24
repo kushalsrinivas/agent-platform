@@ -13,6 +13,9 @@ ADR wins and the document is a bug. Code written in later phases must cite and f
 | [phase-06-worker-manager.md](phase-06-worker-manager.md) | Phase 06 worker registry, heartbeat statuses, priority/fair scheduling, leases, fencing and graceful drain. |
 | [phase-07-agent-runtime.md](phase-07-agent-runtime.md) | Phase 07 Python runtime ABI, LangGraph adapter, providers, structured results, cancellation and observability. |
 | [phase-08-durable-execution.md](phase-08-durable-execution.md) | Phase 08 checkpoint schema and boundaries, resume protocol, recovery manager, retry engine, idempotency, durable cancellation and crash tests. |
+| [phase-09-graph-engine.md](phase-09-graph-engine.md) | Phase 09 DAG node types, validator, executor registry, CEL routing, parallel/join, data mappings, delay/approval, subworkflows/loops and replay. |
+| [phase-10-multi-agent-mcp.md](phase-10-multi-agent-mcp.md) | Phase 10 supervisor delegation, parent-child tracking, delegation policies, durable agent events, MCP transports, tool policies and human approvals. |
+| [phase-11-developer-api.md](phase-11-developer-api.md) | Phase 11 canonical `/api/v1`, API keys, environments, developer resources, Python/Go SDKs, `agentctl`, local dev mode, examples and developer docs. |
 | [architecture.md](architecture.md) | What the system is, its boundaries, its invariants, and how the pieces cooperate. |
 | [service-responsibilities.md](service-responsibilities.md) | What each deployable does, reads, writes, and when it may become a separate service. |
 | [communication.md](communication.md) | External and internal protocols, envelope, subjects, delivery guarantees, versioning. |
@@ -20,7 +23,8 @@ ADR wins and the document is a bug. Code written in later phases must cite and f
 | [state-machines/execution.md](state-machines/execution.md) | Execution states, transitions, guards, completion and cancellation rules. |
 | [state-machines/task.md](state-machines/task.md) | Task states, attempts, leases, retries, skip and failure rules. |
 | [failure-and-recovery.md](failure-and-recovery.md) | What happens when each component dies at each point in the protocol. |
-| [api/openapi.yaml](api/openapi.yaml) | Initial external REST contract. Auth, errors, idempotency, SSE. |
+| [developer/index.md](developer/index.md) | Developer quick start, agents, workflows, execution lifecycle, SDKs, CLI, MCP, debugging, recovery and examples. |
+| [api/openapi.yaml](api/openapi.yaml) | Public REST/SSE contract. `/api/v1` canonical, API keys, errors, idempotency, SSE. |
 | [api/envelope.schema.json](api/envelope.schema.json) | Internal message envelope, version 1. |
 | [adr/README.md](adr/README.md) | Index of the 15 mandatory decisions. |
 | [../proto/](../proto/) | Initial gRPC contracts. |

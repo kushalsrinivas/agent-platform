@@ -30,6 +30,7 @@ const (
 	ExecutionCommands_SubmitExecution_FullMethodName = "/platform.orchestrator.v1.ExecutionCommands/SubmitExecution"
 	ExecutionCommands_CancelExecution_FullMethodName = "/platform.orchestrator.v1.ExecutionCommands/CancelExecution"
 	ExecutionCommands_DrainWorker_FullMethodName     = "/platform.orchestrator.v1.ExecutionCommands/DrainWorker"
+	ExecutionCommands_SignalTask_FullMethodName      = "/platform.orchestrator.v1.ExecutionCommands/SignalTask"
 )
 
 // ExecutionCommandsClient is the client API for ExecutionCommands service.
@@ -42,6 +43,8 @@ type ExecutionCommandsClient interface {
 	CancelExecution(ctx context.Context, in *CancelExecutionRequest, opts ...grpc.CallOption) (*CancelExecutionResponse, error)
 	// Platform operator action relayed by the API. Idempotent.
 	DrainWorker(ctx context.Context, in *DrainWorkerRequest, opts ...grpc.CallOption) (*DrainWorkerResponse, error)
+	// Human approval or external delay signal for a waiting control node.
+	SignalTask(ctx context.Context, in *SignalTaskRequest, opts ...grpc.CallOption) (*SignalTaskResponse, error)
 }
 
 type executionCommandsClient struct {
@@ -82,6 +85,16 @@ func (c *executionCommandsClient) DrainWorker(ctx context.Context, in *DrainWork
 	return out, nil
 }
 
+func (c *executionCommandsClient) SignalTask(ctx context.Context, in *SignalTaskRequest, opts ...grpc.CallOption) (*SignalTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SignalTaskResponse)
+	err := c.cc.Invoke(ctx, ExecutionCommands_SignalTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ExecutionCommandsServer is the server API for ExecutionCommands service.
 // All implementations must embed UnimplementedExecutionCommandsServer
 // for forward compatibility.
@@ -92,6 +105,8 @@ type ExecutionCommandsServer interface {
 	CancelExecution(context.Context, *CancelExecutionRequest) (*CancelExecutionResponse, error)
 	// Platform operator action relayed by the API. Idempotent.
 	DrainWorker(context.Context, *DrainWorkerRequest) (*DrainWorkerResponse, error)
+	// Human approval or external delay signal for a waiting control node.
+	SignalTask(context.Context, *SignalTaskRequest) (*SignalTaskResponse, error)
 	mustEmbedUnimplementedExecutionCommandsServer()
 }
 
@@ -110,6 +125,9 @@ func (UnimplementedExecutionCommandsServer) CancelExecution(context.Context, *Ca
 }
 func (UnimplementedExecutionCommandsServer) DrainWorker(context.Context, *DrainWorkerRequest) (*DrainWorkerResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DrainWorker not implemented")
+}
+func (UnimplementedExecutionCommandsServer) SignalTask(context.Context, *SignalTaskRequest) (*SignalTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SignalTask not implemented")
 }
 func (UnimplementedExecutionCommandsServer) mustEmbedUnimplementedExecutionCommandsServer() {}
 func (UnimplementedExecutionCommandsServer) testEmbeddedByValue()                           {}
@@ -186,6 +204,24 @@ func _ExecutionCommands_DrainWorker_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ExecutionCommands_SignalTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SignalTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionCommandsServer).SignalTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionCommands_SignalTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionCommandsServer).SignalTask(ctx, req.(*SignalTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ExecutionCommands_ServiceDesc is the grpc.ServiceDesc for ExecutionCommands service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -204,6 +240,10 @@ var ExecutionCommands_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DrainWorker",
 			Handler:    _ExecutionCommands_DrainWorker_Handler,
+		},
+		{
+			MethodName: "SignalTask",
+			Handler:    _ExecutionCommands_SignalTask_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

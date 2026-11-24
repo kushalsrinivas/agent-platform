@@ -164,7 +164,9 @@ erDiagram
 
 ### Workflow graph
 
-- A graph is a DAG: nodes (`agent` or `tool`) and edges. Cycles fail publication.
+- A graph is a DAG: nodes (`start`, `end`, `agent`, `llm`, `tool`, `condition`, `transform`, `parallel`,
+  `join`, `delay`, `approval`, `subworkflow`, `loop`) and edges. Cycles fail publication; bounded loops are
+  `loop` nodes that run a child workflow, not back edges.
 - Tools are **platform-provided and versioned** in Phase 1. Tenants reference exact built-in tool versions; there is
   no tenant-authored tool registry or code upload. Tool definitions ship with the runtime and are still immutable
   per version. A future tool registry needs an ADR.
@@ -247,8 +249,11 @@ Every phase must preserve these. "Enforcement" names the mechanism that makes vi
 4. In the same transaction it appends `execution.created` to `execution_events` and an outbox row. The transaction
    commits. Only then does the API return `202` with the execution ID. A duplicate request returns the existing
    execution (unique `(org_id, request_id)`), not a second one.
-5. The scheduler module sees tasks with no unsatisfied dependencies, assigns the roots, and the execution moves
-   `pending → running` when the first attempt is accepted. From that point §9.2 applies.
+5. The scheduler module sees tasks with no unsatisfied dependencies. Control nodes (`start`, `condition`,
+   `transform`, `parallel`, `join`, `end`) are resolved inside the dispatcher transaction; `delay` and `approval`
+   persist their wait state; `subworkflow` and `loop` create child executions. Worker nodes (`agent`, `llm`,
+   `tool`) are assigned to a worker and follow §9.2. The execution moves `pending → running` when the first
+   attempt is accepted or a control node completes.
 
 A workflow that is not published, references a missing agent version, or has an invalid graph never becomes an
 execution. Validation failures are `422` and leave no rows.
@@ -368,6 +373,9 @@ observability. State transitions read and write the state rows themselves.
   container/microVM isolation is a later upgrade (ADR 0011).
 - **Secrets:** stored envelope-encrypted in `control` with a KMS key; API accepts write-only secret values and
   returns names only. Workers never get a database credential.
+- **Developer credentials:** API keys are hashed at rest, shown once, role-bound and optionally project-scoped.
+  Project keys cannot create projects, manage organisation keys or read outside their project. Revocation is
+  immediate. OIDC remains the browser/identity path; keys are for SDKs and automation.
 
 ## 11. Deployment and scaling (Phase 1)
 
@@ -397,6 +405,8 @@ observability. State transitions read and write the state rows themselves.
 | Reaper | Orchestrator loop that expires leases, retries or fails tasks, and finalises cancellations. |
 | Dispatch | Delivery notification for a committed assignment; not authoritative. |
 | Materialisation | Turning a workflow version + input into execution/task/dependency rows. |
+| Delegation | A supervisor-requested child execution with an exact agent/version allowlist and budgets. |
+| MCP | Model Context Protocol; a pinned stdio or Streamable HTTP server whose tools are discovered and invoked by the runtime. |
 
 ## 13. Document map
 

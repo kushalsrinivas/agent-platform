@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"go.uber.org/zap"
@@ -210,6 +211,9 @@ func (s *WorkerServer) GetTaskContext(ctx context.Context,
 	response.VersionSpec, _ = structpb.NewStruct(task.VersionSpec)
 	response.ExecutionInput, _ = structpb.NewStruct(task.ExecutionInput)
 	response.NodeParams, _ = structpb.NewStruct(task.NodeParams)
+	if task.NodeInput != nil {
+		response.NodeInput, _ = structpb.NewStruct(task.NodeInput)
+	}
 	if task.OutputSchema != nil {
 		response.NodeOutputSchema, _ = structpb.NewStruct(task.OutputSchema)
 	}
@@ -284,6 +288,74 @@ func (s *WorkerServer) PutCheckpoint(ctx context.Context,
 		Duplicate:    result.Duplicate,
 		SizeBytes:    result.SizeBytes,
 	}, nil
+}
+
+// DelegateTask creates a child execution for a supervisor. The lease is the capability; worker identity is
+// optional so the pinned runtime can call the orchestrator without holding database or broker credentials.
+func (s *WorkerServer) DelegateTask(ctx context.Context,
+	req *workerv1.DelegateTaskRequest) (*workerv1.DelegateTaskResponse, error) {
+	response, err := s.service.DelegateTask(ctx, workerIDFromContext(ctx), req)
+	if err != nil {
+		return nil, delegationError(err)
+	}
+	return response, nil
+}
+
+// GetDelegation returns the status and output of one supervisor delegation.
+func (s *WorkerServer) GetDelegation(ctx context.Context,
+	req *workerv1.GetDelegationRequest) (*workerv1.GetDelegationResponse, error) {
+	response, err := s.service.GetDelegation(ctx, workerIDFromContext(ctx), req)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, status.Error(codes.NotFound, "delegation not found")
+		}
+		return nil, delegationError(err)
+	}
+	return response, nil
+}
+
+// ListDelegationAgents returns the supervisor allowlist and remaining budget.
+func (s *WorkerServer) ListDelegationAgents(ctx context.Context,
+	req *workerv1.ListDelegationAgentsRequest) (*workerv1.ListDelegationAgentsResponse, error) {
+	response, err := s.service.ListDelegationAgents(ctx, workerIDFromContext(ctx), req)
+	if err != nil {
+		return nil, delegationError(err)
+	}
+	return response, nil
+}
+
+// PublishAgentEvent stores a durable message for the execution hierarchy.
+func (s *WorkerServer) PublishAgentEvent(ctx context.Context,
+	req *workerv1.PublishAgentEventRequest) (*workerv1.PublishAgentEventResponse, error) {
+	response, err := s.service.PublishAgentEvent(ctx, workerIDFromContext(ctx), req)
+	if err != nil {
+		return nil, delegationError(err)
+	}
+	return response, nil
+}
+
+// WaitAgentEvent long-polls for the next durable message on a topic.
+func (s *WorkerServer) WaitAgentEvent(ctx context.Context,
+	req *workerv1.WaitAgentEventRequest) (*workerv1.WaitAgentEventResponse, error) {
+	response, err := s.service.WaitAgentEvent(ctx, workerIDFromContext(ctx), req)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, status.Error(codes.DeadlineExceeded, "event wait timed out")
+		}
+		return nil, delegationError(err)
+	}
+	return response, nil
+}
+
+func delegationError(err error) error {
+	switch {
+	case errors.Is(err, ErrStaleLease):
+		return status.Error(codes.FailedPrecondition, "attempt lease is not active")
+	case errors.Is(err, pgx.ErrNoRows):
+		return status.Error(codes.NotFound, "delegation resource not found")
+	default:
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
 }
 
 // IsActiveWorker reports whether the worker is registered and currently active.

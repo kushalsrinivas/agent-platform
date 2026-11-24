@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -121,16 +122,30 @@ func (s *Service) dispatchOne(ctx context.Context, taskID string) (bool, error) 
 			return nil
 		}
 
-		deps, err := s.dependencies(ctx, tx, t)
+		deps, err := s.dependencies(ctx, tx, e, t)
 		if err != nil {
-			return err
+			return s.failPendingControlTask(ctx, tx, e, t, "EDGE_EVALUATION_FAILED", err.Error())
 		}
-		if !deps.terminal {
-			s.log.Debug("dispatch skipped: dependencies not terminal", zap.String("task_id", taskID))
-			return nil
-		}
-		if !deps.anySucceeded {
+		if !deps.activated {
+			if !deps.terminal {
+				s.log.Debug("dispatch skipped: dependencies not terminal", zap.String("task_id", taskID))
+				return nil
+			}
+			if deps.shouldFail {
+				return s.failPendingControlTask(ctx, tx, e, t, "DEPENDENCY_FAILED",
+					"join dependencies failed")
+			}
 			return s.skipTask(ctx, tx, e, t, deps.reason)
+		}
+		input, err := s.resolveNodeInput(ctx, tx, e, t, deps)
+		if err != nil {
+			return s.failPendingControlTask(ctx, tx, e, t, "INPUT_MAPPING_INVALID", err.Error())
+		}
+		if err := validateNodeInput(input, t.InputSchema); err != nil {
+			return s.failPendingControlTask(ctx, tx, e, t, "INPUT_SCHEMA_INVALID", err.Error())
+		}
+		if !contracts.WorkflowNodeType(t.NodeType).WorkerNode() {
+			return s.dispatchControl(ctx, tx, e, t, deps, input)
 		}
 		allowed, err := s.limitsAllow(ctx, tx, e, t)
 		if err != nil {
@@ -269,60 +284,260 @@ func (s *Service) dispatchOne(ctx context.Context, taskID string) (bool, error) 
 }
 
 type dependencyState struct {
-	terminal     bool
-	anySucceeded bool
-	reason       string
+	terminal       bool
+	activated      bool
+	anySucceeded   bool
+	reason         string
+	shouldFail     bool
+	outputs        map[string]map[string]any
+	inboundOutputs map[string]map[string]any
+	edges          []dependencyEdge
 }
 
-func (s *Service) dependencies(ctx context.Context, tx pgx.Tx, t *task) (dependencyState, error) {
+type joinPolicy struct {
+	Mode       string
+	Successful int
+	OnPartial  string
+}
+
+func policyForTask(t *task) joinPolicy {
+	if t.NodeType == "join" {
+		var policy contracts.JoinPolicy
+		if len(t.JoinPolicy) > 0 {
+			_ = json.Unmarshal(t.JoinPolicy, &policy)
+		}
+		if policy.Mode == "" {
+			policy.Mode = "all"
+		}
+		if policy.OnPartial == "" {
+			policy.OnPartial = "fail"
+		}
+		successful := 1
+		if policy.Successful != nil {
+			successful = *policy.Successful
+		}
+		return joinPolicy{Mode: policy.Mode, Successful: successful, OnPartial: policy.OnPartial}
+	}
+	if t.NodeType == "end" {
+		return joinPolicy{Mode: "all", Successful: 1, OnPartial: "fail"}
+	}
+	return joinPolicy{Mode: "any", Successful: 1, OnPartial: "skip"}
+}
+
+type dependencyEdge struct {
+	NodeID      string
+	TaskID      string
+	State       string
+	SkipReason  string
+	When        *string
+	DataMapping map[string]string
+	Priority    int
+	Output      map[string]any
+	Active      bool
+	Failed      bool
+	Inactive    bool
+}
+
+func (s *Service) dependencies(ctx context.Context, tx pgx.Tx, e *execution, t *task) (dependencyState, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT upstream.state
+		SELECT up.node_id, up.state, COALESCE(up.skip_reason, ''),
+		       COALESCE(att.result_inline, up.result_inline, '{}'::jsonb),
+		       d.when_expr, d.data_mapping, d.priority, d.depends_on_task_id
 		FROM execution.task_dependencies d
-		JOIN execution.execution_tasks upstream
-		  ON upstream.id = d.depends_on_task_id AND upstream.execution_id = d.execution_id
-		WHERE d.task_id = $1 AND d.execution_id = $2`, t.ID, t.ExecutionID)
+		JOIN execution.execution_tasks up
+		  ON up.id = d.depends_on_task_id AND up.execution_id = d.execution_id
+		LEFT JOIN execution.task_attempts att ON att.id = up.latest_attempt_id
+		WHERE d.task_id = $1 AND d.execution_id = $2
+		ORDER BY d.priority ASC, up.node_id`, t.ID, t.ExecutionID)
 	if err != nil {
 		return dependencyState{}, err
 	}
 	defer rows.Close()
 
-	result := dependencyState{terminal: true}
-	sawAny := false
-	allUnsuccessfulSkipped := true
+	outputs := map[string]map[string]any{}
+	inboundOutputs := map[string]map[string]any{}
+	var edges []dependencyEdge
 	for rows.Next() {
-		var state string
-		if err := rows.Scan(&state); err != nil {
+		var edge dependencyEdge
+		var when, mapping []byte
+		if err := rows.Scan(&edge.NodeID, &edge.State, &edge.SkipReason, &edge.Output, &when, &mapping,
+			&edge.Priority, &edge.TaskID); err != nil {
 			return dependencyState{}, err
 		}
-		sawAny = true
-		switch state {
-		case "succeeded":
-			result.anySucceeded = true
-		case "skipped":
-			// Terminal but unavailable; an all-skipped branch is not a dependency failure.
-		case "failed", "cancelled":
-			allUnsuccessfulSkipped = false
-		case "pending", "assigned", "running":
-			result.terminal = false
-			allUnsuccessfulSkipped = false
+		if when != nil {
+			value := string(when)
+			edge.When = &value
 		}
+		edge.DataMapping = map[string]string{}
+		if len(mapping) > 2 {
+			_ = json.Unmarshal(mapping, &edge.DataMapping)
+		}
+		edges = append(edges, edge)
 	}
 	if err := rows.Err(); err != nil {
 		return dependencyState{}, err
 	}
-	if !sawAny {
-		// Roots always activate.
-		return dependencyState{terminal: true, anySucceeded: true}, nil
+	rows.Close()
+	// Outputs are visible to this node for expressions across the whole execution; the worker receives only
+	// direct active inbound outputs unless input_from explicitly selects ancestors.
+	allRows, err := tx.Query(ctx, `
+		SELECT t.node_id, COALESCE(a.result_inline, t.result_inline, '{}'::jsonb)
+		FROM execution.execution_tasks t
+		LEFT JOIN execution.task_attempts a ON a.id = t.latest_attempt_id
+		WHERE t.execution_id = $1 AND t.state = 'succeeded'`, e.ID)
+	if err != nil {
+		return dependencyState{}, err
 	}
-	if result.anySucceeded {
+	for allRows.Next() {
+		var nodeID string
+		var output map[string]any
+		if err := allRows.Scan(&nodeID, &output); err != nil {
+			allRows.Close()
+			return dependencyState{}, err
+		}
+		outputs[nodeID] = output
+	}
+	if err := allRows.Err(); err != nil {
+		allRows.Close()
+		return dependencyState{}, err
+	}
+	allRows.Close()
+	var executionInput map[string]any
+	if err := tx.QueryRow(ctx, `SELECT input FROM execution.executions WHERE id = $1`, e.ID).Scan(&executionInput); err != nil {
+		return dependencyState{}, err
+	}
+	if len(edges) == 0 {
+		return dependencyState{terminal: true, activated: true, anySucceeded: true, outputs: outputs,
+			inboundOutputs: inboundOutputs}, nil
+	}
+
+	policy := policyForTask(t)
+	result := dependencyState{terminal: true, outputs: outputs, inboundOutputs: inboundOutputs, edges: edges}
+	successes, pending, failures, inactive, total := 0, 0, 0, 0, len(edges)
+	variables := map[string]any{
+		contracts.ExprInput:     executionInput,
+		contracts.ExprNodeInput: executionInput,
+		contracts.ExprOutputs:   outputs,
+		contracts.ExprParams:    decodeObject(t.Params),
+		contracts.ExprIteration: e.Iteration + controlIteration(t),
+		contracts.ExprPrevious:  t.ControlState["previous"],
+		contracts.ExprExecution: map[string]any{"id": e.ID, "iteration": e.Iteration},
+		contracts.ExprNode:      map[string]any{"id": t.NodeID, "type": t.NodeType},
+	}
+	for index := range edges {
+		edge := &edges[index]
+		switch edge.State {
+		case "pending", "assigned", "running":
+			pending++
+			result.terminal = false
+		case "failed", "cancelled":
+			failures++
+			edge.Failed = true
+		case "skipped":
+			if edge.SkipReason == "dependency_failed" {
+				failures++
+				edge.Failed = true
+			} else {
+				inactive++
+				edge.Inactive = true
+			}
+		case "succeeded":
+			active := true
+			if edge.When != nil {
+				program, err := contracts.CompileCondition(*edge.When)
+				if err != nil {
+					return dependencyState{}, fmt.Errorf("edge %s -> %s: %w", edge.NodeID, t.NodeID, err)
+				}
+				active, err = contracts.EvaluateCondition(program, variables)
+				if err != nil {
+					return dependencyState{}, fmt.Errorf("edge %s -> %s: %w", edge.NodeID, t.NodeID, err)
+				}
+			}
+			if active {
+				successes++
+				result.anySucceeded = true
+				edge.Active = true
+				inboundOutputs[edge.NodeID] = edge.Output
+			} else {
+				inactive++
+				edge.Inactive = true
+			}
+		default:
+			pending++
+			result.terminal = false
+		}
+	}
+
+	switch policy.Mode {
+	case "successful":
+		if successes >= policy.Successful {
+			result.activated = true
+			return result, nil
+		}
+		if successes+pending < policy.Successful {
+			result.terminal = true
+			if policy.OnPartial == "continue" && successes > 0 {
+				result.activated = true
+				return result, nil
+			}
+			result.reason = "dependency_failed"
+			result.shouldFail = policy.OnPartial == "fail"
+			return result, nil
+		}
+		return result, nil
+	case "all":
+		if result.terminal {
+			if failures > 0 {
+				if policy.OnPartial == "fail" {
+					result.reason = "dependency_failed"
+					result.shouldFail = true
+				} else if policy.OnPartial == "continue" && successes > 0 {
+					result.activated = true
+				} else {
+					result.reason = "dependency_failed"
+				}
+				return result, nil
+			}
+			if successes > 0 {
+				result.activated = true
+				return result, nil
+			}
+			if inactive == total {
+				result.reason = "upstream_not_taken"
+				return result, nil
+			}
+			result.reason = "dependency_failed"
+			return result, nil
+		}
+		return result, nil
+	default:
+		if result.anySucceeded {
+			result.activated = true
+			return result, nil
+		}
+		if result.terminal {
+			if failures > 0 {
+				result.reason = "dependency_failed"
+			} else {
+				result.reason = "upstream_not_taken"
+			}
+		}
 		return result, nil
 	}
-	if allUnsuccessfulSkipped {
-		result.reason = "upstream_not_taken"
-	} else {
-		result.reason = "dependency_failed"
+}
+
+func controlIteration(t *task) int {
+	if t.ControlState == nil {
+		return 0
 	}
-	return result, nil
+	switch value := t.ControlState["iteration"].(type) {
+	case int:
+		return value
+	case float64:
+		return int(value)
+	default:
+		return 0
+	}
 }
 
 func (s *Service) specDigest(ctx context.Context, tx pgx.Tx, t *task) (string, error) {
@@ -404,6 +619,18 @@ func (s *Service) pickWorker(ctx context.Context, tx pgx.Tx, t *task) (string, e
 	if t.RuntimeDigest != nil {
 		runtimeDigest = *t.RuntimeDigest
 	}
+	var requiredCPU, requiredMemory any
+	if len(t.Resources) > 0 {
+		resources := contracts.NodeResources{}
+		if err := json.Unmarshal(t.Resources, &resources); err == nil {
+			if resources.CPU != nil {
+				requiredCPU = *resources.CPU
+			}
+			if resources.MemoryMB != nil {
+				requiredMemory = *resources.MemoryMB
+			}
+		}
+	}
 	var workerID string
 	err := tx.QueryRow(ctx, `
 		SELECT id
@@ -415,10 +642,13 @@ func (s *Service) pickWorker(ctx context.Context, tx pgx.Tx, t *task) (string, e
 		  AND $3 = ANY(capabilities)
 		  AND ($4::integer IS NULL OR $4 = ANY(runtime_abis))
 		  AND (cardinality(runtime_digests) = 0 OR $5::text IS NULL OR $5 = ANY(runtime_digests))
+		  AND ($6::double precision IS NULL OR cpu_cores >= $6)
+		  AND ($7::bigint IS NULL OR memory_mb >= $7)
 		ORDER BY reserved_slots ASC, cpu_usage_percent ASC NULLS LAST, last_heartbeat_at ASC, id ASC
 		LIMIT 1
 		FOR UPDATE SKIP LOCKED`,
-		pool, int(s.heartbeatTimeout/time.Second), requiredCapability(t.NodeType), runtimeABI, runtimeDigest).
+		pool, int(s.heartbeatTimeout/time.Second), requiredCapability(t.NodeType), runtimeABI, runtimeDigest,
+		requiredCPU, requiredMemory).
 		Scan(&workerID)
 	if isNoRows(err) {
 		return "", nil

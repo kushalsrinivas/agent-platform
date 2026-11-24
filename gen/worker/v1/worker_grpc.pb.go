@@ -33,6 +33,11 @@ const (
 	WorkerControl_GetTaskContext_FullMethodName         = "/platform.worker.v1.WorkerControl/GetTaskContext"
 	WorkerControl_GetTaskCredentials_FullMethodName     = "/platform.worker.v1.WorkerControl/GetTaskCredentials"
 	WorkerControl_PutCheckpoint_FullMethodName          = "/platform.worker.v1.WorkerControl/PutCheckpoint"
+	WorkerControl_DelegateTask_FullMethodName           = "/platform.worker.v1.WorkerControl/DelegateTask"
+	WorkerControl_GetDelegation_FullMethodName          = "/platform.worker.v1.WorkerControl/GetDelegation"
+	WorkerControl_ListDelegationAgents_FullMethodName   = "/platform.worker.v1.WorkerControl/ListDelegationAgents"
+	WorkerControl_PublishAgentEvent_FullMethodName      = "/platform.worker.v1.WorkerControl/PublishAgentEvent"
+	WorkerControl_WaitAgentEvent_FullMethodName         = "/platform.worker.v1.WorkerControl/WaitAgentEvent"
 )
 
 // WorkerControlClient is the client API for WorkerControl service.
@@ -53,6 +58,13 @@ type WorkerControlClient interface {
 	GetTaskCredentials(ctx context.Context, in *GetTaskCredentialsRequest, opts ...grpc.CallOption) (*GetTaskCredentialsResponse, error)
 	// Fenced upload of one checkpoint produced at a safe execution boundary. Idempotent by (attempt_id, sequence).
 	PutCheckpoint(ctx context.Context, in *PutCheckpointRequest, opts ...grpc.CallOption) (*PutCheckpointResponse, error)
+	// Supervisor delegation. The worker is only a transport; all limits and assignments live in the orchestrator.
+	DelegateTask(ctx context.Context, in *DelegateTaskRequest, opts ...grpc.CallOption) (*DelegateTaskResponse, error)
+	GetDelegation(ctx context.Context, in *GetDelegationRequest, opts ...grpc.CallOption) (*GetDelegationResponse, error)
+	ListDelegationAgents(ctx context.Context, in *ListDelegationAgentsRequest, opts ...grpc.CallOption) (*ListDelegationAgentsResponse, error)
+	// Durable agent-to-agent messages within one execution hierarchy.
+	PublishAgentEvent(ctx context.Context, in *PublishAgentEventRequest, opts ...grpc.CallOption) (*PublishAgentEventResponse, error)
+	WaitAgentEvent(ctx context.Context, in *WaitAgentEventRequest, opts ...grpc.CallOption) (*WaitAgentEventResponse, error)
 }
 
 type workerControlClient struct {
@@ -136,6 +148,56 @@ func (c *workerControlClient) PutCheckpoint(ctx context.Context, in *PutCheckpoi
 	return out, nil
 }
 
+func (c *workerControlClient) DelegateTask(ctx context.Context, in *DelegateTaskRequest, opts ...grpc.CallOption) (*DelegateTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DelegateTaskResponse)
+	err := c.cc.Invoke(ctx, WorkerControl_DelegateTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerControlClient) GetDelegation(ctx context.Context, in *GetDelegationRequest, opts ...grpc.CallOption) (*GetDelegationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetDelegationResponse)
+	err := c.cc.Invoke(ctx, WorkerControl_GetDelegation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerControlClient) ListDelegationAgents(ctx context.Context, in *ListDelegationAgentsRequest, opts ...grpc.CallOption) (*ListDelegationAgentsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListDelegationAgentsResponse)
+	err := c.cc.Invoke(ctx, WorkerControl_ListDelegationAgents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerControlClient) PublishAgentEvent(ctx context.Context, in *PublishAgentEventRequest, opts ...grpc.CallOption) (*PublishAgentEventResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PublishAgentEventResponse)
+	err := c.cc.Invoke(ctx, WorkerControl_PublishAgentEvent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerControlClient) WaitAgentEvent(ctx context.Context, in *WaitAgentEventRequest, opts ...grpc.CallOption) (*WaitAgentEventResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WaitAgentEventResponse)
+	err := c.cc.Invoke(ctx, WorkerControl_WaitAgentEvent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkerControlServer is the server API for WorkerControl service.
 // All implementations must embed UnimplementedWorkerControlServer
 // for forward compatibility.
@@ -154,6 +216,13 @@ type WorkerControlServer interface {
 	GetTaskCredentials(context.Context, *GetTaskCredentialsRequest) (*GetTaskCredentialsResponse, error)
 	// Fenced upload of one checkpoint produced at a safe execution boundary. Idempotent by (attempt_id, sequence).
 	PutCheckpoint(context.Context, *PutCheckpointRequest) (*PutCheckpointResponse, error)
+	// Supervisor delegation. The worker is only a transport; all limits and assignments live in the orchestrator.
+	DelegateTask(context.Context, *DelegateTaskRequest) (*DelegateTaskResponse, error)
+	GetDelegation(context.Context, *GetDelegationRequest) (*GetDelegationResponse, error)
+	ListDelegationAgents(context.Context, *ListDelegationAgentsRequest) (*ListDelegationAgentsResponse, error)
+	// Durable agent-to-agent messages within one execution hierarchy.
+	PublishAgentEvent(context.Context, *PublishAgentEventRequest) (*PublishAgentEventResponse, error)
+	WaitAgentEvent(context.Context, *WaitAgentEventRequest) (*WaitAgentEventResponse, error)
 	mustEmbedUnimplementedWorkerControlServer()
 }
 
@@ -184,6 +253,21 @@ func (UnimplementedWorkerControlServer) GetTaskCredentials(context.Context, *Get
 }
 func (UnimplementedWorkerControlServer) PutCheckpoint(context.Context, *PutCheckpointRequest) (*PutCheckpointResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PutCheckpoint not implemented")
+}
+func (UnimplementedWorkerControlServer) DelegateTask(context.Context, *DelegateTaskRequest) (*DelegateTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DelegateTask not implemented")
+}
+func (UnimplementedWorkerControlServer) GetDelegation(context.Context, *GetDelegationRequest) (*GetDelegationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetDelegation not implemented")
+}
+func (UnimplementedWorkerControlServer) ListDelegationAgents(context.Context, *ListDelegationAgentsRequest) (*ListDelegationAgentsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListDelegationAgents not implemented")
+}
+func (UnimplementedWorkerControlServer) PublishAgentEvent(context.Context, *PublishAgentEventRequest) (*PublishAgentEventResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PublishAgentEvent not implemented")
+}
+func (UnimplementedWorkerControlServer) WaitAgentEvent(context.Context, *WaitAgentEventRequest) (*WaitAgentEventResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WaitAgentEvent not implemented")
 }
 func (UnimplementedWorkerControlServer) mustEmbedUnimplementedWorkerControlServer() {}
 func (UnimplementedWorkerControlServer) testEmbeddedByValue()                       {}
@@ -321,6 +405,96 @@ func _WorkerControl_PutCheckpoint_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkerControl_DelegateTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DelegateTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerControlServer).DelegateTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerControl_DelegateTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerControlServer).DelegateTask(ctx, req.(*DelegateTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkerControl_GetDelegation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetDelegationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerControlServer).GetDelegation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerControl_GetDelegation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerControlServer).GetDelegation(ctx, req.(*GetDelegationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkerControl_ListDelegationAgents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListDelegationAgentsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerControlServer).ListDelegationAgents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerControl_ListDelegationAgents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerControlServer).ListDelegationAgents(ctx, req.(*ListDelegationAgentsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkerControl_PublishAgentEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PublishAgentEventRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerControlServer).PublishAgentEvent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerControl_PublishAgentEvent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerControlServer).PublishAgentEvent(ctx, req.(*PublishAgentEventRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WorkerControl_WaitAgentEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WaitAgentEventRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerControlServer).WaitAgentEvent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerControl_WaitAgentEvent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerControlServer).WaitAgentEvent(ctx, req.(*WaitAgentEventRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // WorkerControl_ServiceDesc is the grpc.ServiceDesc for WorkerControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -351,6 +525,26 @@ var WorkerControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PutCheckpoint",
 			Handler:    _WorkerControl_PutCheckpoint_Handler,
+		},
+		{
+			MethodName: "DelegateTask",
+			Handler:    _WorkerControl_DelegateTask_Handler,
+		},
+		{
+			MethodName: "GetDelegation",
+			Handler:    _WorkerControl_GetDelegation_Handler,
+		},
+		{
+			MethodName: "ListDelegationAgents",
+			Handler:    _WorkerControl_ListDelegationAgents_Handler,
+		},
+		{
+			MethodName: "PublishAgentEvent",
+			Handler:    _WorkerControl_PublishAgentEvent_Handler,
+		},
+		{
+			MethodName: "WaitAgentEvent",
+			Handler:    _WorkerControl_WaitAgentEvent_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

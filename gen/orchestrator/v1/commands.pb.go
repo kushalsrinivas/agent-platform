@@ -44,7 +44,11 @@ type SubmitExecutionRequest struct {
 	DeadlineAt  *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=deadline_at,json=deadlineAt,proto3" json:"deadline_at,omitempty"`
 	Traceparent string                 `protobuf:"bytes,9,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
 	// Scheduling priority, -100..100. Higher runs first; aging prevents permanent starvation.
-	Priority      int32 `protobuf:"varint,10,opt,name=priority,proto3" json:"priority,omitempty"`
+	Priority int32 `protobuf:"varint,10,opt,name=priority,proto3" json:"priority,omitempty"`
+	// Link a re-execution to the execution whose inputs/outputs were used.
+	ReplayOfExecutionId string `protobuf:"bytes,11,opt,name=replay_of_execution_id,json=replayOfExecutionId,proto3" json:"replay_of_execution_id,omitempty"`
+	// Outputs explicitly reused from a prior execution, keyed by node id. Seeded tasks start succeeded.
+	SeedOutputs   map[string]*structpb.Struct `protobuf:"bytes,12,rep,name=seed_outputs,json=seedOutputs,proto3" json:"seed_outputs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -147,6 +151,20 @@ func (x *SubmitExecutionRequest) GetPriority() int32 {
 		return x.Priority
 	}
 	return 0
+}
+
+func (x *SubmitExecutionRequest) GetReplayOfExecutionId() string {
+	if x != nil {
+		return x.ReplayOfExecutionId
+	}
+	return ""
+}
+
+func (x *SubmitExecutionRequest) GetSeedOutputs() map[string]*structpb.Struct {
+	if x != nil {
+		return x.SeedOutputs
+	}
+	return nil
 }
 
 type SubmitExecutionResponse struct {
@@ -524,11 +542,188 @@ func (x *DrainWorkerResponse) GetAccepted() bool {
 	return false
 }
 
+type SignalTaskRequest struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	OrgId       string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	ProjectId   string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	ExecutionId string                 `protobuf:"bytes,3,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
+	TaskId      string                 `protobuf:"bytes,4,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// approve, reject or signal.
+	Action        string           `protobuf:"bytes,5,opt,name=action,proto3" json:"action,omitempty"`
+	Comment       string           `protobuf:"bytes,6,opt,name=comment,proto3" json:"comment,omitempty"`
+	Actor         string           `protobuf:"bytes,7,opt,name=actor,proto3" json:"actor,omitempty"`
+	Payload       *structpb.Struct `protobuf:"bytes,8,opt,name=payload,proto3" json:"payload,omitempty"`
+	Traceparent   string           `protobuf:"bytes,9,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SignalTaskRequest) Reset() {
+	*x = SignalTaskRequest{}
+	mi := &file_orchestrator_v1_commands_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SignalTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SignalTaskRequest) ProtoMessage() {}
+
+func (x *SignalTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_v1_commands_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SignalTaskRequest.ProtoReflect.Descriptor instead.
+func (*SignalTaskRequest) Descriptor() ([]byte, []int) {
+	return file_orchestrator_v1_commands_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SignalTaskRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *SignalTaskRequest) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *SignalTaskRequest) GetExecutionId() string {
+	if x != nil {
+		return x.ExecutionId
+	}
+	return ""
+}
+
+func (x *SignalTaskRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *SignalTaskRequest) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *SignalTaskRequest) GetComment() string {
+	if x != nil {
+		return x.Comment
+	}
+	return ""
+}
+
+func (x *SignalTaskRequest) GetActor() string {
+	if x != nil {
+		return x.Actor
+	}
+	return ""
+}
+
+func (x *SignalTaskRequest) GetPayload() *structpb.Struct {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *SignalTaskRequest) GetTraceparent() string {
+	if x != nil {
+		return x.Traceparent
+	}
+	return ""
+}
+
+type SignalTaskResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	NodeType      string                 `protobuf:"bytes,2,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
+	ControlState  string                 `protobuf:"bytes,3,opt,name=control_state,json=controlState,proto3" json:"control_state,omitempty"`
+	Accepted      bool                   `protobuf:"varint,4,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SignalTaskResponse) Reset() {
+	*x = SignalTaskResponse{}
+	mi := &file_orchestrator_v1_commands_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SignalTaskResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SignalTaskResponse) ProtoMessage() {}
+
+func (x *SignalTaskResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_v1_commands_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SignalTaskResponse.ProtoReflect.Descriptor instead.
+func (*SignalTaskResponse) Descriptor() ([]byte, []int) {
+	return file_orchestrator_v1_commands_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SignalTaskResponse) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *SignalTaskResponse) GetNodeType() string {
+	if x != nil {
+		return x.NodeType
+	}
+	return ""
+}
+
+func (x *SignalTaskResponse) GetControlState() string {
+	if x != nil {
+		return x.ControlState
+	}
+	return ""
+}
+
+func (x *SignalTaskResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
 var File_orchestrator_v1_commands_proto protoreflect.FileDescriptor
 
 const file_orchestrator_v1_commands_proto_rawDesc = "" +
 	"\n" +
-	"\x1eorchestrator/v1/commands.proto\x12\x18platform.orchestrator.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x86\x03\n" +
+	"\x1eorchestrator/v1/commands.proto\x12\x18platform.orchestrator.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xfa\x04\n" +
 	"\x16SubmitExecutionRequest\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
@@ -544,7 +739,12 @@ const file_orchestrator_v1_commands_proto_rawDesc = "" +
 	"deadlineAt\x12 \n" +
 	"\vtraceparent\x18\t \x01(\tR\vtraceparent\x12\x1a\n" +
 	"\bpriority\x18\n" +
-	" \x01(\x05R\bpriority\"\xce\x01\n" +
+	" \x01(\x05R\bpriority\x123\n" +
+	"\x16replay_of_execution_id\x18\v \x01(\tR\x13replayOfExecutionId\x12d\n" +
+	"\fseed_outputs\x18\f \x03(\v2A.platform.orchestrator.v1.SubmitExecutionRequest.SeedOutputsEntryR\vseedOutputs\x1aW\n" +
+	"\x10SeedOutputsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
+	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01\"\xce\x01\n" +
 	"\x17SubmitExecutionResponse\x12!\n" +
 	"\fexecution_id\x18\x01 \x01(\tR\vexecutionId\x12\x14\n" +
 	"\x05state\x18\x02 \x01(\tR\x05state\x12#\n" +
@@ -575,11 +775,29 @@ const file_orchestrator_v1_commands_proto_rawDesc = "" +
 	"\x13DrainWorkerResponse\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x1a\n" +
-	"\baccepted\x18\x03 \x01(\bR\baccepted2\xef\x02\n" +
+	"\baccepted\x18\x03 \x01(\bR\baccepted\"\xa2\x02\n" +
+	"\x11SignalTaskRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12!\n" +
+	"\fexecution_id\x18\x03 \x01(\tR\vexecutionId\x12\x17\n" +
+	"\atask_id\x18\x04 \x01(\tR\x06taskId\x12\x16\n" +
+	"\x06action\x18\x05 \x01(\tR\x06action\x12\x18\n" +
+	"\acomment\x18\x06 \x01(\tR\acomment\x12\x14\n" +
+	"\x05actor\x18\a \x01(\tR\x05actor\x121\n" +
+	"\apayload\x18\b \x01(\v2\x17.google.protobuf.StructR\apayload\x12 \n" +
+	"\vtraceparent\x18\t \x01(\tR\vtraceparent\"\x8b\x01\n" +
+	"\x12SignalTaskResponse\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1b\n" +
+	"\tnode_type\x18\x02 \x01(\tR\bnodeType\x12#\n" +
+	"\rcontrol_state\x18\x03 \x01(\tR\fcontrolState\x12\x1a\n" +
+	"\baccepted\x18\x04 \x01(\bR\baccepted2\xd8\x03\n" +
 	"\x11ExecutionCommands\x12v\n" +
 	"\x0fSubmitExecution\x120.platform.orchestrator.v1.SubmitExecutionRequest\x1a1.platform.orchestrator.v1.SubmitExecutionResponse\x12v\n" +
 	"\x0fCancelExecution\x120.platform.orchestrator.v1.CancelExecutionRequest\x1a1.platform.orchestrator.v1.CancelExecutionResponse\x12j\n" +
-	"\vDrainWorker\x12,.platform.orchestrator.v1.DrainWorkerRequest\x1a-.platform.orchestrator.v1.DrainWorkerResponseBMZKgithub.com/agent-platform/agent-platform/gen/orchestrator/v1;orchestratorv1b\x06proto3"
+	"\vDrainWorker\x12,.platform.orchestrator.v1.DrainWorkerRequest\x1a-.platform.orchestrator.v1.DrainWorkerResponse\x12g\n" +
+	"\n" +
+	"SignalTask\x12+.platform.orchestrator.v1.SignalTaskRequest\x1a,.platform.orchestrator.v1.SignalTaskResponseBMZKgithub.com/agent-platform/agent-platform/gen/orchestrator/v1;orchestratorv1b\x06proto3"
 
 var (
 	file_orchestrator_v1_commands_proto_rawDescOnce sync.Once
@@ -593,7 +811,7 @@ func file_orchestrator_v1_commands_proto_rawDescGZIP() []byte {
 	return file_orchestrator_v1_commands_proto_rawDescData
 }
 
-var file_orchestrator_v1_commands_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_orchestrator_v1_commands_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_orchestrator_v1_commands_proto_goTypes = []any{
 	(*SubmitExecutionRequest)(nil),  // 0: platform.orchestrator.v1.SubmitExecutionRequest
 	(*SubmitExecutionResponse)(nil), // 1: platform.orchestrator.v1.SubmitExecutionResponse
@@ -601,24 +819,32 @@ var file_orchestrator_v1_commands_proto_goTypes = []any{
 	(*CancelExecutionResponse)(nil), // 3: platform.orchestrator.v1.CancelExecutionResponse
 	(*DrainWorkerRequest)(nil),      // 4: platform.orchestrator.v1.DrainWorkerRequest
 	(*DrainWorkerResponse)(nil),     // 5: platform.orchestrator.v1.DrainWorkerResponse
-	(*structpb.Struct)(nil),         // 6: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil),   // 7: google.protobuf.Timestamp
+	(*SignalTaskRequest)(nil),       // 6: platform.orchestrator.v1.SignalTaskRequest
+	(*SignalTaskResponse)(nil),      // 7: platform.orchestrator.v1.SignalTaskResponse
+	nil,                             // 8: platform.orchestrator.v1.SubmitExecutionRequest.SeedOutputsEntry
+	(*structpb.Struct)(nil),         // 9: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil),   // 10: google.protobuf.Timestamp
 }
 var file_orchestrator_v1_commands_proto_depIdxs = []int32{
-	6, // 0: platform.orchestrator.v1.SubmitExecutionRequest.input:type_name -> google.protobuf.Struct
-	7, // 1: platform.orchestrator.v1.SubmitExecutionRequest.deadline_at:type_name -> google.protobuf.Timestamp
-	7, // 2: platform.orchestrator.v1.SubmitExecutionResponse.created_at:type_name -> google.protobuf.Timestamp
-	0, // 3: platform.orchestrator.v1.ExecutionCommands.SubmitExecution:input_type -> platform.orchestrator.v1.SubmitExecutionRequest
-	2, // 4: platform.orchestrator.v1.ExecutionCommands.CancelExecution:input_type -> platform.orchestrator.v1.CancelExecutionRequest
-	4, // 5: platform.orchestrator.v1.ExecutionCommands.DrainWorker:input_type -> platform.orchestrator.v1.DrainWorkerRequest
-	1, // 6: platform.orchestrator.v1.ExecutionCommands.SubmitExecution:output_type -> platform.orchestrator.v1.SubmitExecutionResponse
-	3, // 7: platform.orchestrator.v1.ExecutionCommands.CancelExecution:output_type -> platform.orchestrator.v1.CancelExecutionResponse
-	5, // 8: platform.orchestrator.v1.ExecutionCommands.DrainWorker:output_type -> platform.orchestrator.v1.DrainWorkerResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	9,  // 0: platform.orchestrator.v1.SubmitExecutionRequest.input:type_name -> google.protobuf.Struct
+	10, // 1: platform.orchestrator.v1.SubmitExecutionRequest.deadline_at:type_name -> google.protobuf.Timestamp
+	8,  // 2: platform.orchestrator.v1.SubmitExecutionRequest.seed_outputs:type_name -> platform.orchestrator.v1.SubmitExecutionRequest.SeedOutputsEntry
+	10, // 3: platform.orchestrator.v1.SubmitExecutionResponse.created_at:type_name -> google.protobuf.Timestamp
+	9,  // 4: platform.orchestrator.v1.SignalTaskRequest.payload:type_name -> google.protobuf.Struct
+	9,  // 5: platform.orchestrator.v1.SubmitExecutionRequest.SeedOutputsEntry.value:type_name -> google.protobuf.Struct
+	0,  // 6: platform.orchestrator.v1.ExecutionCommands.SubmitExecution:input_type -> platform.orchestrator.v1.SubmitExecutionRequest
+	2,  // 7: platform.orchestrator.v1.ExecutionCommands.CancelExecution:input_type -> platform.orchestrator.v1.CancelExecutionRequest
+	4,  // 8: platform.orchestrator.v1.ExecutionCommands.DrainWorker:input_type -> platform.orchestrator.v1.DrainWorkerRequest
+	6,  // 9: platform.orchestrator.v1.ExecutionCommands.SignalTask:input_type -> platform.orchestrator.v1.SignalTaskRequest
+	1,  // 10: platform.orchestrator.v1.ExecutionCommands.SubmitExecution:output_type -> platform.orchestrator.v1.SubmitExecutionResponse
+	3,  // 11: platform.orchestrator.v1.ExecutionCommands.CancelExecution:output_type -> platform.orchestrator.v1.CancelExecutionResponse
+	5,  // 12: platform.orchestrator.v1.ExecutionCommands.DrainWorker:output_type -> platform.orchestrator.v1.DrainWorkerResponse
+	7,  // 13: platform.orchestrator.v1.ExecutionCommands.SignalTask:output_type -> platform.orchestrator.v1.SignalTaskResponse
+	10, // [10:14] is the sub-list for method output_type
+	6,  // [6:10] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_orchestrator_v1_commands_proto_init() }
@@ -632,7 +858,7 @@ func file_orchestrator_v1_commands_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orchestrator_v1_commands_proto_rawDesc), len(file_orchestrator_v1_commands_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

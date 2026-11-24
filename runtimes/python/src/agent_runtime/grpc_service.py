@@ -90,11 +90,13 @@ class AgentRuntimeServicer(runtime_pb2_grpc.AgentRuntimeServicer):  # type: igno
             agent_version_id=task.agent_version_id,
             execution_input=_struct_to_dict(task.execution_input),
             node_params=_struct_to_dict(task.node_params),
+            node_input=_struct_to_dict(task.node_input),
             upstream_outputs={
                 node: _struct_to_dict(output) for node, output in dict(task.upstream_outputs or {}).items()
             },
             deadline=task.deadline.ToDatetime(UTC) if task.HasField("deadline") else None,
             traceparent=task.traceparent or None,
+            lease_id=task.lease_id,
         )
 
         try:

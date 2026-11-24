@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -154,6 +155,7 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 			RuntimeDigest string
 			Provider      string
 			Model         string
+			Orchestration json.RawMessage
 		}
 		agentMeta := make(map[string]pinnedAgent)
 		for _, node := range graph.Nodes {
@@ -185,6 +187,7 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 				Runtime struct {
 					ImageDigest string `json:"image_digest"`
 				} `json:"runtime"`
+				Orchestration json.RawMessage `json:"orchestration"`
 			}
 			if err := json.Unmarshal(specJSON, &spec); err != nil {
 				return status.Errorf(codes.FailedPrecondition, "node %q agent spec is invalid", node.ID)
@@ -194,6 +197,7 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 				RuntimeDigest: spec.Runtime.ImageDigest,
 				Provider:      spec.Model.Provider,
 				Model:         spec.Model.Name,
+				Orchestration: spec.Orchestration,
 			}
 		}
 
@@ -218,16 +222,55 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 			return status.Errorf(codes.ResourceExhausted, "project has reached its queued execution limit of %d", s.quotas.MaxQueued)
 		}
 
+		delegationPolicy := []byte("{}")
+		for _, meta := range agentMeta {
+			if len(meta.Orchestration) > 4 && string(meta.Orchestration) != "null" {
+				delegationPolicy = meta.Orchestration
+				break
+			}
+		}
+		seedOutputs := map[string]map[string]any{}
+		for nodeID, value := range req.GetSeedOutputs() {
+			if value == nil {
+				continue
+			}
+			seedOutputs[nodeID] = value.AsMap()
+		}
+		for nodeID := range seedOutputs {
+			found := false
+			for _, node := range graph.Nodes {
+				if node.ID != nodeID {
+					continue
+				}
+				found = true
+				if node.OutputSchema != nil {
+					encoded, err := json.Marshal(seedOutputs[nodeID])
+					if err != nil {
+						return status.Errorf(codes.InvalidArgument, "seed output for node %q is not serialisable", nodeID)
+					}
+					if err := validateAgainstSchema(encoded, *node.OutputSchema); err != nil {
+						return status.Errorf(codes.InvalidArgument, "seed output for node %q does not match its output schema", nodeID)
+					}
+				}
+				break
+			}
+			if !found {
+				return status.Errorf(codes.InvalidArgument, "seed output references unknown node %q", nodeID)
+			}
+		}
+
 		executionID := idgen.New("exec")
 		var createdAt time.Time
 		err = tx.QueryRow(ctx, `
 			INSERT INTO execution.executions
 				(id, org_id, project_id, workflow_id, workflow_version_id, state, state_version, priority,
-				 request_id, request_digest, input, input_digest, created_by, deadline_at, next_event_seq)
-			VALUES ($1, $2, $3, $4, $5, 'pending', 1, $6, $7, $8, $9::jsonb, $10, $11, $12, 2)
+				 request_id, request_digest, input, input_digest, created_by, deadline_at, next_event_seq,
+				 replay_of_execution_id, delegation_policy)
+			VALUES ($1, $2, $3, $4, $5, 'pending', 1, $6, $7, $8, $9::jsonb, $10, $11, $12, 2, $13, $14::jsonb)
 			RETURNING created_at`,
 			executionID, req.OrgId, req.ProjectId, req.WorkflowId, workflowVersionID, req.Priority,
-			req.RequestId, requestDigest, inputJSON, inputDigest, req.RequestedBy, deadline).
+			req.RequestId, requestDigest, inputJSON, inputDigest, req.RequestedBy, deadline,
+			nullableString(req.ReplayOfExecutionId), delegationPolicy).
 			Scan(&createdAt)
 		if err != nil {
 			if dbErr := asUniqueViolation(err); dbErr {
@@ -271,7 +314,7 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 			var agentVersionID, toolVersionID *string
 			var runtimeABI *int
 			var runtimeDigest, provider, model *string
-			if node.Type == contracts.NodeTypeAgent {
+			if node.Type == contracts.NodeTypeAgent || node.Type == contracts.NodeTypeLLM {
 				meta := agentMeta[node.ID]
 				agentVersionID = &meta.VersionID
 				runtimeABI = &meta.RuntimeABI
@@ -289,21 +332,76 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 				toolVersionID = &value
 			}
 
-			_, err := tx.Exec(ctx, `
+			paramsJSON := []byte("{}")
+			if node.Params != nil {
+				paramsJSON, err = json.Marshal(*node.Params)
+				if err != nil {
+					return status.Errorf(codes.Internal, "could not encode node params for %q", node.ID)
+				}
+			}
+			nodeConfig := []byte("{}")
+			if node.Config != nil {
+				encoded, err := json.Marshal(node.Config)
+				if err != nil {
+					return status.Errorf(codes.Internal, "could not encode node config for %q", node.ID)
+				}
+				nodeConfig = encoded
+			}
+			inputFrom, err := jsonOrArray(node.InputFrom)
+			if err != nil {
+				return status.Errorf(codes.Internal, "could not encode input_from for %q", node.ID)
+			}
+			inputSchema, err := jsonOrNil(node.InputSchema)
+			if err != nil {
+				return status.Errorf(codes.Internal, "could not encode input schema for %q", node.ID)
+			}
+			outputSchema, err := jsonOrNil(node.OutputSchema)
+			if err != nil {
+				return status.Errorf(codes.Internal, "could not encode output schema for %q", node.ID)
+			}
+			resources, err := jsonOrEmpty(node.Resources)
+			if err != nil {
+				return status.Errorf(codes.Internal, "could not encode resources for %q", node.ID)
+			}
+			joinPolicy := []byte("{}")
+			if node.Config != nil && node.Config.Join != nil {
+				encoded, err := json.Marshal(node.Config.Join)
+				if err != nil {
+					return status.Errorf(codes.Internal, "could not encode join policy for %q", node.ID)
+				}
+				joinPolicy = encoded
+			}
+			_, err = tx.Exec(ctx, `
 				INSERT INTO execution.execution_tasks
 					(id, execution_id, org_id, node_id, node_type, agent_version_id, tool_version_id,
 					 worker_pool, priority, runtime_abi, runtime_digest, provider, model,
 					 state, attempt_count, max_attempts, timeout_seconds, side_effect_class,
-					 retry_policy, idempotency_key)
+					 retry_policy, idempotency_key, config, input_from, input_schema, output_schema, params,
+					 resources, join_policy)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-				        'pending', 0, $14, $15, $16, $17::jsonb, $18)`,
+				        'pending', 0, $14, $15, $16, $17::jsonb, $18, $19::jsonb, $20::jsonb,
+				        $21::jsonb, $22::jsonb, $23::jsonb, $24::jsonb, $25::jsonb)`,
 				taskID, executionID, req.OrgId, node.ID, string(node.Type),
 				nullableArg(agentVersionID), nullableArg(toolVersionID), nullableArg(node.WorkerPool),
 				req.Priority, nullableArgInt(runtimeABI), nullableArg(runtimeDigest), nullableArg(provider),
 				nullableArg(model), maxAttempts, timeoutSeconds, sideEffect, retryPolicy,
-				nullableArg(node.IdempotencyKey))
+				nullableArg(node.IdempotencyKey), nodeConfig, inputFrom, inputSchema, outputSchema,
+				paramsJSON, resources, joinPolicy)
 			if err != nil {
 				return err
+			}
+			if seed, ok := seedOutputs[node.ID]; ok {
+				encodedSeed, err := json.Marshal(seed)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.Exec(ctx, `
+					UPDATE execution.execution_tasks
+					SET state = 'succeeded', started_at = now(), ended_at = now(),
+					    result_inline = $2::jsonb, updated_at = now()
+					WHERE id = $1`, taskID, encodedSeed); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -313,18 +411,32 @@ func (s *Service) SubmitExecution(ctx context.Context, req *orchestratorv1.Submi
 				value := contracts.SHA256Digest([]byte(*edge.When))
 				whenDigest = &value
 			}
+			dataMapping := []byte("{}")
+			if edge.DataMapping != nil {
+				encoded, err := json.Marshal(*edge.DataMapping)
+				if err != nil {
+					return status.Errorf(codes.Internal, "could not encode data mapping for %s -> %s", edge.From, edge.To)
+				}
+				dataMapping = encoded
+			}
+			priority := 0
+			if edge.Priority != nil {
+				priority = *edge.Priority
+			}
 			_, err := tx.Exec(ctx, `
 				INSERT INTO execution.task_dependencies
-					(execution_id, task_id, depends_on_task_id, org_id, when_expr, when_digest)
-				VALUES ($1, $2, $3, $4, $5, $6)`,
+					(execution_id, task_id, depends_on_task_id, org_id, when_expr, when_digest,
+					 data_mapping, priority)
+				VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
 				executionID, taskIDs[edge.To], taskIDs[edge.From], req.OrgId,
-				nullableArg(edge.When), nullableArg(whenDigest))
+				nullableArg(edge.When), nullableArg(whenDigest), dataMapping, priority)
 			if err != nil {
 				return err
 			}
 		}
 
-		counts := contracts.ExecutionCounts{Total: len(graph.Nodes), Pending: len(graph.Nodes)}
+		counts := contracts.ExecutionCounts{Total: len(graph.Nodes),
+			Pending: len(graph.Nodes) - len(seedOutputs), Succeeded: len(seedOutputs)}
 		eventPayload := contracts.ExecutionCreatedPayload{
 			Seq:               1,
 			WorkflowVersionID: workflowVersionID,
@@ -458,4 +570,25 @@ func validateAgainstSchema(inputJSON []byte, schemaMap map[string]any) error {
 		return err
 	}
 	return nil
+}
+
+func jsonOrNil(value *map[string]any) ([]byte, error) {
+	if value == nil {
+		return nil, nil
+	}
+	return json.Marshal(*value)
+}
+
+func jsonOrEmpty(value any) ([]byte, error) {
+	if value == nil || (reflect.ValueOf(value).Kind() == reflect.Pointer && reflect.ValueOf(value).IsNil()) {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(value)
+}
+
+func jsonOrArray(value *[]string) ([]byte, error) {
+	if value == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(*value)
 }

@@ -64,6 +64,48 @@ type Task struct {
 	EndedAt        *time.Time `json:"ended_at"`
 }
 
+// Approval is one durable human review record.
+type Approval struct {
+	ID          string             `json:"id"`
+	TaskID      string             `json:"task_id"`
+	Prompt      string             `json:"prompt"`
+	Policy      string             `json:"policy"`
+	Approvers   []string           `json:"approvers"`
+	Status      string             `json:"status"`
+	RequestedAt time.Time          `json:"requested_at"`
+	ExpiresAt   *time.Time         `json:"expires_at"`
+	DecidedAt   *time.Time         `json:"decided_at"`
+	DecidedBy   *string            `json:"decided_by"`
+	Reason      *string            `json:"reason"`
+	Decisions   []ApprovalDecision `json:"decisions"`
+}
+
+// ApprovalDecision is one immutable vote in an approval's audit trail.
+type ApprovalDecision struct {
+	ID         string    `json:"id"`
+	ApprovalID string    `json:"approval_id"`
+	Actor      string    `json:"actor"`
+	Decision   string    `json:"decision"`
+	Comment    string    `json:"comment"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// Delegation is one supervisor-to-child assignment in an execution hierarchy.
+type Delegation struct {
+	ID                string     `json:"id"`
+	RootExecutionID   string     `json:"root_execution_id"`
+	ParentExecutionID string     `json:"parent_execution_id"`
+	ParentTaskID      string     `json:"parent_task_id"`
+	ChildExecutionID  string     `json:"child_execution_id"`
+	AgentID           string     `json:"agent_id"`
+	AgentVersion      int        `json:"agent_version"`
+	Status            string     `json:"status"`
+	ErrorCode         *string    `json:"error_code"`
+	ErrorMessage      *string    `json:"error_message"`
+	CreatedAt         time.Time  `json:"created_at"`
+	FinishedAt        *time.Time `json:"finished_at"`
+}
+
 type Attempt struct {
 	ID                  string     `json:"id"`
 	TaskID              string     `json:"task_id"`
@@ -158,9 +200,16 @@ func (s *Store) Get(ctx context.Context, orgID, projectID, executionID string) (
 	return execution, nil
 }
 
-func (s *Store) List(ctx context.Context, orgID, projectID string, limit int, cursor, state, workflowID string) ([]Execution, string, error) {
+func (s *Store) List(ctx context.Context, orgID, projectID string, limit int, cursor, state, workflowID,
+	sortOrder string, createdAfter, createdBefore *time.Time) ([]Execution, string, error) {
 	executions := make([]Execution, 0, limit)
 	var nextCursor string
+	direction := "DESC"
+	comparison := "<"
+	if sortOrder == "created_at_asc" {
+		direction = "ASC"
+		comparison = ">"
+	}
 	err := s.db.WithTenant(ctx, orgID, func(tx pgx.Tx) error {
 		query := executionSelect + ` WHERE e.org_id = $1 AND e.project_id = $2`
 		args := []any{orgID, projectID}
@@ -172,16 +221,25 @@ func (s *Store) List(ctx context.Context, orgID, projectID string, limit int, cu
 			args = append(args, workflowID)
 			query += ` AND e.workflow_id = $` + itoa(len(args))
 		}
+		if createdAfter != nil {
+			args = append(args, *createdAfter)
+			query += ` AND e.created_at >= $` + itoa(len(args))
+		}
+		if createdBefore != nil {
+			args = append(args, *createdBefore)
+			query += ` AND e.created_at < $` + itoa(len(args))
+		}
 		if cursor != "" {
 			parts, err := database.DecodeCursor(cursor)
 			if err != nil || len(parts) != 2 {
 				return errors.New("invalid cursor")
 			}
 			args = append(args, parts[0], parts[1])
-			query += ` AND (e.created_at, e.id) < ($` + itoa(len(args)-1) + `::timestamptz, $` + itoa(len(args)) + `)`
+			query += ` AND (e.created_at, e.id) ` + comparison + ` ($` + itoa(len(args)-1) +
+				`::timestamptz, $` + itoa(len(args)) + `)`
 		}
 		args = append(args, limit+1)
-		query += ` ORDER BY e.created_at DESC, e.id DESC LIMIT $` + itoa(len(args))
+		query += ` ORDER BY e.created_at ` + direction + `, e.id ` + direction + ` LIMIT $` + itoa(len(args))
 
 		rows, err := tx.Query(ctx, query, args...)
 		if err != nil {
@@ -375,4 +433,160 @@ func itoa(value int) string {
 		value /= 10
 	}
 	return string(digits[pos:])
+}
+
+// Input returns the original submitted input for a replay.
+// ListDelegations returns the delegations in one root execution hierarchy.
+func (s *Store) ListDelegations(ctx context.Context, orgID, projectID, executionID string) ([]Delegation, error) {
+	delegations := []Delegation{}
+	err := s.db.WithTenant(ctx, orgID, func(tx pgx.Tx) error {
+		var exists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM execution.executions
+				WHERE id = $1 AND org_id = $2 AND project_id = $3
+			)`, executionID, orgID, projectID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		rows, err := tx.Query(ctx, `
+			SELECT id, root_execution_id, parent_execution_id, parent_task_id, child_execution_id,
+			       agent_id, agent_version, status, error_code, error_message, created_at, finished_at
+			FROM execution.delegations
+			WHERE org_id = $1 AND root_execution_id = $2
+			ORDER BY created_at, id`, orgID, executionID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var delegation Delegation
+			if err := rows.Scan(&delegation.ID, &delegation.RootExecutionID, &delegation.ParentExecutionID,
+				&delegation.ParentTaskID, &delegation.ChildExecutionID, &delegation.AgentID,
+				&delegation.AgentVersion, &delegation.Status, &delegation.ErrorCode, &delegation.ErrorMessage,
+				&delegation.CreatedAt, &delegation.FinishedAt); err != nil {
+				return err
+			}
+			delegations = append(delegations, delegation)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return delegations, nil
+}
+
+// ListApprovals returns the approval audit rows for one execution.
+func (s *Store) ListApprovals(ctx context.Context, orgID, projectID, executionID string) ([]Approval, error) {
+	approvals := []Approval{}
+	err := s.db.WithTenant(ctx, orgID, func(tx pgx.Tx) error {
+		var exists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM execution.executions
+				WHERE id = $1 AND org_id = $2 AND project_id = $3
+			)`, executionID, orgID, projectID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		rows, err := tx.Query(ctx, `
+			SELECT id, task_id, prompt, policy, approvers, status, requested_at, expires_at,
+			       decided_at, decided_by, reason
+			FROM execution.approvals
+			WHERE execution_id = $1
+			ORDER BY requested_at, id`, executionID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		index := map[string]int{}
+		for rows.Next() {
+			var approval Approval
+			if err := rows.Scan(&approval.ID, &approval.TaskID, &approval.Prompt, &approval.Policy,
+				&approval.Approvers, &approval.Status, &approval.RequestedAt, &approval.ExpiresAt,
+				&approval.DecidedAt, &approval.DecidedBy, &approval.Reason); err != nil {
+				return err
+			}
+			approval.Decisions = []ApprovalDecision{}
+			index[approval.ID] = len(approvals)
+			approvals = append(approvals, approval)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows.Close()
+		decisionRows, err := tx.Query(ctx, `
+			SELECT d.id, d.approval_id, d.actor, d.decision, d.comment, d.created_at
+			FROM execution.approval_decisions d
+			JOIN execution.approvals a ON a.id = d.approval_id
+			WHERE a.execution_id = $1
+			ORDER BY d.created_at, d.id`, executionID)
+		if err != nil {
+			return err
+		}
+		defer decisionRows.Close()
+		for decisionRows.Next() {
+			var decision ApprovalDecision
+			if err := decisionRows.Scan(&decision.ID, &decision.ApprovalID, &decision.Actor,
+				&decision.Decision, &decision.Comment, &decision.CreatedAt); err != nil {
+				return err
+			}
+			if position, ok := index[decision.ApprovalID]; ok {
+				approvals[position].Decisions = append(approvals[position].Decisions, decision)
+			}
+		}
+		return decisionRows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return approvals, nil
+}
+
+func (s *Store) Input(ctx context.Context, orgID, projectID, executionID string) (json.RawMessage, error) {
+	var input json.RawMessage
+	err := s.db.WithTenant(ctx, orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT e.input FROM execution.executions e
+			WHERE e.org_id = $1 AND e.project_id = $2 AND e.id = $3`,
+			orgID, projectID, executionID).Scan(&input)
+	})
+	if database.IsNotFound(err) {
+		return nil, ErrNotFound
+	}
+	return input, err
+}
+
+// Outputs returns the latest inline output of every succeeded task.
+func (s *Store) Outputs(ctx context.Context, orgID, projectID, executionID string) (map[string]json.RawMessage, error) {
+	outputs := map[string]json.RawMessage{}
+	err := s.db.WithTenant(ctx, orgID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT t.node_id, COALESCE(a.result_inline, t.result_inline, '{}'::jsonb)
+			FROM execution.execution_tasks t
+			JOIN execution.executions e ON e.id = t.execution_id
+			LEFT JOIN execution.task_attempts a ON a.id = t.latest_attempt_id
+			WHERE t.org_id = $1 AND t.execution_id = $2 AND e.project_id = $3
+			  AND t.state = 'succeeded'
+			ORDER BY t.node_id`, orgID, executionID, projectID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var nodeID string
+			var output json.RawMessage
+			if err := rows.Scan(&nodeID, &output); err != nil {
+				return err
+			}
+			outputs[nodeID] = output
+		}
+		return rows.Err()
+	})
+	return outputs, err
 }

@@ -14,8 +14,12 @@ func Authenticate(verifier Verifier) func(http.Handler) http.Handler {
 			header := r.Header.Get("Authorization")
 			token, ok := strings.CutPrefix(header, "Bearer ")
 			if !ok || strings.TrimSpace(token) == "" {
+				token = r.Header.Get("X-API-Key")
+				ok = strings.TrimSpace(token) != ""
+			}
+			if !ok {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="agent-platform"`)
-				respond.Error(w, r, http.StatusUnauthorized, "unauthorized", "a bearer token is required")
+				respond.Error(w, r, http.StatusUnauthorized, "unauthorized", "a bearer token or API key is required")
 				return
 			}
 			principal, err := verifier.Verify(r.Context(), strings.TrimSpace(token))

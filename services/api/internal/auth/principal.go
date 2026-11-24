@@ -40,9 +40,13 @@ var (
 	ErrForbidden       = errors.New("insufficient role")
 )
 
-// Principal is the authenticated identity. In Phase 1 it is the OIDC subject (or a dev token subject).
+// Principal is the authenticated identity. API-key requests carry their locked organisation/project scope and
+// role so they never need a membership lookup before tenant context exists.
 type Principal struct {
-	ID string
+	ID              string
+	APIKeyOrgID     string
+	APIKeyProjectID string
+	APIKeyRole      Role
 }
 
 type contextKey int
@@ -77,6 +81,15 @@ func MembershipFrom(ctx context.Context) (Membership, bool) {
 }
 
 // RequireRole checks the role resolved by the organization route middleware.
+// ProjectScope returns the project locked to an API key, or "" for user/org credentials.
+func ProjectScope(ctx context.Context) string {
+	principal, ok := PrincipalFrom(ctx)
+	if !ok {
+		return ""
+	}
+	return principal.APIKeyProjectID
+}
+
 func RequireRole(ctx context.Context, minimum Role) error {
 	membership, ok := MembershipFrom(ctx)
 	if !ok || membership.Role.Rank() < minimum.Rank() {

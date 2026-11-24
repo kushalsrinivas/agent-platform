@@ -14,13 +14,45 @@ var imageDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 // AgentSpec is the immutable agent version content.
 type AgentSpec struct {
-	Model        Model           `json:"model"`
-	Instructions string          `json:"instructions"`
-	Tools        []ToolBinding   `json:"tools,omitempty"`
-	Runtime      Runtime         `json:"runtime"`
-	Limits       *Limits         `json:"limits,omitempty"`
-	Checkpoint   *Checkpoint     `json:"checkpoint,omitempty"`
-	OutputSchema *map[string]any `json:"output_schema,omitempty"`
+	Model         Model           `json:"model"`
+	Instructions  string          `json:"instructions"`
+	Tools         []ToolBinding   `json:"tools,omitempty"`
+	Runtime       Runtime         `json:"runtime"`
+	Limits        *Limits         `json:"limits,omitempty"`
+	Checkpoint    *Checkpoint     `json:"checkpoint,omitempty"`
+	OutputSchema  *map[string]any `json:"output_schema,omitempty"`
+	Orchestration *Orchestration  `json:"orchestration,omitempty"`
+	MCPServers    []MCPServer     `json:"mcp_servers,omitempty"`
+}
+
+// Orchestration declares a supervisor agent's delegation budget and the exact child agents it may use.
+type Orchestration struct {
+	AllowedAgents      []AllowedAgent `json:"allowed_agents"`
+	MaxChildren        *int           `json:"max_children,omitempty"`
+	MaxDepth           *int           `json:"max_depth,omitempty"`
+	MaxParallel        *int           `json:"max_parallel,omitempty"`
+	MaxTotalTokens     *int64         `json:"max_total_tokens,omitempty"`
+	MaxDurationSeconds *int           `json:"max_duration_seconds,omitempty"`
+	MaxRetries         *int           `json:"max_retries,omitempty"`
+}
+
+type AllowedAgent struct {
+	AgentID string `json:"agent_id"`
+	Version int    `json:"version"`
+	Name    string `json:"name,omitempty"`
+}
+
+// MCPServer registers a Model Context Protocol server for this agent version.
+type MCPServer struct {
+	Name              string                `json:"name"`
+	Transport         string                `json:"transport"`
+	Command           string                `json:"command,omitempty"`
+	Args              []string              `json:"args,omitempty"`
+	Env               map[string]string     `json:"env,omitempty"`
+	URL               string                `json:"url,omitempty"`
+	TimeoutSeconds    *float64              `json:"timeout_seconds,omitempty"`
+	AuthCredentialRef string                `json:"auth_credential_ref,omitempty"`
+	ToolPolicies      map[string]ToolPolicy `json:"tool_policies,omitempty"`
 }
 
 type Model struct {
@@ -34,6 +66,46 @@ type ToolBinding struct {
 	ToolID  string          `json:"tool_id"`
 	Version int             `json:"version"`
 	Config  *map[string]any `json:"config,omitempty"`
+	Policy  *ToolPolicy     `json:"policy,omitempty"`
+}
+
+// ToolPolicy is the runtime-enforced permission and execution envelope for one tool.
+type ToolPolicy struct {
+	Permissions      ToolPermissions `json:"permissions,omitempty"`
+	TimeoutSeconds   *float64        `json:"timeout_seconds,omitempty"`
+	ConcurrencyLimit *int            `json:"concurrency_limit,omitempty"`
+	AuthScope        string          `json:"auth_scope,omitempty"`
+	MaxRetries       *int            `json:"max_retries,omitempty"`
+	Idempotency      string          `json:"idempotency,omitempty"`
+	RequiresApproval *bool           `json:"requires_approval,omitempty"`
+}
+
+type ToolPermissions struct {
+	Read        *bool `json:"read,omitempty"`
+	Write       *bool `json:"write,omitempty"`
+	Destructive *bool `json:"destructive,omitempty"`
+	Network     *bool `json:"network,omitempty"`
+}
+
+func validateToolPolicy(prefix string, policy *ToolPolicy, add func(string, ...any)) {
+	if policy == nil {
+		return
+	}
+	if policy.TimeoutSeconds != nil && (*policy.TimeoutSeconds <= 0 || *policy.TimeoutSeconds > 300) {
+		add("%s.timeout_seconds must be between 0 and 300", prefix)
+	}
+	if policy.ConcurrencyLimit != nil && (*policy.ConcurrencyLimit < 1 || *policy.ConcurrencyLimit > 100) {
+		add("%s.concurrency_limit must be between 1 and 100", prefix)
+	}
+	if len(policy.AuthScope) > 120 {
+		add("%s.auth_scope must be at most 120 characters", prefix)
+	}
+	if policy.MaxRetries != nil && (*policy.MaxRetries < 0 || *policy.MaxRetries > 5) {
+		add("%s.max_retries must be between 0 and 5", prefix)
+	}
+	if policy.Idempotency != "" && policy.Idempotency != "required" && policy.Idempotency != "optional" {
+		add("%s.idempotency must be required or optional", prefix)
+	}
 }
 
 type Runtime struct {
@@ -85,6 +157,7 @@ func (s *AgentSpec) Validate() error {
 			add("tools[%d].tool_id %q is bound more than once", i, tool.ToolID)
 		}
 		seenTools[tool.ToolID] = true
+		validateToolPolicy(fmt.Sprintf("tools[%d].policy", i), tool.Policy, add)
 	}
 	if s.Runtime.ABIVersion < 1 || s.Runtime.ABIVersion > 1000 {
 		add("runtime.abi_version must be between 1 and 1000")
@@ -98,6 +171,92 @@ func (s *AgentSpec) Validate() error {
 		}
 		if s.Limits.TimeoutSeconds != nil && (*s.Limits.TimeoutSeconds < 1 || *s.Limits.TimeoutSeconds > 86400) {
 			add("limits.timeout_seconds must be between 1 and 86400")
+		}
+	}
+	if s.Orchestration != nil {
+		orch := s.Orchestration
+		if len(orch.AllowedAgents) == 0 {
+			add("orchestration.allowed_agents must contain at least one agent")
+		}
+		if len(orch.AllowedAgents) > 50 {
+			add("orchestration.allowed_agents may contain at most 50 agents")
+		}
+		seen := map[string]bool{}
+		for i, allowed := range orch.AllowedAgents {
+			if !strings.HasPrefix(allowed.AgentID, "agt_") {
+				add("orchestration.allowed_agents[%d].agent_id must start with agt_", i)
+			}
+			if allowed.Version < 1 {
+				add("orchestration.allowed_agents[%d].version must be at least 1", i)
+			}
+			key := allowed.AgentID + ":" + fmt.Sprint(allowed.Version)
+			if seen[key] {
+				add("orchestration.allowed_agents[%d] is duplicated", i)
+			}
+			seen[key] = true
+		}
+		if orch.MaxChildren != nil && (*orch.MaxChildren < 1 || *orch.MaxChildren > 500) {
+			add("orchestration.max_children must be between 1 and 500")
+		}
+		if orch.MaxDepth != nil && (*orch.MaxDepth < 1 || *orch.MaxDepth > 32) {
+			add("orchestration.max_depth must be between 1 and 32")
+		}
+		if orch.MaxParallel != nil && (*orch.MaxParallel < 1 || *orch.MaxParallel > 100) {
+			add("orchestration.max_parallel must be between 1 and 100")
+		}
+		if orch.MaxTotalTokens != nil && *orch.MaxTotalTokens < 1 {
+			add("orchestration.max_total_tokens must be positive")
+		}
+		if orch.MaxDurationSeconds != nil && (*orch.MaxDurationSeconds < 1 || *orch.MaxDurationSeconds > 604800) {
+			add("orchestration.max_duration_seconds must be between 1 and 604800")
+		}
+		if orch.MaxRetries != nil && (*orch.MaxRetries < 0 || *orch.MaxRetries > 10) {
+			add("orchestration.max_retries must be between 0 and 10")
+		}
+	}
+	if len(s.MCPServers) > 16 {
+		add("at most 16 MCP servers may be registered")
+	}
+	seenMCP := map[string]bool{}
+	for i, server := range s.MCPServers {
+		if server.Name == "" || len(server.Name) > 64 {
+			add("mcp_servers[%d].name must be 1..64 characters", i)
+		}
+		if seenMCP[server.Name] {
+			add("mcp_servers[%d].name %q is duplicated", i, server.Name)
+		}
+		seenMCP[server.Name] = true
+		switch server.Transport {
+		case "stdio":
+			if strings.TrimSpace(server.Command) == "" {
+				add("mcp_servers[%d].command is required for stdio", i)
+			}
+		case "streamable_http":
+			if !strings.HasPrefix(server.URL, "http://") && !strings.HasPrefix(server.URL, "https://") {
+				add("mcp_servers[%d].url must be an http(s) URL", i)
+			}
+		default:
+			add("mcp_servers[%d].transport must be stdio or streamable_http", i)
+		}
+		if server.TimeoutSeconds != nil && (*server.TimeoutSeconds <= 0 || *server.TimeoutSeconds > 300) {
+			add("mcp_servers[%d].timeout_seconds must be between 0 and 300", i)
+		}
+		if len(server.Args) > 50 {
+			add("mcp_servers[%d].args may contain at most 50 values", i)
+		}
+		if len(server.Env) > 32 {
+			add("mcp_servers[%d].env may contain at most 32 values", i)
+		}
+		for key, value := range server.Env {
+			if len(key) == 0 || len(key) > 128 || len(value) > 4096 {
+				add("mcp_servers[%d].env entries must be 1..128 character keys and at most 4096 character values", i)
+			}
+		}
+		for name, policy := range server.ToolPolicies {
+			if name == "" || len(name) > 128 {
+				add("mcp_servers[%d].tool_policies keys must be 1..128 characters", i)
+			}
+			validateToolPolicy(fmt.Sprintf("mcp_servers[%d].tool_policies[%q]", i, name), &policy, add)
 		}
 	}
 	if s.Checkpoint != nil {

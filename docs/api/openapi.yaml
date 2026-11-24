@@ -1,17 +1,19 @@
 openapi: 3.1.0
 info:
   title: Agent Platform API
-  version: 1.0.0
+  version: 1.1.0
   summary: External REST and SSE contract for the agent platform.
   description: |
-    Normative initial API contract for Phase 01.
+    Normative public API contract. `/api/v1` is the canonical prefix; `/v1` is a compatibility alias with the same
+    resources. `/api/v1/organizations` is an alias for `/v1/orgs`.
 
-    **Authentication.** Programmatic clients send `Authorization: Bearer <OIDC JWT>`. The server derives the
-    caller's organisations from membership rows; an `org_id` in a path is verified, never trusted. Browser session
-    cookies are not implemented in Phase 04; use a bearer token.
+    **Authentication.** Programmatic clients send `Authorization: Bearer <OIDC JWT>` or an API key via
+    `X-API-Key: apk_...` (or `Authorization: Bearer apk_...`). API keys are project-scoped or organisation-scoped,
+    carry a role, and are revoked immediately. The server derives the caller's organisations from membership rows;
+    an `org_id` in a path is verified, never trusted.
 
     **Development authentication.** When the API runs with `AUTH_MODE=dev` (local development only),
-    `POST /v1/dev/token` issues a short-lived bearer token for a principal. That endpoint is never mounted in
+    `POST /api/v1/dev/token` issues a short-lived bearer token for a principal. That endpoint is never mounted in
     OIDC mode; it is not part of the production contract.
 
     **Tenancy.** Every path below includes the organisation. Cross-tenant IDs return `404`, not `403`, to avoid
@@ -23,7 +25,15 @@ info:
     **Execution state is server state.** This API never exposes a "set state" operation. Cancellation is the only
     execution transition a caller may request. State changes arrive via SSE or polling.
 
-    **Versioning.** `/v1` is additive-only. Breaking changes move to `/v2`.
+    **Versioning.** `/api/v1` is additive-only. Breaking changes move to `/v2`. The `/v1` alias remains for
+    compatibility.
+
+    **Pagination, filtering, sorting.** List endpoints accept `limit` and an opaque `cursor`. Executions accept
+    `state`, `workflow_id`, `created_after`, `created_before` and `sort=created_at_desc|created_at_asc`.
+
+    **Errors.** Every non-2xx response is `{"error":{"code","message","details?","request_id"}}`.
+
+    **Rate limits.** Authenticated requests are rate-limited per caller; `429` responses honour `Retry-After`.
   contact:
     name: Platform Team
   license:
@@ -36,6 +46,7 @@ servers:
     description: Local development
 security:
   - oidcBearer: []
+  - apiKey: []
 tags:
   - name: Organizations
     description: Organisations the caller belongs to. Authenticated users may create an organisation and become its owner; platform operators can also provision them.
@@ -52,7 +63,7 @@ tags:
   - name: Credentials
     description: Write-only project credentials referenced by agent versions.
 paths:
-  /v1/orgs:
+  /api/v1/orgs:
     get:
       tags: [Organizations]
       operationId: listOrganizations
@@ -90,7 +101,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
         '429': { $ref: '#/components/responses/RateLimited' }
-  /v1/orgs/{org_id}/members:
+  /api/v1/orgs/{org_id}/members:
     parameters:
       - $ref: '#/components/parameters/OrgId'
     get:
@@ -131,7 +142,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
-  /v1/orgs/{org_id}/members/{principal_id}:
+  /api/v1/orgs/{org_id}/members/{principal_id}:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/PrincipalId'
@@ -165,7 +176,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
-  /v1/orgs/{org_id}/projects:
+  /api/v1/orgs/{org_id}/projects:
     parameters:
       - $ref: '#/components/parameters/OrgId'
     get:
@@ -212,7 +223,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
         '429': { $ref: '#/components/responses/RateLimited' }
-  /v1/orgs/{org_id}/projects/{project_id}:
+  /api/v1/orgs/{org_id}/projects/{project_id}:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -228,7 +239,7 @@ paths:
               schema: { $ref: '#/components/schemas/Project' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /v1/orgs/{org_id}/projects/{project_id}/agents:
+  /api/v1/orgs/{org_id}/projects/{project_id}/agents:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -274,7 +285,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
-  /v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}:
+  /api/v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -291,7 +302,7 @@ paths:
               schema: { $ref: '#/components/schemas/Agent' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}/versions:
+  /api/v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}/versions:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -342,7 +353,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
-  /v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}/versions/{version}:
+  /api/v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}/versions/{version}:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -360,7 +371,7 @@ paths:
               schema: { $ref: '#/components/schemas/AgentVersion' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}/versions/{version}:publish:
+  /api/v1/orgs/{org_id}/projects/{project_id}/agents/{agent_id}/versions/{version}:publish:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -382,7 +393,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
-  /v1/orgs/{org_id}/projects/{project_id}/workflows:
+  /api/v1/orgs/{org_id}/projects/{project_id}/workflows:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -428,7 +439,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
-  /v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}:
+  /api/v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -445,7 +456,7 @@ paths:
               schema: { $ref: '#/components/schemas/Workflow' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}/versions:
+  /api/v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}/versions:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -495,7 +506,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
-  /v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}/versions/{version}:
+  /api/v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}/versions/{version}:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -513,7 +524,7 @@ paths:
               schema: { $ref: '#/components/schemas/WorkflowVersion' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}/versions/{version}:publish:
+  /api/v1/orgs/{org_id}/projects/{project_id}/workflows/{workflow_id}/versions/{version}:publish:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -538,7 +549,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
-  /v1/orgs/{org_id}/projects/{project_id}/executions:
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -606,7 +617,7 @@ paths:
                     type: [string, 'null']
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}:
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -623,7 +634,7 @@ paths:
               schema: { $ref: '#/components/schemas/Execution' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}:cancel:
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}:cancel:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -655,7 +666,88 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
-  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/tasks:
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/replay:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+    get:
+      tags: [Executions]
+      operationId: replayExecutionHistory
+      summary: Reconstruct the durable history without re-executing anything.
+      responses:
+        '200':
+          description: Execution, tasks, events and recorded outputs.
+          content:
+            application/json:
+              schema: { type: object }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}:replay:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+    post:
+      tags: [Executions]
+      operationId: reexecuteExecution
+      summary: Create a new execution from prior input and explicitly reused outputs.
+      description: Requires Idempotency-Key. Reused outputs seed their nodes as succeeded; no external operation is repeated.
+      responses:
+        '202':
+          description: Re-execution accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Execution' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/tasks/{task_id}:approve:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+      - $ref: '#/components/parameters/TaskId'
+    post:
+      tags: [Executions]
+      operationId: approveTask
+      summary: Approve a waiting approval node.
+      responses:
+        '202': { description: Approval recorded. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/tasks/{task_id}:reject:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+      - $ref: '#/components/parameters/TaskId'
+    post:
+      tags: [Executions]
+      operationId: rejectTask
+      summary: Reject a waiting approval node.
+      responses:
+        '202': { description: Rejection recorded. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/tasks/{task_id}:signal:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+      - $ref: '#/components/parameters/TaskId'
+    post:
+      tags: [Executions]
+      operationId: signalTask
+      summary: Deliver an external payload to a waiting delay node.
+      responses:
+        '202': { description: Signal recorded. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/tasks:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -686,7 +778,7 @@ paths:
                     type: [string, 'null']
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/tasks/{task_id}:
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/tasks/{task_id}:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -704,7 +796,7 @@ paths:
               schema: { $ref: '#/components/schemas/TaskDetail' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/events:
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/events:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -736,7 +828,53 @@ paths:
                     type: [string, 'null']
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/stream:
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/delegations:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+    get:
+      tags: [Executions]
+      operationId: listExecutionDelegations
+      summary: List supervisor-to-child delegations in the execution hierarchy.
+      responses:
+        '200':
+          description: Delegations, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Delegation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/approvals:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+    get:
+      tags: [Executions]
+      operationId: listExecutionApprovals
+      summary: List human approval records and their decision audit trail.
+      responses:
+        '200':
+          description: Approval records, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Approval' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}/stream:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -766,7 +904,7 @@ paths:
                 description: SSE frames.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /v1/orgs/{org_id}/projects/{project_id}/credentials:
+  /api/v1/orgs/{org_id}/projects/{project_id}/credentials:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -808,7 +946,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unprocessable' }
-  /v1/orgs/{org_id}/projects/{project_id}/credentials/{name}:
+  /api/v1/orgs/{org_id}/projects/{project_id}/credentials/{name}:
     parameters:
       - $ref: '#/components/parameters/OrgId'
       - $ref: '#/components/parameters/ProjectId'
@@ -827,7 +965,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
-  /v1/workers:
+  /api/v1/workers:
     get:
       tags: [Workers]
       operationId: listWorkers
@@ -854,7 +992,7 @@ paths:
                     items: { $ref: '#/components/schemas/Worker' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
-  /v1/workers/{worker_id}:drain:
+  /api/v1/workers/{worker_id}:drain:
     parameters:
       - name: worker_id
         in: path
@@ -882,12 +1020,339 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/orgs/{org_id}/api-keys:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+    get:
+      tags: [API Keys]
+      operationId: listAPIKeys
+      summary: List API key metadata. Owner only.
+      responses:
+        '200':
+          description: API keys without secret material.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/APIKey' }
+                  next_cursor: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [API Keys]
+      operationId: createAPIKey
+      summary: Create an API key. The plaintext key is returned once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 120 }
+                project_id: { type: string, pattern: '^proj_' }
+                role: { type: string, enum: [viewer, operator, owner], default: operator }
+                expires_at: { type: string, format: date-time }
+      responses:
+        '201':
+          description: Created key. Store `key` now; it cannot be retrieved again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIKey' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /api/v1/orgs/{org_id}/api-keys/{key_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - name: key_id
+        in: path
+        required: true
+        schema: { type: string, pattern: '^key_' }
+    delete:
+      tags: [API Keys]
+      operationId: revokeAPIKey
+      summary: Revoke an API key immediately. Owner only.
+      responses:
+        '200':
+          description: Revoked key metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/APIKey' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/orgs/{org_id}/workers:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+    get:
+      tags: [Workers]
+      operationId: listOrganizationWorkers
+      summary: List worker fleet capacity and health.
+      parameters:
+        - name: pool
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string, enum: [starting, available, busy, draining, unhealthy, terminated] }
+      responses:
+        '200':
+          description: Workers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Worker' }
+                  next_cursor: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/orgs/{org_id}/usage:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+    get:
+      tags: [Usage]
+      operationId: getUsage
+      summary: Aggregate executions, attempts, tokens and duration.
+      parameters:
+        - name: project_id
+          in: query
+          schema: { type: string, pattern: '^proj_' }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Usage summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /api/v1/orgs/{org_id}/approvals:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+    get:
+      tags: [Approvals]
+      operationId: listApprovals
+      summary: List human approvals across the organisation.
+      parameters:
+        - name: project_id
+          in: query
+          schema: { type: string, pattern: '^proj_' }
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, approved, rejected, expired] }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Approvals.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Approval' }
+                  next_cursor: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/environments:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Environments]
+      operationId: listEnvironments
+      summary: List project environment labels.
+      responses:
+        '200':
+          description: Environments.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Environment' }
+                  next_cursor: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Environments]
+      operationId: createEnvironment
+      summary: Create a project environment label.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 120 }
+                slug: { type: string, pattern: '^[a-z][a-z0-9-]{1,62}$' }
+                kind: { type: string, enum: [development, staging, production], default: development }
+      responses:
+        '201':
+          description: Environment created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Environment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/environments/{environment_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - name: environment_id
+        in: path
+        required: true
+        schema: { type: string, pattern: '^env_' }
+    get:
+      tags: [Environments]
+      operationId: getEnvironment
+      summary: Get one environment.
+      responses:
+        '200':
+          description: Environment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Environment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/tools:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Tools]
+      operationId: listTools
+      summary: List built-in tools available in the runtime image.
+      responses:
+        '200':
+          description: Tools.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Tool' }
+                  next_cursor: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/mcp/servers:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [MCP]
+      operationId: listMCPServers
+      summary: List MCP servers pinned by published agent versions.
+      responses:
+        '200':
+          description: MCP server registry view.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/MCPServerView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/workflows:validate:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [Workflows]
+      operationId: validateWorkflow
+      summary: Validate a workflow graph without storing it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [graph]
+              properties:
+                graph: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Valid graph.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid, nodes, edges]
+                properties:
+                  valid: { type: boolean }
+                  nodes: { type: integer }
+                  edges: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /api/v1/orgs/{org_id}/projects/{project_id}/executions/{execution_id}:resume:
+    parameters:
+      - $ref: '#/components/parameters/OrgId'
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/ExecutionId'
+    post:
+      tags: [Executions]
+      operationId: resumeExecution
+      summary: Re-run a failed or cancelled execution, reusing successful node outputs.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                priority: { type: integer, minimum: -100, maximum: 100 }
+      responses:
+        '202':
+          description: Resume accepted as a new execution.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Execution' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
 components:
   securitySchemes:
     oidcBearer:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
   parameters:
     OrgId:
       name: org_id
@@ -1140,6 +1605,12 @@ components:
           type: object
           additionalProperties: true
           description: Optional JSON Schema for the node output.
+        orchestration:
+          $ref: '#/components/schemas/AgentOrchestration'
+        mcp_servers:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/MCPServer' }
     ToolBinding:
       type: object
       required: [tool_id, version]
@@ -1150,6 +1621,72 @@ components:
         config:
           type: object
           additionalProperties: true
+        policy: { $ref: '#/components/schemas/ToolPolicy' }
+    ToolPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        permissions: { $ref: '#/components/schemas/ToolPermissions' }
+        timeout_seconds: { type: number, exclusiveMinimum: 0, maximum: 300 }
+        concurrency_limit: { type: integer, minimum: 1, maximum: 100 }
+        auth_scope: { type: string, maxLength: 120 }
+        max_retries: { type: integer, minimum: 0, maximum: 5 }
+        idempotency: { type: string, enum: [required, optional] }
+        requires_approval: { type: boolean }
+    ToolPermissions:
+      type: object
+      additionalProperties: false
+      properties:
+        read: { type: boolean, default: true }
+        write: { type: boolean, default: false }
+        destructive: { type: boolean, default: false }
+        network: { type: boolean, default: false }
+    AgentOrchestration:
+      type: object
+      required: [allowed_agents]
+      additionalProperties: false
+      properties:
+        allowed_agents:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/AllowedAgent' }
+        max_children: { type: integer, minimum: 1, maximum: 500 }
+        max_depth: { type: integer, minimum: 1, maximum: 32 }
+        max_parallel: { type: integer, minimum: 1, maximum: 100 }
+        max_total_tokens: { type: integer, minimum: 1 }
+        max_duration_seconds: { type: integer, minimum: 1, maximum: 604800 }
+        max_retries: { type: integer, minimum: 0, maximum: 10 }
+    AllowedAgent:
+      type: object
+      required: [agent_id, version]
+      additionalProperties: false
+      properties:
+        agent_id: { type: string, pattern: '^agt_' }
+        version: { type: integer, minimum: 1 }
+        name: { type: string }
+    MCPServer:
+      type: object
+      required: [name, transport]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64 }
+        transport: { type: string, enum: [stdio, streamable_http] }
+        command: { type: string }
+        args:
+          type: array
+          maxItems: 50
+          items: { type: string }
+        env:
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string, maxLength: 4096 }
+        url: { type: string, format: uri }
+        timeout_seconds: { type: number, exclusiveMinimum: 0, maximum: 300 }
+        auth_credential_ref: { type: string, maxLength: 120 }
+        tool_policies:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/ToolPolicy' }
     Workflow:
       type: object
       required: [id, org_id, project_id, name, latest_version, created_at]
@@ -1221,7 +1758,9 @@ components:
         id:
           type: string
           pattern: '^[a-z][a-z0-9_]{0,63}$'
-        type: { type: string, enum: [agent, tool] }
+        type:
+          type: string
+          enum: [start, end, agent, llm, tool, condition, transform, parallel, join, delay, approval, subworkflow, loop]
         agent:
           type: object
           required: [agent_id, version]
@@ -1241,12 +1780,26 @@ components:
         params:
           type: object
           additionalProperties: true
+        config:
+          type: object
+          additionalProperties: true
+          description: Type-specific control-node configuration (expression, mapping, join, delay, approval, workflow, loop, input, output_from).
+        input_schema:
+          type: object
+          additionalProperties: true
+          description: Optional JSON Schema for the resolved node input.
         input_from:
           type: array
           uniqueItems: true
           maxItems: 16
           items: { type: string }
           description: Upstream node IDs whose outputs are passed to this node (max 16, total inline context ≤2 MiB).
+        resources:
+          type: object
+          additionalProperties: false
+          properties:
+            cpu_cores: { type: number, exclusiveMinimum: 0, maximum: 1024 }
+            memory_mb: { type: integer, minimum: 16, maximum: 1048576 }
         worker_pool: { type: [string, 'null'], description: Optional worker pool/placement constraint. }
         timeout_seconds: { type: integer, minimum: 1, maximum: 86400, default: 600 }
         retry:
@@ -1276,7 +1829,12 @@ components:
         when:
           type: string
           maxLength: 2000
-          description: Optional CEL boolean over `outputs`. Omitted means true.
+          description: Optional CEL boolean over input, outputs, params, execution, iteration and previous. Omitted means true.
+        data_mapping:
+          type: object
+          additionalProperties: { type: string }
+          description: Target dotted path to a CEL expression over the upstream execution context.
+        priority: { type: integer, minimum: -100, maximum: 100, default: 0 }
     RetryPolicy:
       type: object
       additionalProperties: false
@@ -1365,7 +1923,9 @@ components:
         id: { type: string }
         execution_id: { type: string }
         node_id: { type: string }
-        node_type: { type: string, enum: [agent, tool] }
+        node_type:
+          type: string
+          enum: [start, end, agent, llm, tool, condition, transform, parallel, join, delay, approval, subworkflow, loop]
         state: { $ref: '#/components/schemas/TaskState' }
         state_version: { type: integer }
         priority: { type: integer, minimum: -100, maximum: 100 }
@@ -1426,6 +1986,136 @@ components:
         size_bytes: { type: integer }
         checkpoint_schema_version: { type: integer }
         created_at: { type: string, format: date-time }
+    Environment:
+      type: object
+      required: [id, org_id, project_id, name, slug, kind, created_at, updated_at]
+      properties:
+        id: { type: string }
+        org_id: { type: string }
+        project_id: { type: string }
+        name: { type: string }
+        slug: { type: string }
+        kind: { type: string, enum: [development, staging, production] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    APIKey:
+      type: object
+      required: [id, org_id, name, key_prefix, role, created_by, created_at]
+      properties:
+        id: { type: string }
+        org_id: { type: string }
+        project_id: { type: [string, 'null'] }
+        name: { type: string }
+        key_prefix: { type: string }
+        role: { type: string, enum: [viewer, operator, owner] }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: [string, 'null'], format: date-time }
+        expires_at: { type: [string, 'null'], format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+        key: { type: string, description: Present only in the create response. }
+    Tool:
+      type: object
+      required: [tool_id, name, version, description, source]
+      properties:
+        tool_id: { type: string }
+        name: { type: string }
+        version: { type: integer }
+        description: { type: string }
+        source: { type: string, enum: [builtin, mcp] }
+        schema: { type: object, additionalProperties: true }
+    UsageProject:
+      type: object
+      required: [project_id, executions, succeeded, failed, attempts, tokens_in, tokens_out, duration_ms]
+      properties:
+        project_id: { type: string }
+        executions: { type: integer }
+        succeeded: { type: integer }
+        failed: { type: integer }
+        attempts: { type: integer }
+        tokens_in: { type: integer }
+        tokens_out: { type: integer }
+        duration_ms: { type: integer }
+    Usage:
+      type: object
+      required: [from, to, projects, total]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        projects:
+          type: array
+          items: { $ref: '#/components/schemas/UsageProject' }
+        total: { $ref: '#/components/schemas/UsageProject' }
+    MCPServerView:
+      type: object
+      required: [name, transport, agents]
+      properties:
+        name: { type: string }
+        transport: { type: string, enum: [stdio, streamable_http] }
+        command: { type: string }
+        args:
+          type: array
+          items: { type: string }
+        url: { type: string }
+        auth_credential_ref: { type: string }
+        tool_policies: { type: object, additionalProperties: true }
+        agents:
+          type: array
+          items:
+            type: object
+            required: [agent_id, agent_name, version]
+            properties:
+              agent_id: { type: string }
+              agent_name: { type: string }
+              version: { type: integer }
+    Delegation:
+      type: object
+      required: [id, root_execution_id, parent_execution_id, parent_task_id, child_execution_id,
+                 agent_id, agent_version, status, created_at]
+      properties:
+        id: { type: string }
+        root_execution_id: { type: string }
+        parent_execution_id: { type: string }
+        parent_task_id: { type: string }
+        child_execution_id: { type: string }
+        agent_id: { type: string }
+        agent_version: { type: integer }
+        status: { type: string, enum: [pending, running, succeeded, failed, cancelled] }
+        error_code: { type: [string, 'null'] }
+        error_message: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+    Approval:
+      type: object
+      required: [id, task_id, prompt, policy, approvers, status, requested_at, decisions]
+      properties:
+        id: { type: string }
+        task_id: { type: string }
+        prompt: { type: string }
+        policy: { type: string, enum: [any, all] }
+        approvers:
+          type: array
+          maxItems: 20
+          items: { type: string }
+        status: { type: string, enum: [pending, approved, rejected, expired] }
+        requested_at: { type: string, format: date-time }
+        expires_at: { type: [string, 'null'], format: date-time }
+        decided_at: { type: [string, 'null'], format: date-time }
+        decided_by: { type: [string, 'null'] }
+        reason: { type: [string, 'null'] }
+        decisions:
+          type: array
+          items: { $ref: '#/components/schemas/ApprovalDecision' }
+    ApprovalDecision:
+      type: object
+      required: [id, approval_id, actor, decision, comment, created_at]
+      properties:
+        id: { type: string }
+        approval_id: { type: string }
+        actor: { type: string }
+        decision: { type: string, enum: [approve, reject, expire] }
+        comment: { type: string }
+        created_at: { type: string, format: date-time }
     TaskAttempt:
       type: object
       required: [id, task_id, attempt_number, worker_id, outcome, outcome_unknown, effect_uncertain, dispatched_at]
@@ -1469,33 +2159,28 @@ components:
         created_at: { type: string, format: date-time }
     WorkerStatus:
       type: string
-      enum: [active, unhealthy, draining, offline]
+      enum: [starting, available, busy, draining, unhealthy, terminated]
     Worker:
       type: object
-      required: [id, pool, status, capacity, runtime_abis, binary_version, registered_at]
+      required: [id, pool, status, max_concurrency, available_slots, runtime, binary_version, last_heartbeat_at]
       properties:
         id: { type: string }
         pool: { type: string }
         status: { $ref: '#/components/schemas/WorkerStatus' }
-        capacity:
-          type: object
-          required: [max_concurrency, available_slots]
-          properties:
-            max_concurrency: { type: integer }
-            available_slots: { type: integer }
-        labels:
-          type: object
-          additionalProperties: { type: string }
-        runtime_abis:
-          type: array
-          items: { type: integer }
-        runtime_digests:
+        max_concurrency: { type: integer }
+        available_slots: { type: integer }
+        reserved_slots: { type: integer }
+        runtime: { type: string }
+        runtime_version: { type: string }
+        binary_version: { type: string }
+        cpu_cores: { type: number }
+        cpu_usage_percent: { type: [number, 'null'] }
+        memory_mb: { type: integer }
+        memory_used_mb: { type: [integer, 'null'] }
+        capabilities:
           type: array
           items: { type: string }
-        binary_version: { type: string }
-        registered_at: { type: string, format: date-time }
-        last_heartbeat_at: { type: [string, 'null'], format: date-time }
-        active_attempts: { type: integer }
+        last_heartbeat_at: { type: string, format: date-time }
     Credential:
       type: object
       required: [name, created_at]

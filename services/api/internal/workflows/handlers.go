@@ -56,6 +56,23 @@ func (h *Handlers) List(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, response)
 }
 
+// Validate compiles and structurally validates a graph without storing it.
+func (h *Handlers) Validate(w http.ResponseWriter, r *http.Request) {
+	var request versionRequest
+	if err := respond.Decode(w, r, 1<<20, &request); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := request.Graph.Validate(); err != nil {
+		respond.ErrorWithDetails(w, r, http.StatusUnprocessableEntity, "invalid_graph",
+			"workflow graph is invalid", map[string]any{"problems": err.Error()})
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"valid": true, "nodes": len(request.Graph.Nodes), "edges": len(request.Graph.Edges),
+	})
+}
+
 func (h *Handlers) Create(w http.ResponseWriter, r *http.Request) {
 	if err := auth.RequireRole(r.Context(), auth.RoleOperator); err != nil {
 		respond.Error(w, r, http.StatusForbidden, "forbidden", "operator role required")
@@ -200,6 +217,9 @@ func (h *Handlers) respondStoreError(w http.ResponseWriter, r *http.Request, err
 	case errors.Is(err, ErrAgentUnavailable):
 		respond.Error(w, r, http.StatusUnprocessableEntity, "agent_unavailable",
 			"a referenced agent version is missing or not published")
+	case errors.Is(err, ErrWorkflowUnavailable):
+		respond.Error(w, r, http.StatusUnprocessableEntity, "workflow_unavailable",
+			"a referenced subworkflow version is missing or not published")
 	case database.IsUniqueViolation(err):
 		respond.Error(w, r, http.StatusConflict, "conflict", "an identical workflow version already exists")
 	case database.IsForeignKeyViolation(err):

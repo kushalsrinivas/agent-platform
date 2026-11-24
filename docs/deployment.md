@@ -191,9 +191,21 @@ docker compose exec -T postgres pg_dump -U postgres -Fc agent_platform > "agent_
   carries the Python venv and LangGraph. The orchestrator writes large checkpoints to
   `ORCHESTRATOR_ARTIFACT_DIR`; Compose mounts the `checkpoint-artifacts` volume, and the directory is created with
   the service user's ownership in the image.
+- API keys are bearer-like secrets. Create them through an owner endpoint, scope them to a project for CI, and
+  revoke them immediately when a device or pipeline is retired. Store them in a secret manager, not in shell
+  profiles or source control. The API hashes keys at rest and shows the plaintext once.
+- MCP servers are launched by the runtime (stdio) or reached over Streamable HTTP. stdio servers need their
+  executable and workspace inside the worker image; HTTP servers need egress from the worker network. Store MCP
+  credentials in the secret store or supply `MCP_CREDENTIAL_<REF>` for development only. Do not put tokens in the
+  agent spec.
+- A supervisor holds one worker slot while it waits for children. Size each supervisor pool for
+  `1 + orchestration.max_parallel` or run supervisors and children in separate pools. Approval and delay nodes do
+  not occupy worker slots.
 - Workers advertise `WORKER_RUNTIME`, `WORKER_CAPABILITIES`, CPU cores and memory. The scheduler only assigns a
-  node to a worker whose pool, capability and runtime ABI/digest match. Scale workers by adding replicas with
-  distinct `WORKER_ID` values; a shared worker ID intentionally replaces the previous boot.
+  node to a worker whose pool, capability, runtime ABI/digest and resource requirements match. Scale workers by
+  adding replicas with distinct `WORKER_ID` values; a shared worker ID intentionally replaces the previous boot.
+- Subworkflow/loop child executions use the same database and worker pool; no extra service is required. A child
+  chain is bounded by loop `max_iterations` and parent cancellation propagates to children.
 - `docker compose stop worker` sends `SIGTERM`, so the worker drains for up to `WORKER_SHUTDOWN_GRACE_SECONDS`
   before exiting. `docker compose kill worker` bypasses that grace; leases expire and the reaper retries the work.
 - Set `ORCHESTRATOR_MAX_ACTIVE_TASKS_PER_TENANT`, `ORCHESTRATOR_PROVIDER_CONCURRENCY` and
