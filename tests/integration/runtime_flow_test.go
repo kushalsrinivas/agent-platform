@@ -41,8 +41,12 @@ func startRuntimeWorker(t *testing.T, suffix, pool string) *testWorker {
 }
 
 func startRuntimeWorkerEnv(t *testing.T, suffix, pool string, env []string) *testWorker {
+	return startRuntimeWorkerCapacityEnv(t, suffix, pool, 1, env)
+}
+
+func startRuntimeWorkerCapacityEnv(t *testing.T, suffix, pool string, capacity int, env []string) *testWorker {
 	t.Helper()
-	worker := startTestWorkerWithCapacity(t, suffix, pool, 1)
+	worker := startTestWorkerWithCapacity(t, suffix, pool, capacity)
 	executor := execution.NewExecutor(worker.control, execution.Config{
 		CommandTemplate: "\"" + runtimePython(t) + "\" -m agent_runtime serve --socket {socket}",
 		RuntimeABI:      1,

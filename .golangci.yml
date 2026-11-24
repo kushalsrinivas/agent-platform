@@ -26,6 +26,11 @@ linters:
         linters:
           - revive
         text: "^exported:"
+      # Public SDK models are self-describing JSON contracts; the field names are the documentation.
+      - path: sdk/go/client/
+        linters:
+          - revive
+        text: "^exported:"
 
 formatters:
   enable:

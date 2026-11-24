@@ -151,6 +151,113 @@ variables (`AGENT_RUNTIME_TEST_PAUSE_SECONDS`, `AGENT_RUNTIME_TEST_PAUSE_AFTER_T
 `AGENT_RUNTIME_TEST_MODEL_DELAY_SECONDS`, `AGENT_RUNTIME_RESUME_MARKER`,
 `AGENT_RUNTIME_TOOL_COUNTER_FILE`); never set them in production.
 
+### Graph workflow engine
+
+The orchestrator resolves non-worker nodes itself: `start`, `end`, `condition`, `transform`, `parallel`, `join`,
+`delay` and `approval`. `agent`, `llm` and `tool` nodes still run in the Python runtime through a worker. Edge
+conditions, transform mappings and data mappings are CEL and compiled when the workflow version is created.
+
+`subworkflow` and `loop` reference a pinned published workflow version. They create child executions linked to the
+parent task; the parent stays pending and polls the child. A loop is bounded by `loop.max_iterations` and an
+optional CEL `loop.exit_when`. This is how the engine supports bounded repetition without allowing arbitrary graph
+cycles.
+
+Useful endpoints:
+
+```bash
+# historical replay: events, tasks and outputs, no re-execution
+curl -H "Authorization: Bearer $TOKEN"   "$API_URL/v1/orgs/$ORG/projects/$PROJECT/executions/$EXEC/replay"
+
+# re-execution with explicitly reused outputs
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: replay-123456"   -d '{"input":{"topic":"..."},"reuse_outputs":["research"]}'   "$API_URL/v1/orgs/$ORG/projects/$PROJECT/executions/$EXEC:replay"
+
+# approval and external delay signals
+curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"comment":"approved"}'   "$API_URL/v1/orgs/$ORG/projects/$PROJECT/executions/$EXEC/tasks/$TASK:approve"
+```
+
+`TestGraphEngineTenNodeWorkflow` is the exit-criterion test; `TestGraphSubworkflowLoopApprovalDelayReplay` covers
+child executions, loops, approval, delay and replay. Both run in `make integration-test`.
+
+### Supervisor delegation, MCP and approvals
+
+A supervisor is an ordinary agent version with `orchestration`:
+
+```json
+{
+  "allowed_agents": [{"agent_id": "agt_...", "version": 1}],
+  "max_children": 8,
+  "max_depth": 3,
+  "max_parallel": 4,
+  "max_total_tokens": 200000,
+  "max_duration_seconds": 3600,
+  "max_retries": 1
+}
+```
+
+The runtime exposes `delegate_task`, `delegate_tasks`, `get_delegation`, `list_delegation_agents`,
+`publish_agent_event` and `wait_agent_event`. Delegation is fenced by the attempt lease; no worker session or
+database credential is required. Size a worker/pool with one slot for the supervisor plus `max_parallel`, or use
+separate supervisor/child pools. A worker's durable consumer dispatches up to its capacity concurrently; the
+supervisor's wait does not block child delivery in the same process.
+
+MCP servers are pinned in the agent version:
+
+```json
+{
+  "mcp_servers": [{
+    "name": "fixture",
+    "transport": "stdio",
+    "command": "/usr/local/bin/mcp-fixture",
+    "args": ["--workspace", "/tmp"],
+    "timeout_seconds": 30,
+    "auth_credential_ref": "fixture",
+    "tool_policies": {"echo": {"permissions": {"read": true, "network": true}}}
+  }]
+}
+```
+
+For local development, `MCP_CREDENTIAL_<REF>` supplies the bearer/stdio token when attempt credentials are empty.
+Never put secrets in the immutable spec. Test-only helpers can set `MCP_CREDENTIAL_...` in the worker environment.
+
+Approval endpoints:
+
+```bash
+# list the approval record and every decision
+curl -H "Authorization: Bearer $TOKEN"   "$API_URL/v1/orgs/$ORG/projects/$PROJECT/executions/$EXEC/approvals"
+
+# vote
+curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"comment":"looks good"}'   "$API_URL/v1/orgs/$ORG/projects/$PROJECT/executions/$EXEC/tasks/$TASK:approve"
+```
+
+`TestSupervisorDelegatesConcurrentlyAndRecovers` is the Phase 10 exit criterion.
+`TestMCPDiscoveryInvocationAndPolicy`, `TestApprovalAssignmentPolicyAuditAndExpiry` and
+`TestApprovalExpiryReleasesExecution` cover MCP and approvals.
+
+### Developer SDKs and CLI
+
+```bash
+pip install ./sdk/python
+make build-go                       # bin/agentctl
+agentctl login --api-url http://localhost:8080 --api-key apk_...
+agentctl agent create --file agent.json
+agentctl agent deploy --agent agt_...
+agentctl workflow create --file workflow.json --deploy
+agentctl workflow run --workflow wf_... --input input.json --follow
+agentctl dev --file workflow.json --input input.json
+```
+
+API keys are created by an organisation owner:
+
+```bash
+curl -X POST "$API_URL/api/v1/organizations/$ORG/api-keys" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"local","project_id":"'$PROJECT'","role":"operator"}'
+```
+
+`/api/v1` is canonical; `/v1` remains an alias. The Python SDK is `platform_sdk` (sync and async), the Go SDK is
+`sdk/go/client`, and the developer docs are under `docs/developer/`. The live SDK/CLI tests are
+`TestDeveloperAPIKeySDKExitCriterion` and `TestPythonSDKLiveExitCriterion` in `make integration-test`.
+
 ### Worker registration and shutdown
 
 A worker advertises `WORKER_RUNTIME`, `WORKER_RUNTIME_VERSION`, `WORKER_CAPABILITIES`, `WORKER_CPU_CORES`,

@@ -37,6 +37,15 @@ func (h *Handlers) List(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, "internal", "could not list projects")
 		return
 	}
+	if scope := auth.ProjectScope(r.Context()); scope != "" {
+		project, getErr := h.store.Get(r.Context(), membership.OrgID, scope)
+		if getErr == nil {
+			items = []Project{project}
+		} else {
+			items = []Project{}
+		}
+		nextCursor = ""
+	}
 	response := map[string]any{"items": items}
 	if nextCursor != "" {
 		response["next_cursor"] = nextCursor
@@ -52,6 +61,10 @@ type createRequest struct {
 }
 
 func (h *Handlers) Create(w http.ResponseWriter, r *http.Request) {
+	if auth.ProjectScope(r.Context()) != "" {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "project-scoped API keys cannot create projects")
+		return
+	}
 	if err := auth.RequireRole(r.Context(), auth.RoleOperator); err != nil {
 		respond.Error(w, r, http.StatusForbidden, "forbidden", "operator role required")
 		return

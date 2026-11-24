@@ -24,6 +24,7 @@ import (
 	"github.com/agent-platform/agent-platform/internal/platform/idgen"
 	"github.com/agent-platform/agent-platform/internal/platform/postgres"
 	"github.com/agent-platform/agent-platform/packages/contracts"
+	"github.com/agent-platform/agent-platform/services/orchestrator/internal/graph"
 )
 
 const (
@@ -60,6 +61,7 @@ type Service struct {
 	toolConcurrency         map[string]int
 	artifacts               *artifacts.Store
 	sessions                *sessionHub
+	registry                *graph.Registry
 }
 
 // New builds the lifecycle service with defaults.
@@ -94,6 +96,7 @@ func NewWithConfig(pool *pgxpool.Pool, log *zap.Logger, cfg Config) *Service {
 		toolConcurrency:         cloneLimits(cfg.ToolConcurrency),
 		artifacts:               artifactStore,
 		sessions:                newSessionHub(),
+		registry:                graph.NewRegistry(),
 	}
 }
 
@@ -140,21 +143,28 @@ func (s *Service) statusForWorker(reserved, maxConcurrency, available int, reque
 }
 
 type execution struct {
-	ID                string
-	OrgID             string
-	ProjectID         string
-	WorkflowVersionID string
-	State             string
-	StateVersion      int64
-	NextEventSeq      int64
-	DeadlineAt        *time.Time
-	StartedAt         *time.Time
-	EndedAt           *time.Time
-	FailureCode       *string
-	CancelEpoch       int
-	CancelReason      *string
-	CancelRequestedAt *time.Time
-	CancelRequestedBy *string
+	ID                  string
+	OrgID               string
+	ProjectID           string
+	WorkflowID          string
+	WorkflowVersionID   string
+	State               string
+	StateVersion        int64
+	NextEventSeq        int64
+	DeadlineAt          *time.Time
+	StartedAt           *time.Time
+	EndedAt             *time.Time
+	FailureCode         *string
+	CancelEpoch         int
+	CancelReason        *string
+	CancelRequestedAt   *time.Time
+	CancelRequestedBy   *string
+	ParentExecutionID   *string
+	ParentTaskID        *string
+	Iteration           int
+	ReplayOfExecutionID *string
+	DelegationPolicy    json.RawMessage
+	DelegationDepth     int
 }
 
 type task struct {
@@ -185,6 +195,14 @@ type task struct {
 	IdempotencyKey  *string
 	RetryPolicy     json.RawMessage
 	DeadLetteredAt  *time.Time
+	Config          json.RawMessage
+	InputFrom       json.RawMessage
+	InputSchema     json.RawMessage
+	OutputSchema    json.RawMessage
+	Params          json.RawMessage
+	Resources       json.RawMessage
+	JoinPolicy      json.RawMessage
+	ControlState    map[string]any
 }
 
 type attempt struct {
@@ -208,19 +226,25 @@ func (s *Service) lockExecution(ctx context.Context, tx pgx.Tx, executionID stri
 	var failure, cancelReason pgtype.Text
 	var cancelRequestedBy pgtype.Text
 	var cancelAt pgtype.Timestamptz
+	var parentExecutionID, parentTaskID, replayOf pgtype.Text
 	err := tx.QueryRow(ctx, `
-		SELECT id, org_id, project_id, workflow_version_id, state, state_version, next_event_seq,
+		SELECT id, org_id, project_id, workflow_id, workflow_version_id, state, state_version, next_event_seq,
 		       deadline_at, started_at, ended_at, failure_code, cancel_epoch, cancel_reason,
-		       cancel_requested_at, cancel_requested_by
+		       cancel_requested_at, cancel_requested_by, parent_execution_id, parent_task_id,
+		       iteration, replay_of_execution_id, delegation_policy, delegation_depth
 		FROM execution.executions
 		WHERE id = $1
 		FOR UPDATE`, executionID).
-		Scan(&e.ID, &e.OrgID, &e.ProjectID, &e.WorkflowVersionID, &e.State, &e.StateVersion,
+		Scan(&e.ID, &e.OrgID, &e.ProjectID, &e.WorkflowID, &e.WorkflowVersionID, &e.State, &e.StateVersion,
 			&e.NextEventSeq, &deadline, &started, &ended, &failure, &e.CancelEpoch, &cancelReason,
-			&cancelAt, &cancelRequestedBy)
+			&cancelAt, &cancelRequestedBy, &parentExecutionID, &parentTaskID, &e.Iteration, &replayOf,
+			&e.DelegationPolicy, &e.DelegationDepth)
 	if err != nil {
 		return nil, err
 	}
+	e.ParentExecutionID = textPtr(parentExecutionID)
+	e.ParentTaskID = textPtr(parentTaskID)
+	e.ReplayOfExecutionID = textPtr(replayOf)
 	e.DeadlineAt = timePtr(deadline)
 	e.StartedAt = timePtr(started)
 	e.EndedAt = timePtr(ended)
@@ -246,13 +270,15 @@ func (s *Service) lockTask(ctx context.Context, tx pgx.Tx, taskID string) (*task
 	var runtimeDigest, provider, model pgtype.Text
 	var runtimeABI pgtype.Int4
 	var leaseExpires, deadLettered pgtype.Timestamptz
+	var controlState []byte
 	err := tx.QueryRow(ctx, `
 		SELECT id, execution_id, org_id, node_id, node_type, priority, runtime_abi, runtime_digest,
 		       provider, model, state, state_version, attempt_count, max_attempts, timeout_seconds,
 		       agent_version_id, tool_version_id, worker_pool, owner_worker_id, lease_id,
 		       lease_expires_at, latest_attempt_id,
 		       (lease_expires_at IS NOT NULL AND lease_expires_at <= now()),
-		       side_effect_class, idempotency_key, retry_policy, dead_lettered_at
+		       side_effect_class, idempotency_key, retry_policy, dead_lettered_at,
+		       config, input_from, input_schema, output_schema, params, resources, join_policy, control_state
 		FROM execution.execution_tasks
 		WHERE id = $1
 		FOR UPDATE`, taskID).
@@ -260,7 +286,15 @@ func (s *Service) lockTask(ctx context.Context, tx pgx.Tx, taskID string) (*task
 			&runtimeDigest, &provider, &model, &t.State, &t.StateVersion, &t.AttemptCount,
 			&t.MaxAttempts, &t.TimeoutSeconds, &agentVersion, &toolVersion, &workerPool,
 			&owner, &lease, &leaseExpires, &latest, &t.LeaseExpired, &t.SideEffectClass,
-			&t.IdempotencyKey, &t.RetryPolicy, &deadLettered)
+			&t.IdempotencyKey, &t.RetryPolicy, &deadLettered, &t.Config, &t.InputFrom, &t.InputSchema,
+			&t.OutputSchema, &t.Params, &t.Resources, &t.JoinPolicy, &controlState)
+	if err != nil {
+		return nil, err
+	}
+	t.ControlState = map[string]any{}
+	if len(controlState) > 0 {
+		_ = json.Unmarshal(controlState, &t.ControlState)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -487,6 +521,23 @@ func (s *Service) evaluateCompletion(ctx context.Context, tx pgx.Tx, e *executio
 		}
 		return s.transitionExecution(ctx, tx, e, "failed", "failure_quiescent", &code)
 	case "pending":
+		// A replay can seed every task as succeeded, and a control-only graph can finish without a worker
+		// acceptance. Such an execution is complete, not a failure.
+		if counts.Succeeded > 0 && counts.Failed == 0 && counts.Cancelled == 0 {
+			var blockedSkips int
+			if err := tx.QueryRow(ctx, `
+				SELECT count(*) FROM execution.execution_tasks
+				WHERE execution_id = $1 AND state = 'skipped' AND skip_reason = 'dependency_failed'`,
+				e.ID).Scan(&blockedSkips); err != nil {
+				return err
+			}
+			if blockedSkips == 0 {
+				if err := s.transitionExecution(ctx, tx, e, "running", "tasks_completed", nil); err != nil {
+					return err
+				}
+				return s.transitionExecution(ctx, tx, e, "succeeded", "all_tasks_terminal", nil)
+			}
+		}
 		code := "NO_TASKS_STARTED"
 		if err := s.transitionExecution(ctx, tx, e, "failing", "no_schedulable_tasks", &code); err != nil {
 			return err

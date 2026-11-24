@@ -32,3 +32,6 @@ dist/
 tmp/
 .DS_Store
 *.log
+
+# MkDocs build output
+site/

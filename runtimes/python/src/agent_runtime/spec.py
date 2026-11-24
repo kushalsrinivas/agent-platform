@@ -12,6 +12,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from mcp.client import MCPServerConfig
+from tool_runtime.policy import ToolPolicy
+
 CHECKPOINT_SCHEMA_VERSION = 1
 
 
@@ -36,6 +39,7 @@ class ToolBinding(RuntimeModel):
     tool_id: str
     version: int = Field(default=1, ge=1)
     config: dict[str, Any] = Field(default_factory=dict)
+    policy: ToolPolicy | None = None
 
 
 class RuntimeInfo(RuntimeModel):
@@ -59,6 +63,22 @@ class CheckpointSpec(RuntimeModel):
         return self
 
 
+class AllowedAgent(RuntimeModel):
+    agent_id: str
+    version: int = Field(ge=1)
+    name: str = ""
+
+
+class OrchestrationSpec(RuntimeModel):
+    allowed_agents: tuple[AllowedAgent, ...] = ()
+    max_children: int = Field(default=3, ge=1, le=500)
+    max_depth: int = Field(default=3, ge=1, le=32)
+    max_parallel: int = Field(default=3, ge=1, le=100)
+    max_total_tokens: int | None = Field(default=None, ge=1)
+    max_duration_seconds: int | None = Field(default=None, ge=1, le=604800)
+    max_retries: int = Field(default=0, ge=0, le=10)
+
+
 class AgentVersionSpec(RuntimeModel):
     """Immutable agent version spec pinned by a workflow version."""
 
@@ -68,6 +88,8 @@ class AgentVersionSpec(RuntimeModel):
     runtime: RuntimeInfo = Field(default_factory=RuntimeInfo)
     limits: LimitsSpec = Field(default_factory=LimitsSpec)
     checkpoint: CheckpointSpec = Field(default_factory=CheckpointSpec)
+    orchestration: OrchestrationSpec | None = None
+    mcp_servers: tuple[MCPServerConfig, ...] = ()
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> AgentVersionSpec:
@@ -87,9 +109,11 @@ class NodeContext(RuntimeModel):
     agent_version_id: str = ""
     execution_input: dict[str, Any] = Field(default_factory=dict)
     node_params: dict[str, Any] = Field(default_factory=dict)
+    node_input: dict[str, Any] = Field(default_factory=dict)
     upstream_outputs: dict[str, dict[str, Any]] = Field(default_factory=dict)
     deadline: datetime | None = None
     traceparent: str | None = None
+    lease_id: str = Field(default="", repr=False)
     credentials: dict[str, str] = Field(default_factory=dict, repr=False)
 
 

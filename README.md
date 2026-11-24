@@ -28,6 +28,33 @@ make setup   # verify tools, install dependencies, create .env
 Every command, port and troubleshooting step is in [`docs/development.md`](docs/development.md). Single-host / VPS
 deployment is in [`docs/deployment.md`](docs/deployment.md).
 
+### Developer quick start
+
+Create a project and an API key (owner token), then use the SDK or CLI:
+
+```bash
+pip install ./sdk/python
+export AGENT_PLATFORM_URL=http://localhost:8080
+export AGENT_PLATFORM_API_KEY=apk_...
+export AGENT_PLATFORM_ORG=org_...
+export AGENT_PLATFORM_PROJECT=proj_...
+python examples/python/01_simple_llm_agent.py
+```
+
+```bash
+make build-go
+bin/agentctl login --api-url "$AGENT_PLATFORM_URL" --api-key "$AGENT_PLATFORM_API_KEY"
+bin/agentctl init --dir demo --name hello
+bin/agentctl project create --name "Demo" --slug demo
+bin/agentctl agent create --file demo/agent.json
+# replace agt_REPLACE_WITH_AGENT_ID in demo/workflow.json, then:
+bin/agentctl workflow create --file demo/workflow.json --deploy
+bin/agentctl dev --file demo/workflow.json --input demo/input.json --no-worker
+```
+
+The developer guide starts at [`docs/developer/index.md`](docs/developer/index.md); the documentation site
+configuration is [`mkdocs.yml`](mkdocs.yml).
+
 ## Repository layout
 
 ```
@@ -37,9 +64,9 @@ services/api/            Go HTTP control plane: auth, REST/SSE, command forwardi
 services/orchestrator/   Go execution owner: scheduler, leases, retries, events
 services/worker/         Go attempt host and Python sandbox supervisor
 runtimes/python/         agent_runtime, model_providers, tool_runtime, mcp, checkpointing
-sdk/go/                  Go API client
-sdk/python/              Python API client
-cli/                     platformctl
+sdk/go/                  Go developer SDK
+sdk/python/              Python developer SDK (sync + async) and compatibility client
+cli/                     agentctl developer CLI (and operator platformctl)
 proto/                   Wire contracts; gen/ holds generated Go (committed)
 packages/                Shared contracts, schemas and fixtures
 migrations/              control/ then execution/, applied in order
@@ -73,8 +100,14 @@ task attempt is individually identifiable. Every execution pins immutable workfl
 | 06 — Worker manager and distributed scheduler | Complete. Worker capabilities/resources, heartbeat statuses, priority and tenant-fair scheduling, leases/fencing, graceful drain. |
 | 07 — Python agent runtime | Complete. LangGraph agent loop over the runtime ABI, provider adapters, schema-validated results, usage, cancellation and runtime tests. |
 | 08 — Durable execution, checkpoints and recovery | Complete. Durable checkpoints, fenced resume, recovery manager, retry engine, idempotency keys, durable cancellation and a ten-scenario crash suite. |
+| 09 — DAG workflow execution engine | Complete. Explicit node types, CEL routing, parallel/join, data mappings, durable delay/approval, child subworkflows/loops, replay and a 12-node recovery test. |
+| 10 — Multi-agent orchestration, delegation and MCP | Complete. Supervisor delegation, budgets, parent-child tracking, durable agent events, scoped context, MCP transports and tool policies, human approvals. |
+| 11 — Developer API, SDKs and CLI | Complete. Canonical `/api/v1`, API keys, environments, developer resources, Python/Go SDKs, `agentctl`, local dev mode, ten examples and a docs site. |
 
-The dashboard renders labelled fixtures until the dashboard wiring phase. Phase 08 is documented in
+The dashboard renders labelled fixtures until the dashboard wiring phase. Phase 11 is documented in
+[`docs/phase-11-developer-api.md`](docs/phase-11-developer-api.md); Phase 10 is documented in
+[`docs/phase-10-multi-agent-mcp.md`](docs/phase-10-multi-agent-mcp.md); Phase 09 is documented in
+[`docs/phase-09-graph-engine.md`](docs/phase-09-graph-engine.md); Phase 08 is documented in
 [`docs/phase-08-durable-execution.md`](docs/phase-08-durable-execution.md); Phase 07 is documented in
 [`docs/phase-07-agent-runtime.md`](docs/phase-07-agent-runtime.md); Phase 06 is documented in
 [`docs/phase-06-worker-manager.md`](docs/phase-06-worker-manager.md); Phase 05 is documented in

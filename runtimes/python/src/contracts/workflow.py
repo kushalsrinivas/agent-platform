@@ -8,7 +8,21 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from contracts.canonical import canonicalize, digest, graph_payload
 
-NodeType = Literal["agent", "tool"]
+NodeType = Literal[
+    "start",
+    "end",
+    "agent",
+    "llm",
+    "tool",
+    "condition",
+    "transform",
+    "parallel",
+    "join",
+    "delay",
+    "approval",
+    "subworkflow",
+    "loop",
+]
 SideEffectClass = Literal["read_only", "idempotent", "non_idempotent"]
 CheckpointMode = Literal["none", "on_node_end", "inherit"]
 RetryOn = Literal["transient", "timeout", "worker_lost", "result_invalid", "cancelled", "any"]
@@ -66,13 +80,64 @@ class WorkflowPolicy(ContractModel):
     retry: RetryPolicy | None = None
 
 
+class NodeResources(ContractModel):
+    cpu_cores: float | None = Field(default=None, gt=0, le=1024)
+    memory_mb: int | None = Field(default=None, ge=16, le=1_048_576)
+
+
+class JoinPolicy(ContractModel):
+    mode: Literal["all", "successful"]
+    successful: int | None = Field(default=None, ge=1, le=500)
+    on_partial: Literal["fail", "skip", "continue"] | None = None
+
+
+class DelayConfig(ContractModel):
+    seconds: int | None = Field(default=None, ge=1, le=604800)
+    until: str | None = Field(default=None, max_length=64)
+    event: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class ApprovalConfig(ContractModel):
+    prompt: str | None = Field(default=None, max_length=2000)
+    on_reject: Literal["fail", "skip", "continue"] | None = None
+    approvers: list[str] | None = Field(default=None, max_length=20)
+    policy: Literal["any", "all"] | None = None
+    expires_in_seconds: int | None = Field(default=None, ge=1, le=604800)
+    reject_reason_required: bool | None = None
+
+
+class SubworkflowRef(ContractModel):
+    workflow_id: str = Field(pattern=WORKFLOW_ID_PATTERN)
+    version: int = Field(ge=1)
+
+
+class LoopConfig(ContractModel):
+    max_iterations: int = Field(ge=1, le=100)
+    exit_when: str | None = Field(default=None, min_length=1, max_length=2000)
+
+
+class NodeConfig(ContractModel):
+    expression: str | None = Field(default=None, min_length=1, max_length=2000)
+    mapping: dict[str, str] | None = None
+    join: JoinPolicy | None = None
+    delay: DelayConfig | None = None
+    approval: ApprovalConfig | None = None
+    workflow: SubworkflowRef | None = None
+    loop: LoopConfig | None = None
+    input: dict[str, str] | None = None
+    output_from: list[NodeID] | None = Field(default=None, max_length=50)
+
+
 class WorkflowNode(ContractModel):
     id: str = Field(pattern=NODE_ID_PATTERN)
     type: NodeType
     agent: AgentRef | None = None
     tool: ToolRef | None = None
     params: dict[str, Any] | None = None
+    config: NodeConfig | None = None
     input_from: list[NodeID] | None = Field(default=None, max_length=16)
+    input_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
     worker_pool: str | None = Field(default=None, min_length=1, max_length=64)
     timeout_seconds: int | None = Field(default=None, ge=1, le=86400)
     retry: RetryPolicy | None = None
@@ -80,21 +145,42 @@ class WorkflowNode(ContractModel):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=500)
     checkpoint_mode: CheckpointMode | None = None
     require_checkpoint: bool | None = None
-    output_schema: dict[str, Any] | None = None
+    resources: NodeResources | None = None
 
     @model_validator(mode="after")
     def _check(self) -> Self:
         problems: list[str] = []
-        if self.type == "agent":
+        if self.type in ("agent", "llm"):
             if self.agent is None:
-                problems.append("agent is required when type=agent")
+                problems.append(f"agent is required when type={self.type}")
             if self.tool is not None:
-                problems.append("tool is not allowed when type=agent")
-        if self.type == "tool":
+                problems.append(f"tool is not allowed when type={self.type}")
+        elif self.type == "tool":
             if self.tool is None:
                 problems.append("tool is required when type=tool")
             if self.agent is not None:
                 problems.append("agent is not allowed when type=tool")
+        elif self.agent is not None or self.tool is not None:
+            problems.append("agent/tool are only allowed on agent, llm and tool nodes")
+        if self.config is not None:
+            if self.type == "condition" and not self.config.expression:
+                problems.append("config.expression is required when type=condition")
+            elif self.type == "transform" and not self.config.mapping:
+                problems.append("config.mapping is required when type=transform")
+            elif self.type == "join" and self.config.join is None:
+                problems.append("config.join is required when type=join")
+            elif self.type == "delay":
+                delay = self.config.delay
+                if delay is None:
+                    problems.append("config.delay is required when type=delay")
+                elif sum(value is not None for value in (delay.seconds, delay.until, delay.event)) != 1:
+                    problems.append("config.delay must set exactly one of seconds, until or event")
+            elif self.type in ("subworkflow", "loop") and self.config.workflow is None:
+                problems.append(f"config.workflow is required when type={self.type}")
+            if self.type == "loop" and self.config.loop is None:
+                problems.append("config.loop is required when type=loop")
+        elif self.type in ("condition", "transform", "join", "delay", "subworkflow", "loop"):
+            problems.append(f"config is required when type={self.type}")
         if self.input_from is not None:
             for ref in self.input_from:
                 if ref == self.id:
@@ -114,6 +200,8 @@ class WorkflowEdge(ContractModel):
     from_: NodeID = Field(alias="from")
     to: NodeID
     when: str | None = Field(default=None, max_length=2000)
+    data_mapping: dict[str, str] | None = None
+    priority: int | None = Field(default=None, ge=-100, le=100)
 
     model_config = ConfigDict(
         extra="forbid",

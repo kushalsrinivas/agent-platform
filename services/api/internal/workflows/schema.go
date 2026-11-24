@@ -19,6 +19,11 @@ func validateEmbeddedSchemas(graph *contracts.WorkflowGraph) error {
 		}
 	}
 	for _, node := range graph.Nodes {
+		if node.InputSchema != nil {
+			if err := compileSchema(fmt.Sprintf("node %q input_schema", node.ID), *node.InputSchema); err != nil {
+				return err
+			}
+		}
 		if node.OutputSchema != nil {
 			if err := compileSchema(fmt.Sprintf("node %q output_schema", node.ID), *node.OutputSchema); err != nil {
 				return err

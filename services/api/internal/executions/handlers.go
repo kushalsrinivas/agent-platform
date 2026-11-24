@@ -209,6 +209,338 @@ func (h *Handlers) Cancel(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusAccepted, execution)
 }
 
+// Replay returns the durable history of an execution without re-running anything.
+func (h *Handlers) Replay(w http.ResponseWriter, r *http.Request) {
+	membership, _ := auth.MembershipFrom(r.Context())
+	projectID := chi.URLParam(r, "project_id")
+	executionID := chi.URLParam(r, "execution_id")
+	execution, err := h.store.Get(r.Context(), membership.OrgID, projectID, executionID)
+	if err != nil {
+		h.respondStoreError(w, r, err, "could not load execution replay")
+		return
+	}
+	tasks, err := h.store.ListTasks(r.Context(), membership.OrgID, projectID, executionID, "", 500)
+	if err != nil {
+		h.respondStoreError(w, r, err, "could not load replay tasks")
+		return
+	}
+	events, err := h.store.ListEvents(r.Context(), membership.OrgID, projectID, executionID, 0, 1000)
+	if err != nil {
+		h.respondStoreError(w, r, err, "could not load replay events")
+		return
+	}
+	outputs, err := h.store.Outputs(r.Context(), membership.OrgID, projectID, executionID)
+	if err != nil {
+		h.respondStoreError(w, r, err, "could not load replay outputs")
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"mode": "historical", "execution": execution, "tasks": tasks, "outputs": outputs, "events": events,
+	})
+}
+
+// Reexecute creates a new execution using the prior input and explicitly selected prior outputs.
+func (h *Handlers) Reexecute(w http.ResponseWriter, r *http.Request) {
+	if err := auth.RequireRole(r.Context(), auth.RoleOperator); err != nil {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "operator role required")
+		return
+	}
+	membership, _ := auth.MembershipFrom(r.Context())
+	principal, _ := auth.PrincipalFrom(r.Context())
+	idempotencyKey := r.Header.Get("Idempotency-Key")
+	if !validIdempotencyKey(idempotencyKey) {
+		respond.Error(w, r, http.StatusUnprocessableEntity, "idempotency_key_required",
+			"Idempotency-Key must be 8..128 visible ASCII characters")
+		return
+	}
+	projectID := chi.URLParam(r, "project_id")
+	executionID := chi.URLParam(r, "execution_id")
+	original, err := h.store.Get(r.Context(), membership.OrgID, projectID, executionID)
+	if err != nil {
+		h.respondStoreError(w, r, err, "could not load execution")
+		return
+	}
+	var request struct {
+		Input        map[string]any `json:"input"`
+		ReuseOutputs []string       `json:"reuse_outputs"`
+		Priority     int32          `json:"priority"`
+	}
+	if r.Body != nil {
+		if err := respond.Decode(w, r, 1<<20, &request); err != nil && !errors.Is(err, io.EOF) {
+			respond.Error(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
+	input := request.Input
+	if input == nil {
+		raw, err := h.store.Input(r.Context(), membership.OrgID, projectID, executionID)
+		if err != nil {
+			h.respondStoreError(w, r, err, "could not load prior input")
+			return
+		}
+		if err := json.Unmarshal(raw, &input); err != nil {
+			respond.Error(w, r, http.StatusInternalServerError, "internal", "prior input is not an object")
+			return
+		}
+	}
+	protoInput, err := structpb.NewStruct(input)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "input must be a JSON object")
+		return
+	}
+	seed := map[string]*structpb.Struct{}
+	if len(request.ReuseOutputs) > 0 {
+		outputs, err := h.store.Outputs(r.Context(), membership.OrgID, projectID, executionID)
+		if err != nil {
+			h.respondStoreError(w, r, err, "could not load prior outputs")
+			return
+		}
+		for _, nodeID := range request.ReuseOutputs {
+			raw, ok := outputs[nodeID]
+			if !ok {
+				respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
+					"reuse_outputs references a node without a succeeded output: "+nodeID)
+				return
+			}
+			value := map[string]any{}
+			if err := json.Unmarshal(raw, &value); err != nil {
+				respond.Error(w, r, http.StatusInternalServerError, "internal", "prior output is not an object")
+				return
+			}
+			converted, err := structpb.NewStruct(value)
+			if err != nil {
+				respond.Error(w, r, http.StatusInternalServerError, "internal", "prior output is not a JSON object")
+				return
+			}
+			seed[nodeID] = converted
+		}
+	}
+	callCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	submitted, err := h.orchestrator.Submit(callCtx, &orchestratorv1.SubmitExecutionRequest{
+		OrgId:               membership.OrgID,
+		ProjectId:           projectID,
+		WorkflowId:          original.WorkflowID,
+		WorkflowVersion:     int32(original.WorkflowVersion), //nolint:gosec // version is bounded by the control plane.
+		Input:               protoInput,
+		RequestId:           idempotencyKey,
+		RequestedBy:         principal.ID,
+		Traceparent:         r.Header.Get("traceparent"),
+		Priority:            request.Priority,
+		ReplayOfExecutionId: executionID,
+		SeedOutputs:         seed,
+	})
+	if err != nil {
+		h.respondSubmitError(w, r, err)
+		return
+	}
+	execution, err := h.store.Get(r.Context(), membership.OrgID, projectID, submitted.ExecutionId)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, "internal", "re-execution committed; fetch it with GET")
+		return
+	}
+	w.Header().Set("Location", "/v1/orgs/"+membership.OrgID+"/projects/"+projectID+"/executions/"+execution.ID)
+	respond.JSON(w, http.StatusAccepted, execution)
+}
+
+// Resume starts a new execution from a failed or cancelled execution, reusing every node whose output succeeded.
+func (h *Handlers) Resume(w http.ResponseWriter, r *http.Request) {
+	if err := auth.RequireRole(r.Context(), auth.RoleOperator); err != nil {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "operator role required")
+		return
+	}
+	membership, _ := auth.MembershipFrom(r.Context())
+	principal, _ := auth.PrincipalFrom(r.Context())
+	idempotencyKey := r.Header.Get("Idempotency-Key")
+	if !validIdempotencyKey(idempotencyKey) {
+		respond.Error(w, r, http.StatusUnprocessableEntity, "idempotency_key_required",
+			"Idempotency-Key must be 8..128 visible ASCII characters")
+		return
+	}
+	projectID := chi.URLParam(r, "project_id")
+	executionID := chi.URLParam(r, "execution_id")
+	original, err := h.store.Get(r.Context(), membership.OrgID, projectID, executionID)
+	if err != nil {
+		h.respondStoreError(w, r, err, "could not load execution")
+		return
+	}
+	if original.State != "failed" && original.State != "cancelled" {
+		respond.Error(w, r, http.StatusConflict, "conflict", "only a failed or cancelled execution can be resumed")
+		return
+	}
+	var request struct {
+		Priority int32 `json:"priority"`
+	}
+	if r.Body != nil {
+		if err := respond.Decode(w, r, 4096, &request); err != nil && !errors.Is(err, io.EOF) {
+			respond.Error(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
+	rawInput, err := h.store.Input(r.Context(), membership.OrgID, projectID, executionID)
+	if err != nil {
+		h.respondStoreError(w, r, err, "could not load prior input")
+		return
+	}
+	input := map[string]any{}
+	if err := json.Unmarshal(rawInput, &input); err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, "internal", "prior input is not an object")
+		return
+	}
+	protoInput, err := structpb.NewStruct(input)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, "internal", "prior input is not a JSON object")
+		return
+	}
+	outputs, err := h.store.Outputs(r.Context(), membership.OrgID, projectID, executionID)
+	if err != nil {
+		h.respondStoreError(w, r, err, "could not load prior outputs")
+		return
+	}
+	seed := map[string]*structpb.Struct{}
+	for nodeID, raw := range outputs {
+		value := map[string]any{}
+		if err := json.Unmarshal(raw, &value); err != nil {
+			continue
+		}
+		converted, err := structpb.NewStruct(value)
+		if err != nil {
+			continue
+		}
+		seed[nodeID] = converted
+	}
+	callCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	submitted, err := h.orchestrator.Submit(callCtx, &orchestratorv1.SubmitExecutionRequest{
+		OrgId:               membership.OrgID,
+		ProjectId:           projectID,
+		WorkflowId:          original.WorkflowID,
+		WorkflowVersion:     int32(original.WorkflowVersion), //nolint:gosec // bounded by the control plane.
+		Input:               protoInput,
+		RequestId:           idempotencyKey,
+		RequestedBy:         principal.ID,
+		Traceparent:         r.Header.Get("traceparent"),
+		Priority:            request.Priority,
+		ReplayOfExecutionId: executionID,
+		SeedOutputs:         seed,
+	})
+	if err != nil {
+		h.respondSubmitError(w, r, err)
+		return
+	}
+	resumed, err := h.store.Get(r.Context(), membership.OrgID, projectID, submitted.ExecutionId)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, "internal", "resume committed; fetch it with GET")
+		return
+	}
+	respond.JSON(w, http.StatusAccepted, resumed)
+}
+
+func (h *Handlers) ApproveTask(w http.ResponseWriter, r *http.Request) {
+	h.signalTask(w, r, "approve")
+}
+
+func (h *Handlers) RejectTask(w http.ResponseWriter, r *http.Request) {
+	h.signalTask(w, r, "reject")
+}
+
+func (h *Handlers) SignalTask(w http.ResponseWriter, r *http.Request) {
+	h.signalTask(w, r, "signal")
+}
+
+func (h *Handlers) signalTask(w http.ResponseWriter, r *http.Request, action string) {
+	if err := auth.RequireRole(r.Context(), auth.RoleOperator); err != nil {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "operator role required")
+		return
+	}
+	membership, _ := auth.MembershipFrom(r.Context())
+	principal, _ := auth.PrincipalFrom(r.Context())
+	var request struct {
+		Comment string         `json:"comment"`
+		Payload map[string]any `json:"payload"`
+	}
+	if r.Body != nil {
+		if err := respond.Decode(w, r, 16384, &request); err != nil && !errors.Is(err, io.EOF) {
+			if respond.IsBodyTooLarge(err) {
+				respond.Error(w, r, http.StatusRequestEntityTooLarge, "payload_too_large", "request body exceeds 16 KiB")
+				return
+			}
+			respond.Error(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+	}
+	payload, err := structpb.NewStruct(request.Payload)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, "invalid_request", "payload must be a JSON object")
+		return
+	}
+	callCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	result, err := h.orchestrator.SignalTask(callCtx, &orchestratorv1.SignalTaskRequest{
+		OrgId:       membership.OrgID,
+		ProjectId:   chi.URLParam(r, "project_id"),
+		ExecutionId: chi.URLParam(r, "execution_id"),
+		TaskId:      chi.URLParam(r, "task_id"),
+		Action:      action,
+		Comment:     request.Comment,
+		Actor:       principal.ID,
+		Payload:     payload,
+	})
+	if err != nil {
+		st := status.Convert(err)
+		switch st.Code() {
+		case codes.NotFound:
+			respond.Error(w, r, http.StatusNotFound, "not_found", "execution or task not found")
+		case codes.FailedPrecondition:
+			respond.Error(w, r, http.StatusConflict, "conflict", st.Message())
+		case codes.Unavailable, codes.DeadlineExceeded:
+			respond.Error(w, r, http.StatusServiceUnavailable, "orchestrator_unavailable", "execution service is unavailable")
+		default:
+			h.log.Error("task signal failed", zap.String("task_id", chi.URLParam(r, "task_id")), zap.Error(err))
+			respond.Error(w, r, http.StatusInternalServerError, "internal", "could not signal task")
+		}
+		return
+	}
+	respond.JSON(w, http.StatusAccepted, map[string]any{
+		"task_id": result.GetTaskId(), "node_type": result.GetNodeType(),
+		"accepted": result.GetAccepted(), "control_state": result.GetControlState(),
+	})
+}
+
+// ListDelegations returns the supervisor-to-child delegation records for one execution hierarchy.
+func (h *Handlers) ListDelegations(w http.ResponseWriter, r *http.Request) {
+	membership, _ := auth.MembershipFrom(r.Context())
+	items, err := h.store.ListDelegations(r.Context(), membership.OrgID,
+		chi.URLParam(r, "project_id"), chi.URLParam(r, "execution_id"))
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			respond.Error(w, r, http.StatusNotFound, "not_found", "execution not found")
+			return
+		}
+		h.log.Error("delegation list failed", zap.Error(err))
+		respond.Error(w, r, http.StatusInternalServerError, "internal", "could not list delegations")
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// ListApprovals returns durable approval records and their audit trail.
+func (h *Handlers) ListApprovals(w http.ResponseWriter, r *http.Request) {
+	membership, _ := auth.MembershipFrom(r.Context())
+	items, err := h.store.ListApprovals(r.Context(), membership.OrgID,
+		chi.URLParam(r, "project_id"), chi.URLParam(r, "execution_id"))
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			respond.Error(w, r, http.StatusNotFound, "not_found", "execution not found")
+			return
+		}
+		h.log.Error("approval list failed", zap.Error(err))
+		respond.Error(w, r, http.StatusInternalServerError, "internal", "could not list approvals")
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 func (h *Handlers) List(w http.ResponseWriter, r *http.Request) {
 	membership, _ := auth.MembershipFrom(r.Context())
 	stateFilter := r.URL.Query().Get("state")
@@ -216,9 +548,44 @@ func (h *Handlers) List(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "invalid execution state filter")
 		return
 	}
+	sortOrder := r.URL.Query().Get("sort")
+	if sortOrder == "" {
+		sortOrder = "created_at_desc"
+	}
+	if sortOrder != "created_at_desc" && sortOrder != "created_at_asc" {
+		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
+			"sort must be created_at_desc or created_at_asc")
+		return
+	}
+	parseTime := func(name string) *time.Time {
+		raw := r.URL.Query().Get(name)
+		if raw == "" {
+			return nil
+		}
+		value, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed", name+" must be RFC3339")
+			return nil
+		}
+		return &value
+	}
+	createdAfter := parseTime("created_after")
+	if r.URL.Query().Get("created_after") != "" && createdAfter == nil {
+		return
+	}
+	createdBefore := parseTime("created_before")
+	if r.URL.Query().Get("created_before") != "" && createdBefore == nil {
+		return
+	}
+	if createdAfter != nil && createdBefore != nil && !createdAfter.Before(*createdBefore) {
+		respond.Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
+			"created_after must be before created_before")
+		return
+	}
 	limit := pagination.Limit(r, 50, 100)
 	items, nextCursor, err := h.store.List(r.Context(), membership.OrgID, chi.URLParam(r, "project_id"),
-		limit, r.URL.Query().Get("cursor"), stateFilter, r.URL.Query().Get("workflow_id"))
+		limit, r.URL.Query().Get("cursor"), stateFilter, r.URL.Query().Get("workflow_id"),
+		sortOrder, createdAfter, createdBefore)
 	if err != nil {
 		if err.Error() == "invalid cursor" {
 			respond.Error(w, r, http.StatusUnprocessableEntity, "invalid_cursor", "cursor is invalid")

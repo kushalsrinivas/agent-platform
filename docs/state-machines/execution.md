@@ -135,6 +135,8 @@ If a task is skipped because a dependency failed, condition 2 is already false, 
   worker stream after the transaction commits; the worker kills the sandbox (`SIGTERM`, grace, `SIGKILL`) and
   reports `CANCELLED` if it can. A success that races the request is recorded as cancelled: the execution never
   ends `succeeded`.
+- Child executions (`subworkflow`/`loop`) are marked `cancel_requested` and have their pending tasks cancelled
+  recursively, up to a bounded depth. Their active attempts are fenced by leases.
 - If a worker is unreachable, the reaper waits for lease expiry, records the attempt as `lease_expired` with
   `outcome_unknown = true`, marks the task `cancelled`, and sets `effect_uncertain` when the attempt had started.
   The execution can then finalise. Cancellation never waits forever on a dead worker.
@@ -142,8 +144,11 @@ If a task is skipped because a dependency failed, condition 2 is already false, 
 - Execution deadline is an automatic cancellation with `cancel_reason = deadline`. It finalises as `failed` with
   `EXECUTION_TIMEOUT`. Reaching the deadline while already `failing` keeps the failure path; while already
   `cancel_requested` due to a user, the user cancellation wins.
-- No cascading to child executions exists in Phase 1 (executions do not spawn executions). If added later, each
-  child is cancelled by the parent's workflow logic, not by an implicit recursive rule; this needs an ADR.
+- Child executions created by `subworkflow`/`loop`/delegation are cancelled recursively by the orchestrator: active
+  children become `cancel_requested`, their pending tasks are cancelled, and their active attempts are fenced by
+  leases. Recursion is bounded by the loop iteration cap and the delegation/nesting depth guards.
+- A delegated child's completion is recorded in `execution.delegations`; the parent result is independent and is
+  produced by the supervisor's normal task completion. An approval node waits in `pending` without a worker lease.
 
 ## 6. Deadlines and timeouts
 

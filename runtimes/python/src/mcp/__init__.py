@@ -1,8 +1,7 @@
 """MCP integration surface.
 
-Phase 02 defines the descriptors and the client protocol the runtime will speak; the stdio/SSE transports and
-tool discovery land with MCP support. Descriptors are immutable so a checkpoint can record which server and tool
-version produced a result.
+Descriptors are immutable so a checkpoint can record which server and tool version produced a result. The manager
+and transports live in :mod:`mcp.manager`.
 """
 
 from mcp.client import MCPClient, MCPServerConfig, MCPTool, MCPTransport

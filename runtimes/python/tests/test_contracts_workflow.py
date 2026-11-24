@@ -84,3 +84,38 @@ def test_workflow_edge_contract() -> None:
     edge = WorkflowEdge.model_validate({"from": "collect", "to": "plan", "when": "true"})
     assert edge.from_ == "collect"
     assert edge.model_dump(by_alias=True)["from"] == "collect"
+
+
+def test_graph_engine_control_nodes_parse() -> None:
+    document = {
+        "schema_version": 1,
+        "workflow_id": "wf_01a209a9000000000000000000",
+        "name": "graph engine",
+        "nodes": [
+            {"id": "start", "type": "start"},
+            {"id": "score", "type": "condition", "config": {"expression": "input.score >= 80"}},
+            {
+                "id": "join",
+                "type": "join",
+                "config": {"join": {"mode": "successful", "successful": 1, "on_partial": "skip"}},
+            },
+            {
+                "id": "loop",
+                "type": "loop",
+                "config": {
+                    "workflow": {"workflow_id": "wf_01a209a9000000000000000001", "version": 1},
+                    "loop": {"max_iterations": 3, "exit_when": "iteration >= 2"},
+                },
+            },
+            {"id": "end", "type": "end"},
+        ],
+        "edges": [
+            {"from": "start", "to": "score"},
+            {"from": "score", "to": "join", "when": "outputs.score.result == true", "data_mapping": {"ok": "true"}},
+            {"from": "join", "to": "loop"},
+            {"from": "loop", "to": "end"},
+        ],
+    }
+    parsed = parse_workflow(json.dumps(document))
+    assert parsed.nodes[1].type == "condition"
+    assert parsed.edges[1].data_mapping == {"ok": "true"}

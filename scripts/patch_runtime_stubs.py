@@ -34,6 +34,28 @@ def main() -> None:
         )
         messages.write_text(code)
 
+    worker_grpc = GEN / "worker_pb2_grpc.py"
+    if worker_grpc.exists():
+        source = worker_grpc.read_text()
+        source = source.replace(
+            "from worker.v1 import worker_pb2 as worker_dot_v1_dot_worker__pb2",
+            "from . import worker_pb2 as worker__pb2",
+        )
+        source = source.replace("worker_dot_v1_dot_worker__pb2", "worker__pb2")
+        worker_grpc.write_text(source)
+
+    worker_messages = GEN / "worker_pb2.py"
+    if worker_messages.exists():
+        code = worker_messages.read_text()
+        if "struct_pb2" not in code:
+            code = code.replace(
+                "from google.protobuf.internal import builder as _builder\n",
+                "from google.protobuf.internal import builder as _builder\n"
+                "from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2\n"
+                "from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2\n",
+            )
+            worker_messages.write_text(code)
+
     (GEN / "__init__.py").write_text(
         '"""Generated runtime ABI stubs. Regenerate with `make proto`. Do not edit by hand."""\n'
     )

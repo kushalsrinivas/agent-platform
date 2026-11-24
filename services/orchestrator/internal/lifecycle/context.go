@@ -28,6 +28,7 @@ type TaskContext struct {
 	NodeParams       map[string]any
 	UpstreamOutputs  map[string]map[string]any
 	OutputSchema     map[string]any
+	NodeInput        map[string]any
 	Deadline         time.Time
 	Traceparent      string
 	ResumeCheckpoint *ResumeCheckpoint
@@ -131,6 +132,17 @@ func (s *Service) GetTaskContext(ctx context.Context, workerID, taskID, attemptI
 			}
 			break
 		}
+		// Delegated and other synthetic tasks have no workflow node; their pinned task row is authoritative.
+		if result.OutputSchema == nil && len(t.OutputSchema) > 2 {
+			if err := json.Unmarshal(t.OutputSchema, &result.OutputSchema); err != nil {
+				return err
+			}
+		}
+		if result.NodeParams == nil && len(t.Params) > 2 {
+			if err := json.Unmarshal(t.Params, &result.NodeParams); err != nil {
+				return err
+			}
+		}
 
 		input := map[string]any{}
 		if err := tx.QueryRow(ctx, `
@@ -152,28 +164,37 @@ func (s *Service) GetTaskContext(ctx context.Context, workerID, taskID, attemptI
 		}
 		result.ResumeCheckpoint = resume
 
-		rows, err := tx.Query(ctx, `
-			SELECT upstream.node_id, attempt.result_inline
-			FROM execution.task_dependencies d
-			JOIN execution.execution_tasks upstream
-			  ON upstream.id = d.depends_on_task_id AND upstream.execution_id = d.execution_id
-			JOIN execution.task_attempts attempt ON attempt.id = upstream.latest_attempt_id
-			WHERE d.task_id = $1 AND d.execution_id = $2 AND upstream.state = 'succeeded'
-			  AND attempt.result_inline IS NOT NULL`, t.ID, e.ID)
+		deps, err := s.dependencies(ctx, tx, e, t)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
 		result.UpstreamOutputs = map[string]map[string]any{}
-		for rows.Next() {
-			var nodeID string
-			output := map[string]any{}
-			if err := rows.Scan(&nodeID, &output); err != nil {
-				return err
-			}
-			result.UpstreamOutputs[nodeID] = output
+		var inputFrom []string
+		if len(t.InputFrom) > 0 && string(t.InputFrom) != "null" {
+			_ = json.Unmarshal(t.InputFrom, &inputFrom)
 		}
-		return rows.Err()
+		source := deps.outputs
+		if inputFrom == nil {
+			source = deps.inboundOutputs
+		}
+		for nodeID, output := range source {
+			if inputFrom == nil {
+				result.UpstreamOutputs[nodeID] = output
+				continue
+			}
+			for _, selected := range inputFrom {
+				if selected == nodeID {
+					result.UpstreamOutputs[nodeID] = output
+					break
+				}
+			}
+		}
+		nodeInput, err := s.resolveNodeInput(ctx, tx, e, t, deps)
+		if err != nil {
+			return err
+		}
+		result.NodeInput = nodeInput
+		return nil
 	})
 	if err != nil {
 		return nil, err

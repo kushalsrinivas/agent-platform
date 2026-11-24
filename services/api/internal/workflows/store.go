@@ -14,10 +14,11 @@ import (
 )
 
 var (
-	ErrNotFound         = errors.New("workflow not found")
-	ErrVersionNotFound  = errors.New("workflow version not found")
-	ErrVersionState     = errors.New("workflow version cannot transition from its current status")
-	ErrAgentUnavailable = errors.New("a referenced agent version is missing or not published")
+	ErrNotFound            = errors.New("workflow not found")
+	ErrVersionNotFound     = errors.New("workflow version not found")
+	ErrVersionState        = errors.New("workflow version cannot transition from its current status")
+	ErrAgentUnavailable    = errors.New("a referenced agent version is missing or not published")
+	ErrWorkflowUnavailable = errors.New("a referenced subworkflow version is missing or not published")
 )
 
 type Workflow struct {
@@ -195,6 +196,9 @@ func (s *Store) Create(ctx context.Context, orgID, projectID, name, description,
 		if err := validateAgentRefs(ctx, tx, orgID, projectID, &graph, false); err != nil {
 			return err
 		}
+		if err := validateSubworkflowRefs(ctx, tx, orgID, projectID, workflow.ID, &graph, false); err != nil {
+			return err
+		}
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO control.workflows (id, org_id, project_id, name, description, latest_version)
 			VALUES ($1, $2, $3, $4, $5, 1)
@@ -239,6 +243,9 @@ func (s *Store) CreateVersion(ctx context.Context, orgID, projectID, workflowID,
 			return err
 		}
 		if err := validateAgentRefs(ctx, tx, orgID, projectID, &graph, false); err != nil {
+			return err
+		}
+		if err := validateSubworkflowRefs(ctx, tx, orgID, projectID, workflowID, &graph, false); err != nil {
 			return err
 		}
 		version = Version{
@@ -301,6 +308,9 @@ func (s *Store) Publish(ctx context.Context, orgID, projectID, workflowID string
 		if err := validateAgentRefs(ctx, tx, orgID, projectID, &graph, true); err != nil {
 			return err
 		}
+		if err := validateSubworkflowRefs(ctx, tx, orgID, projectID, workflowID, &graph, true); err != nil {
+			return err
+		}
 		_, err := tx.Exec(ctx, `
 			UPDATE control.workflow_versions SET status = 'published', published_at = now()
 			WHERE org_id = $1 AND project_id = $2 AND workflow_id = $3 AND version = $4`,
@@ -352,4 +362,31 @@ func itoa(value int) string {
 		value /= 10
 	}
 	return string(digits[pos:])
+}
+
+func validateSubworkflowRefs(ctx context.Context, tx pgx.Tx, orgID, projectID, workflowID string,
+	graph *contracts.WorkflowGraph, requirePublished bool) error {
+	for _, node := range graph.Nodes {
+		if node.Config == nil || node.Config.Workflow == nil {
+			continue
+		}
+		if node.Config.Workflow.WorkflowID == workflowID && requirePublished {
+			return ErrWorkflowUnavailable
+		}
+		var status string
+		err := tx.QueryRow(ctx, `
+			SELECT status FROM control.workflow_versions
+			WHERE org_id = $1 AND project_id = $2 AND workflow_id = $3 AND version = $4`,
+			orgID, projectID, node.Config.Workflow.WorkflowID, node.Config.Workflow.Version).Scan(&status)
+		if database.IsNotFound(err) {
+			return ErrWorkflowUnavailable
+		}
+		if err != nil {
+			return err
+		}
+		if requirePublished && status != "published" {
+			return ErrWorkflowUnavailable
+		}
+	}
+	return nil
 }

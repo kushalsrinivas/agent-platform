@@ -42,6 +42,9 @@ message AgentTaskContext {
   string traceparent = 13;
   // Short-lived; never log, persist or include in output/checkpoint.
   map<string, string> credentials = 14;
+  google.protobuf.Struct node_input = 15;
+  // Attempt-scoped capability for supervisor delegation. Never log, persist or include in output/checkpoint.
+  string lease_id = 16;
 }
 
 message ExecuteNodeRequest {
@@ -79,6 +82,7 @@ message ToolTaskContext {
   map<string, string> credentials = 13;
   // Stable across attempts of the same execution node. External side effects must deduplicate on it.
   string idempotency_key = 14;
+  google.protobuf.Struct node_input = 15;
 }
 
 message ExecuteToolRequest {

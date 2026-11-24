@@ -1,6 +1,8 @@
 package contracts
 
 import (
+	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -114,8 +116,30 @@ func validateGraph(v *validator, g *WorkflowGraph) {
 			v.addf("duplicate edge %s -> %s", edge.From, edge.To)
 		}
 		seenEdges[key] = true
-		if edge.When != nil && utf8.RuneCountInString(*edge.When) > 2000 {
-			v.addf("%s.when must be at most 2000 characters", field)
+		if edge.When != nil {
+			if utf8.RuneCountInString(*edge.When) > 2000 {
+				v.addf("%s.when must be at most 2000 characters", field)
+			}
+			if _, err := CompileCondition(*edge.When); err != nil {
+				v.addf("%s.when: %v", field, err)
+			}
+		}
+		if edge.Priority != nil && (*edge.Priority < -100 || *edge.Priority > 100) {
+			v.addf("%s.priority must be between -100 and 100", field)
+		}
+		if edge.DataMapping != nil {
+			for target, expression := range *edge.DataMapping {
+				if !validDataPath(target) {
+					v.addf("%s.data_mapping target %q is not a valid dotted path", field, target)
+				}
+				if strings.TrimSpace(expression) == "" {
+					v.addf("%s.data_mapping[%q] expression is empty", field, target)
+					continue
+				}
+				if _, err := CompileExpression(expression); err != nil {
+					v.addf("%s.data_mapping[%q]: %v", field, target, err)
+				}
+			}
 		}
 		adjacency[edge.From] = append(adjacency[edge.From], edge.To)
 		reverse[edge.To] = append(reverse[edge.To], edge.From)
@@ -143,6 +167,25 @@ func validateGraph(v *validator, g *WorkflowGraph) {
 	}
 	if visited != len(g.Nodes) {
 		v.addf("workflow graph contains a cycle")
+	}
+
+	validateEntryAndTermination(v, g, adjacency, reverse, nodeIndex)
+
+	// Join thresholds depend on the number of inbound edges.
+	for i := range g.Nodes {
+		node := &g.Nodes[i]
+		if node.Type != NodeTypeJoin || node.Config == nil || node.Config.Join == nil {
+			continue
+		}
+		join := node.Config.Join
+		if join.Mode == "successful" {
+			inbound := len(reverse[node.ID])
+			if join.Successful == nil {
+				v.addf("node %q join.successful is required when mode=successful", node.ID)
+			} else if *join.Successful < 1 || *join.Successful > inbound {
+				v.addf("node %q join.successful must be between 1 and %d", node.ID, inbound)
+			}
+		}
 	}
 
 	for i := range g.Nodes {
@@ -173,24 +216,27 @@ func validateGraph(v *validator, g *WorkflowGraph) {
 }
 
 func (v *validator) validateNode(field string, node *WorkflowNode, defaultRetry *RetryPolicy) {
-	if node.Type != NodeTypeAgent && node.Type != NodeTypeTool {
-		v.addf("%s.type must be agent or tool", field)
+	if !validNodeType(node.Type) {
+		v.addf("%s.type %q is not supported", field, node.Type)
+		return
 	}
-	if node.Type == NodeTypeAgent {
+	worker := node.Type.WorkerNode()
+	if node.Type == NodeTypeAgent || node.Type == NodeTypeLLM {
 		if node.Agent == nil {
-			v.addf("%s.agent is required when type=agent", field)
+			v.addf("%s.agent is required when type=%s", field, node.Type)
 		}
 		if node.Tool != nil {
-			v.addf("%s.tool is not allowed when type=agent", field)
+			v.addf("%s.tool is not allowed when type=%s", field, node.Type)
 		}
-	}
-	if node.Type == NodeTypeTool {
+	} else if node.Type == NodeTypeTool {
 		if node.Tool == nil {
 			v.addf("%s.tool is required when type=tool", field)
 		}
 		if node.Agent != nil {
 			v.addf("%s.agent is not allowed when type=tool", field)
 		}
+	} else if node.Agent != nil || node.Tool != nil {
+		v.addf("%s.agent/tool are only allowed on agent, llm and tool nodes", field)
 	}
 	if node.Agent != nil {
 		v.pattern(field+".agent.agent_id", node.Agent.AgentID, agentIDPattern)
@@ -206,6 +252,9 @@ func (v *validator) validateNode(field string, node *WorkflowNode, defaultRetry 
 	}
 	if node.WorkerPool != nil {
 		v.requiredString(field+".worker_pool", *node.WorkerPool, 1, 64)
+		if !worker {
+			v.addf("%s.worker_pool is only meaningful on worker nodes", field)
+		}
 	}
 	if node.TimeoutSeconds != nil && (*node.TimeoutSeconds < 1 || *node.TimeoutSeconds > 86400) {
 		v.addf("%s.timeout_seconds must be between 1 and 86400", field)
@@ -220,6 +269,9 @@ func (v *validator) validateNode(field string, node *WorkflowNode, defaultRetry 
 	if node.CheckpointMode != nil {
 		v.enum(field+".checkpoint_mode", *node.CheckpointMode,
 			CheckpointModeNone, CheckpointModeOnNodeEnd, CheckpointModeInherit)
+		if !worker {
+			v.addf("%s.checkpoint_mode is only meaningful on worker nodes", field)
+		}
 	}
 	if node.RequireCheckpoint != nil && *node.RequireCheckpoint && node.CheckpointMode != nil &&
 		*node.CheckpointMode == CheckpointModeNone {
@@ -228,9 +280,15 @@ func (v *validator) validateNode(field string, node *WorkflowNode, defaultRetry 
 	if node.Retry != nil {
 		v.validateRetry(field+".retry", node.Retry)
 	}
-	if node.InputFrom != nil && len(*node.InputFrom) > 0 && (*node.InputFrom)[0] == "" {
-		v.addf("%s.input_from contains an empty reference", field)
+	if node.Resources != nil {
+		if node.Resources.CPU != nil && (*node.Resources.CPU <= 0 || *node.Resources.CPU > 1024) {
+			v.addf("%s.resources.cpu_cores must be between 0 and 1024", field)
+		}
+		if node.Resources.MemoryMB != nil && (*node.Resources.MemoryMB < 16 || *node.Resources.MemoryMB > 1<<20) {
+			v.addf("%s.resources.memory_mb must be between 16 and 1048576", field)
+		}
 	}
+	v.validateNodeConfig(field, node)
 
 	// ADR 0006: non-idempotent work is never retried without an idempotency key.
 	maxAttempts := 1
@@ -247,6 +305,301 @@ func (v *validator) validateNode(field string, node *WorkflowNode, defaultRetry 
 	if sideEffect == SideEffectNonIdempotent && maxAttempts > 1 && node.IdempotencyKey == nil {
 		v.addf("%s: non_idempotent nodes require idempotency_key when max_attempts > 1", field)
 	}
+}
+
+func (v *validator) validateNodeConfig(field string, node *WorkflowNode) {
+	config := node.Config
+	if config == nil {
+		if requiresConfig(node.Type) {
+			v.addf("%s.config is required when type=%s", field, node.Type)
+		}
+		return
+	}
+	switch node.Type {
+	case NodeTypeStart, NodeTypeEnd, NodeTypeParallel:
+		if config.Expression != nil || config.Mapping != nil || config.Join != nil || config.Delay != nil ||
+			config.Approval != nil || config.Workflow != nil || config.Loop != nil || config.Input != nil ||
+			config.OutputFrom != nil {
+			v.addf("%s.config is not allowed when type=%s", field, node.Type)
+		}
+	case NodeTypeCondition:
+		if config.Expression == nil || strings.TrimSpace(*config.Expression) == "" {
+			v.addf("%s.config.expression is required when type=condition", field)
+		} else if _, err := CompileCondition(*config.Expression); err != nil {
+			v.addf("%s.config.expression: %v", field, err)
+		}
+	case NodeTypeTransform:
+		if config.Mapping == nil || len(*config.Mapping) == 0 {
+			v.addf("%s.config.mapping is required when type=transform", field)
+		} else {
+			for target, expression := range *config.Mapping {
+				if !validDataPath(target) {
+					v.addf("%s.config.mapping target %q is not a valid dotted path", field, target)
+				}
+				if strings.TrimSpace(expression) == "" {
+					v.addf("%s.config.mapping[%q] expression is empty", field, target)
+					continue
+				}
+				if _, err := CompileExpression(expression); err != nil {
+					v.addf("%s.config.mapping[%q]: %v", field, target, err)
+				}
+			}
+		}
+	case NodeTypeJoin:
+		if config.Join == nil {
+			v.addf("%s.config.join is required when type=join", field)
+			return
+		}
+		v.enum(field+".config.join.mode", config.Join.Mode, "all", "successful")
+		v.enumDefault(field+".config.join.on_partial", config.Join.OnPartial, "fail", "skip", "continue")
+		if config.Join.Mode == "successful" {
+			if config.Join.Successful == nil {
+				v.addf("%s.config.join.successful is required when mode=successful", field)
+			} else if *config.Join.Successful < 1 || *config.Join.Successful > 500 {
+				v.addf("%s.config.join.successful must be between 1 and 500", field)
+			}
+		}
+	case NodeTypeDelay:
+		if config.Delay == nil {
+			v.addf("%s.config.delay is required when type=delay", field)
+			return
+		}
+		set := 0
+		if config.Delay.Seconds != nil {
+			set++
+			if *config.Delay.Seconds < 1 || *config.Delay.Seconds > 604800 {
+				v.addf("%s.config.delay.seconds must be between 1 and 604800", field)
+			}
+		}
+		if config.Delay.Until != nil {
+			set++
+			when, err := time.Parse(time.RFC3339, *config.Delay.Until)
+			if err != nil {
+				v.addf("%s.config.delay.until must be an RFC3339 timestamp", field)
+			} else if when.Before(time.Now().UTC().Add(-24 * time.Hour)) {
+				v.addf("%s.config.delay.until is implausibly old", field)
+			}
+		}
+		if config.Delay.Event != nil {
+			set++
+			v.requiredString(field+".config.delay.event", *config.Delay.Event, 1, 200)
+		}
+		if set != 1 {
+			v.addf("%s.config.delay must set exactly one of seconds, until or event", field)
+		}
+	case NodeTypeApproval:
+		if config.Approval != nil {
+			if config.Approval.OnReject != nil {
+				v.enumDefault(field+".config.approval.on_reject", *config.Approval.OnReject, "fail", "skip", "continue")
+			}
+			if config.Approval.Policy != nil {
+				v.enumDefault(field+".config.approval.policy", *config.Approval.Policy, "any", "all")
+				if *config.Approval.Policy == "all" && len(config.Approval.Approvers) == 0 {
+					v.addf("%s.config.approval.approvers is required when policy=all", field)
+				}
+			}
+			if len(config.Approval.Approvers) > 20 {
+				v.addf("%s.config.approval.approvers may contain at most 20 principals", field)
+			}
+			seen := map[string]bool{}
+			for i, approver := range config.Approval.Approvers {
+				if strings.TrimSpace(approver) == "" || len(approver) > 120 {
+					v.addf("%s.config.approval.approvers[%d] must be 1..120 characters", field, i)
+				}
+				if seen[approver] {
+					v.addf("%s.config.approval.approvers[%d] is duplicated", field, i)
+				}
+				seen[approver] = true
+			}
+			if config.Approval.ExpiresInSeconds != nil &&
+				(*config.Approval.ExpiresInSeconds < 1 || *config.Approval.ExpiresInSeconds > 604800) {
+				v.addf("%s.config.approval.expires_in_seconds must be between 1 and 604800", field)
+			}
+		}
+	case NodeTypeSubworkflow:
+		validateSubworkflow(v, field, config, false)
+	case NodeTypeLoop:
+		validateSubworkflow(v, field, config, true)
+	}
+}
+
+func validateSubworkflow(v *validator, field string, config *NodeConfig, loop bool) {
+	if config.Workflow == nil {
+		v.addf("%s.config.workflow is required", field)
+	} else {
+		v.pattern(field+".config.workflow.workflow_id", config.Workflow.WorkflowID, workflowIDPattern)
+		if config.Workflow.Version < 1 {
+			v.addf("%s.config.workflow.version must be at least 1", field)
+		}
+	}
+	if config.Input != nil {
+		for target, expression := range *config.Input {
+			if !validDataPath(target) {
+				v.addf("%s.config.input target %q is not a valid dotted path", field, target)
+			}
+			if strings.TrimSpace(expression) == "" {
+				v.addf("%s.config.input[%q] expression is empty", field, target)
+				continue
+			}
+			if _, err := CompileExpression(expression); err != nil {
+				v.addf("%s.config.input[%q]: %v", field, target, err)
+			}
+		}
+	}
+	if config.OutputFrom != nil {
+		for _, nodeID := range *config.OutputFrom {
+			if !nodeIDPattern.MatchString(nodeID) {
+				v.addf("%s.config.output_from contains invalid node id %q", field, nodeID)
+			}
+		}
+	}
+	if loop {
+		if config.Loop == nil {
+			v.addf("%s.config.loop is required when type=loop", field)
+			return
+		}
+		if config.Loop.MaxIterations < 1 || config.Loop.MaxIterations > 100 {
+			v.addf("%s.config.loop.max_iterations must be between 1 and 100", field)
+		}
+		if config.Loop.ExitWhen != nil {
+			if _, err := CompileCondition(*config.Loop.ExitWhen); err != nil {
+				v.addf("%s.config.loop.exit_when: %v", field, err)
+			}
+		}
+	} else if config.Loop != nil {
+		v.addf("%s.config.loop is only allowed when type=loop", field)
+	}
+}
+
+func validNodeType(nodeType WorkflowNodeType) bool {
+	switch nodeType {
+	case NodeTypeStart, NodeTypeEnd, NodeTypeAgent, NodeTypeLLM, NodeTypeTool, NodeTypeCondition,
+		NodeTypeTransform, NodeTypeParallel, NodeTypeJoin, NodeTypeDelay, NodeTypeApproval,
+		NodeTypeSubworkflow, NodeTypeLoop:
+		return true
+	default:
+		return false
+	}
+}
+
+func requiresConfig(nodeType WorkflowNodeType) bool {
+	switch nodeType {
+	case NodeTypeCondition, NodeTypeTransform, NodeTypeJoin, NodeTypeDelay, NodeTypeSubworkflow, NodeTypeLoop:
+		return true
+	default:
+		return false
+	}
+}
+
+func validDataPath(value string) bool {
+	if value == "" || len(value) > 200 {
+		return false
+	}
+	for _, part := range strings.Split(value, ".") {
+		if part == "" {
+			return false
+		}
+		for index, char := range part {
+			if index == 0 && !isIdentifierStart(char) {
+				return false
+			}
+			if index > 0 && !isIdentifierPart(char) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isIdentifierStart(char rune) bool {
+	return (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || char == '_'
+}
+
+func isIdentifierPart(char rune) bool {
+	return isIdentifierStart(char) || (char >= '0' && char <= '9')
+}
+
+func validateEntryAndTermination(v *validator, g *WorkflowGraph, adjacency, reverse map[string][]string,
+	nodeIndex map[string]WorkflowNode) {
+	var starts, ends []string
+	for _, node := range g.Nodes {
+		switch node.Type {
+		case NodeTypeStart:
+			starts = append(starts, node.ID)
+			if len(reverse[node.ID]) != 0 {
+				v.addf("start node %q must not have incoming edges", node.ID)
+			}
+		case NodeTypeEnd:
+			ends = append(ends, node.ID)
+			if len(adjacency[node.ID]) != 0 {
+				v.addf("end node %q must not have outgoing edges", node.ID)
+			}
+		}
+	}
+	if len(starts) > 1 {
+		v.addf("at most one start node is allowed")
+	}
+	if len(ends) > 1 {
+		v.addf("at most one end node is allowed")
+	}
+	roots := 0
+	for _, node := range g.Nodes {
+		if len(reverse[node.ID]) == 0 {
+			roots++
+		}
+	}
+	if roots == 0 {
+		v.addf("workflow graph has no entry point")
+	}
+	if len(starts) == 1 {
+		reachable := reachableSet(starts[0], adjacency)
+		for _, node := range g.Nodes {
+			if !reachable[node.ID] {
+				v.addf("node %q is not reachable from start node %q", node.ID, starts[0])
+			}
+		}
+	}
+	if len(ends) == 1 {
+		reachesEnd := reverseReachable(ends[0], reverse)
+		for _, node := range g.Nodes {
+			if node.ID != ends[0] && !reachesEnd[node.ID] {
+				v.addf("node %q cannot reach end node %q", node.ID, ends[0])
+			}
+		}
+	}
+	_ = nodeIndex
+}
+
+func reachableSet(start string, adjacency map[string][]string) map[string]bool {
+	seen := map[string]bool{start: true}
+	queue := []string{start}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, next := range adjacency[current] {
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return seen
+}
+
+func reverseReachable(target string, reverse map[string][]string) map[string]bool {
+	seen := map[string]bool{target: true}
+	queue := []string{target}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, previous := range reverse[current] {
+			if !seen[previous] {
+				seen[previous] = true
+				queue = append(queue, previous)
+			}
+		}
+	}
+	return seen
 }
 
 func (v *validator) validateRetry(field string, retry *RetryPolicy) {

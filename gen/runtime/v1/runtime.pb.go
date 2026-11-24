@@ -159,7 +159,10 @@ type AgentTaskContext struct {
 	Deadline        *timestamppb.Timestamp      `protobuf:"bytes,12,opt,name=deadline,proto3" json:"deadline,omitempty"`
 	Traceparent     string                      `protobuf:"bytes,13,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
 	// Short-lived; never log, persist or include in output/checkpoint.
-	Credentials   map[string]string `protobuf:"bytes,14,rep,name=credentials,proto3" json:"credentials,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Credentials map[string]string `protobuf:"bytes,14,rep,name=credentials,proto3" json:"credentials,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	NodeInput   *structpb.Struct  `protobuf:"bytes,15,opt,name=node_input,json=nodeInput,proto3" json:"node_input,omitempty"`
+	// Attempt-scoped capability for supervisor delegation. Never log, persist or include in output/checkpoint.
+	LeaseId       string `protobuf:"bytes,16,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -290,6 +293,20 @@ func (x *AgentTaskContext) GetCredentials() map[string]string {
 		return x.Credentials
 	}
 	return nil
+}
+
+func (x *AgentTaskContext) GetNodeInput() *structpb.Struct {
+	if x != nil {
+		return x.NodeInput
+	}
+	return nil
+}
+
+func (x *AgentTaskContext) GetLeaseId() string {
+	if x != nil {
+		return x.LeaseId
+	}
+	return ""
 }
 
 type ExecuteNodeRequest struct {
@@ -470,7 +487,8 @@ type ToolTaskContext struct {
 	Traceparent string                 `protobuf:"bytes,12,opt,name=traceparent,proto3" json:"traceparent,omitempty"`
 	Credentials map[string]string      `protobuf:"bytes,13,rep,name=credentials,proto3" json:"credentials,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Stable across attempts of the same execution node. External side effects must deduplicate on it.
-	IdempotencyKey string `protobuf:"bytes,14,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	IdempotencyKey string           `protobuf:"bytes,14,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	NodeInput      *structpb.Struct `protobuf:"bytes,15,opt,name=node_input,json=nodeInput,proto3" json:"node_input,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -601,6 +619,13 @@ func (x *ToolTaskContext) GetIdempotencyKey() string {
 		return x.IdempotencyKey
 	}
 	return ""
+}
+
+func (x *ToolTaskContext) GetNodeInput() *structpb.Struct {
+	if x != nil {
+		return x.NodeInput
+	}
+	return nil
 }
 
 type ExecuteToolRequest struct {
@@ -872,7 +897,7 @@ var File_runtime_v1_runtime_proto protoreflect.FileDescriptor
 
 const file_runtime_v1_runtime_proto_rawDesc = "" +
 	"\n" +
-	"\x18runtime/v1/runtime.proto\x12\x13platform.runtime.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd6\x06\n" +
+	"\x18runtime/v1/runtime.proto\x12\x13platform.runtime.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa9\a\n" +
 	"\x10AgentTaskContext\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
@@ -891,7 +916,10 @@ const file_runtime_v1_runtime_proto_rawDesc = "" +
 	"\x10upstream_outputs\x18\v \x03(\v2:.platform.runtime.v1.AgentTaskContext.UpstreamOutputsEntryR\x0fupstreamOutputs\x126\n" +
 	"\bdeadline\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\x12 \n" +
 	"\vtraceparent\x18\r \x01(\tR\vtraceparent\x12X\n" +
-	"\vcredentials\x18\x0e \x03(\v26.platform.runtime.v1.AgentTaskContext.CredentialsEntryR\vcredentials\x1a[\n" +
+	"\vcredentials\x18\x0e \x03(\v26.platform.runtime.v1.AgentTaskContext.CredentialsEntryR\vcredentials\x126\n" +
+	"\n" +
+	"node_input\x18\x0f \x01(\v2\x17.google.protobuf.StructR\tnodeInput\x12\x19\n" +
+	"\blease_id\x18\x10 \x01(\tR\aleaseId\x1a[\n" +
 	"\x14UpstreamOutputsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
 	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01\x1a>\n" +
@@ -913,7 +941,7 @@ const file_runtime_v1_runtime_proto_rawDesc = "" +
 	"\x19checkpoint_schema_version\x18\x04 \x01(\x05R\x17checkpointSchemaVersion\x12=\n" +
 	"\ametrics\x18\x05 \x01(\v2#.platform.runtime.v1.RuntimeMetricsR\ametrics\x12=\n" +
 	"\afailure\x18\x06 \x01(\v2#.platform.runtime.v1.RuntimeFailureR\afailure\x12'\n" +
-	"\x0fruntime_version\x18\a \x01(\tR\x0eruntimeVersion\"\x86\x05\n" +
+	"\x0fruntime_version\x18\a \x01(\tR\x0eruntimeVersion\"\xbe\x05\n" +
 	"\x0fToolTaskContext\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
@@ -931,7 +959,9 @@ const file_runtime_v1_runtime_proto_rawDesc = "" +
 	"\bdeadline\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\x12 \n" +
 	"\vtraceparent\x18\f \x01(\tR\vtraceparent\x12W\n" +
 	"\vcredentials\x18\r \x03(\v25.platform.runtime.v1.ToolTaskContext.CredentialsEntryR\vcredentials\x12'\n" +
-	"\x0fidempotency_key\x18\x0e \x01(\tR\x0eidempotencyKey\x1a>\n" +
+	"\x0fidempotency_key\x18\x0e \x01(\tR\x0eidempotencyKey\x126\n" +
+	"\n" +
+	"node_input\x18\x0f \x01(\v2\x17.google.protobuf.StructR\tnodeInput\x1a>\n" +
 	"\x10CredentialsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"T\n" +
@@ -1011,32 +1041,34 @@ var file_runtime_v1_runtime_proto_depIdxs = []int32{
 	10, // 3: platform.runtime.v1.AgentTaskContext.upstream_outputs:type_name -> platform.runtime.v1.AgentTaskContext.UpstreamOutputsEntry
 	14, // 4: platform.runtime.v1.AgentTaskContext.deadline:type_name -> google.protobuf.Timestamp
 	11, // 5: platform.runtime.v1.AgentTaskContext.credentials:type_name -> platform.runtime.v1.AgentTaskContext.CredentialsEntry
-	2,  // 6: platform.runtime.v1.ExecuteNodeRequest.context:type_name -> platform.runtime.v1.AgentTaskContext
-	0,  // 7: platform.runtime.v1.ExecuteNodeResponse.outcome:type_name -> platform.runtime.v1.RuntimeOutcome
-	13, // 8: platform.runtime.v1.ExecuteNodeResponse.output:type_name -> google.protobuf.Struct
-	9,  // 9: platform.runtime.v1.ExecuteNodeResponse.metrics:type_name -> platform.runtime.v1.RuntimeMetrics
-	8,  // 10: platform.runtime.v1.ExecuteNodeResponse.failure:type_name -> platform.runtime.v1.RuntimeFailure
-	13, // 11: platform.runtime.v1.ToolTaskContext.version_spec:type_name -> google.protobuf.Struct
-	13, // 12: platform.runtime.v1.ToolTaskContext.arguments:type_name -> google.protobuf.Struct
-	14, // 13: platform.runtime.v1.ToolTaskContext.deadline:type_name -> google.protobuf.Timestamp
-	12, // 14: platform.runtime.v1.ToolTaskContext.credentials:type_name -> platform.runtime.v1.ToolTaskContext.CredentialsEntry
-	5,  // 15: platform.runtime.v1.ExecuteToolRequest.context:type_name -> platform.runtime.v1.ToolTaskContext
-	0,  // 16: platform.runtime.v1.ExecuteToolResponse.outcome:type_name -> platform.runtime.v1.RuntimeOutcome
-	13, // 17: platform.runtime.v1.ExecuteToolResponse.output:type_name -> google.protobuf.Struct
-	9,  // 18: platform.runtime.v1.ExecuteToolResponse.metrics:type_name -> platform.runtime.v1.RuntimeMetrics
-	8,  // 19: platform.runtime.v1.ExecuteToolResponse.failure:type_name -> platform.runtime.v1.RuntimeFailure
-	1,  // 20: platform.runtime.v1.RuntimeFailure.classification:type_name -> platform.runtime.v1.RuntimeFailureClassification
-	13, // 21: platform.runtime.v1.RuntimeMetrics.extra:type_name -> google.protobuf.Struct
-	13, // 22: platform.runtime.v1.AgentTaskContext.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
-	3,  // 23: platform.runtime.v1.AgentRuntime.ExecuteNode:input_type -> platform.runtime.v1.ExecuteNodeRequest
-	6,  // 24: platform.runtime.v1.ToolRuntime.ExecuteTool:input_type -> platform.runtime.v1.ExecuteToolRequest
-	4,  // 25: platform.runtime.v1.AgentRuntime.ExecuteNode:output_type -> platform.runtime.v1.ExecuteNodeResponse
-	7,  // 26: platform.runtime.v1.ToolRuntime.ExecuteTool:output_type -> platform.runtime.v1.ExecuteToolResponse
-	25, // [25:27] is the sub-list for method output_type
-	23, // [23:25] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	13, // 6: platform.runtime.v1.AgentTaskContext.node_input:type_name -> google.protobuf.Struct
+	2,  // 7: platform.runtime.v1.ExecuteNodeRequest.context:type_name -> platform.runtime.v1.AgentTaskContext
+	0,  // 8: platform.runtime.v1.ExecuteNodeResponse.outcome:type_name -> platform.runtime.v1.RuntimeOutcome
+	13, // 9: platform.runtime.v1.ExecuteNodeResponse.output:type_name -> google.protobuf.Struct
+	9,  // 10: platform.runtime.v1.ExecuteNodeResponse.metrics:type_name -> platform.runtime.v1.RuntimeMetrics
+	8,  // 11: platform.runtime.v1.ExecuteNodeResponse.failure:type_name -> platform.runtime.v1.RuntimeFailure
+	13, // 12: platform.runtime.v1.ToolTaskContext.version_spec:type_name -> google.protobuf.Struct
+	13, // 13: platform.runtime.v1.ToolTaskContext.arguments:type_name -> google.protobuf.Struct
+	14, // 14: platform.runtime.v1.ToolTaskContext.deadline:type_name -> google.protobuf.Timestamp
+	12, // 15: platform.runtime.v1.ToolTaskContext.credentials:type_name -> platform.runtime.v1.ToolTaskContext.CredentialsEntry
+	13, // 16: platform.runtime.v1.ToolTaskContext.node_input:type_name -> google.protobuf.Struct
+	5,  // 17: platform.runtime.v1.ExecuteToolRequest.context:type_name -> platform.runtime.v1.ToolTaskContext
+	0,  // 18: platform.runtime.v1.ExecuteToolResponse.outcome:type_name -> platform.runtime.v1.RuntimeOutcome
+	13, // 19: platform.runtime.v1.ExecuteToolResponse.output:type_name -> google.protobuf.Struct
+	9,  // 20: platform.runtime.v1.ExecuteToolResponse.metrics:type_name -> platform.runtime.v1.RuntimeMetrics
+	8,  // 21: platform.runtime.v1.ExecuteToolResponse.failure:type_name -> platform.runtime.v1.RuntimeFailure
+	1,  // 22: platform.runtime.v1.RuntimeFailure.classification:type_name -> platform.runtime.v1.RuntimeFailureClassification
+	13, // 23: platform.runtime.v1.RuntimeMetrics.extra:type_name -> google.protobuf.Struct
+	13, // 24: platform.runtime.v1.AgentTaskContext.UpstreamOutputsEntry.value:type_name -> google.protobuf.Struct
+	3,  // 25: platform.runtime.v1.AgentRuntime.ExecuteNode:input_type -> platform.runtime.v1.ExecuteNodeRequest
+	6,  // 26: platform.runtime.v1.ToolRuntime.ExecuteTool:input_type -> platform.runtime.v1.ExecuteToolRequest
+	4,  // 27: platform.runtime.v1.AgentRuntime.ExecuteNode:output_type -> platform.runtime.v1.ExecuteNodeResponse
+	7,  // 28: platform.runtime.v1.ToolRuntime.ExecuteTool:output_type -> platform.runtime.v1.ExecuteToolResponse
+	27, // [27:29] is the sub-list for method output_type
+	25, // [25:27] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_runtime_v1_runtime_proto_init() }

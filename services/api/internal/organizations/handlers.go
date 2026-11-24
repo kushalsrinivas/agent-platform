@@ -33,6 +33,20 @@ func (h *Handlers) ResolveMembership(next http.Handler) http.Handler {
 			return
 		}
 		orgID := chi.URLParam(r, "org_id")
+		if principal.APIKeyOrgID != "" {
+			if principal.APIKeyOrgID != orgID {
+				respond.Error(w, r, http.StatusNotFound, "not_found", "organization not found")
+				return
+			}
+			if projectID := chi.URLParam(r, "project_id"); principal.APIKeyProjectID != "" &&
+				projectID != "" && projectID != principal.APIKeyProjectID {
+				respond.Error(w, r, http.StatusNotFound, "not_found", "project not found")
+				return
+			}
+			ctx := auth.WithMembership(r.Context(), auth.Membership{OrgID: orgID, Role: principal.APIKeyRole})
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		role, err := h.store.Membership(r.Context(), orgID, principal.ID)
 		if errors.Is(err, ErrNotFound) {
 			// Cross-tenant IDs are indistinguishable from missing IDs.
@@ -65,6 +79,10 @@ type createOrganizationRequest struct {
 
 func (h *Handlers) Create(w http.ResponseWriter, r *http.Request) {
 	principal, _ := auth.PrincipalFrom(r.Context())
+	if principal.APIKeyOrgID != "" {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "api keys cannot create organizations")
+		return
+	}
 	var request createOrganizationRequest
 	if err := respond.Decode(w, r, 32<<10, &request); err != nil {
 		respond.Error(w, r, http.StatusBadRequest, "invalid_request", err.Error())
@@ -93,6 +111,10 @@ func (h *Handlers) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) ListMembers(w http.ResponseWriter, r *http.Request) {
+	if auth.ProjectScope(r.Context()) != "" {
+		respond.Error(w, r, http.StatusForbidden, "forbidden", "project-scoped api keys cannot list organisation members")
+		return
+	}
 	membership, _ := auth.MembershipFrom(r.Context())
 	items, err := h.store.ListMembers(r.Context(), membership.OrgID)
 	if err != nil {

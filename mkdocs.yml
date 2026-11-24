@@ -1,0 +1,25 @@
+site_name: Agent Platform Developer Docs
+site_description: Build, deploy and operate durable AI workflows.
+docs_dir: docs/developer
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+markdown_extensions:
+  - admonition
+  - tables
+  - toc
+  - pymdownx.superfences
+nav:
+  - Overview: index.md
+  - Agents: agents.md
+  - Workflows: workflows.md
+  - Execution lifecycle: execution-lifecycle.md
+  - Python and Go SDKs: sdk.md
+  - CLI: cli.md
+  - MCP: mcp.md
+  - Deployments: deployments.md
+  - Debugging and recovery: operations.md
+  - API reference: api.md
+  - Examples: examples.md

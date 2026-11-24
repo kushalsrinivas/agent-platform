@@ -81,6 +81,7 @@ func main() {
 	if err != nil {
 		log.Fatal("invalid authentication configuration", zap.Error(err))
 	}
+	verifier = auth.NewAPIKeyVerifier(pool, verifier)
 
 	var devIssuer *auth.DevIssuer
 	if verifier.IsDevelopment() {
@@ -107,7 +108,7 @@ func main() {
 			cors.Handler(cors.Options{
 				AllowedOrigins:   cfg.CORSOrigins,
 				AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete, http.MethodOptions},
-				AllowedHeaders:   []string{"Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID", "Traceparent"},
+				AllowedHeaders:   []string{"Authorization", "X-API-Key", "Content-Type", "Idempotency-Key", "Last-Event-ID", "Traceparent"},
 				AllowCredentials: true,
 				MaxAge:           300,
 			}),
@@ -115,6 +116,7 @@ func main() {
 		Checks: []httpserver.Check{func(ctx context.Context) error { return pool.Ping(ctx) }},
 	})
 	srv.Router().Get("/v1/meta", metaHandler(cfg.Environment))
+	srv.Router().Get("/api/v1/meta", metaHandler(cfg.Environment))
 
 	server.Mount(srv.Router(), server.Deps{
 		DB:           db,

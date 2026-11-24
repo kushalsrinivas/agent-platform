@@ -23,6 +23,9 @@ service ExecutionCommands {
 
   // Platform operator action relayed by the API. Idempotent.
   rpc DrainWorker(DrainWorkerRequest) returns (DrainWorkerResponse);
+
+  // Human approval or external delay signal for a waiting control node.
+  rpc SignalTask(SignalTaskRequest) returns (SignalTaskResponse);
 }
 
 message SubmitExecutionRequest {
@@ -38,6 +41,10 @@ message SubmitExecutionRequest {
   string traceparent = 9;
   // Scheduling priority, -100..100. Higher runs first; aging prevents permanent starvation.
   int32 priority = 10;
+  // Link a re-execution to the execution whose inputs/outputs were used.
+  string replay_of_execution_id = 11;
+  // Outputs explicitly reused from a prior execution, keyed by node id. Seeded tasks start succeeded.
+  map<string, google.protobuf.Struct> seed_outputs = 12;
 }
 
 message SubmitExecutionResponse {
@@ -80,4 +87,24 @@ message DrainWorkerResponse {
   string worker_id = 1;
   string status = 2;
   bool accepted = 3;
+}
+
+message SignalTaskRequest {
+  string org_id = 1;
+  string project_id = 2;
+  string execution_id = 3;
+  string task_id = 4;
+  // approve, reject or signal.
+  string action = 5;
+  string comment = 6;
+  string actor = 7;
+  google.protobuf.Struct payload = 8;
+  string traceparent = 9;
+}
+
+message SignalTaskResponse {
+  string task_id = 1;
+  string node_type = 2;
+  string control_state = 3;
+  bool accepted = 4;
 }

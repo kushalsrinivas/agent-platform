@@ -24,6 +24,9 @@ from model_providers.base import (
 
 ECHO_PREFIX = "[echo:"
 MARKER = "tool:add:"
+DELEGATE_MARKER = "tool:delegate:"
+DELEGATE_AGENT_MARKER = "tool:delegate_agent:"
+MCP_MARKER = "tool:mcp:"
 
 
 def _find_topic(value: Any) -> str | None:
@@ -51,7 +54,11 @@ class EchoProvider:
     def _final_text(self, messages: list[Message]) -> str:
         last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
         digest = hashlib.sha256("\n".join(f"{m.role}:{m.content}" for m in messages).encode()).hexdigest()[:12]
-        return f"{ECHO_PREFIX}{digest}] {last_user}"
+        tool_results = [m.content for m in messages if m.role == "tool"]
+        suffix = ""
+        if tool_results:
+            suffix = " | tools=" + json.dumps(tool_results, sort_keys=True)
+        return f"{ECHO_PREFIX}{digest}] {last_user}{suffix}"
 
     def _requested_tool(self, last_user: str) -> list[int] | None:
         """Return addendums when the payload asks for the ``add`` tool.
@@ -86,6 +93,15 @@ class EchoProvider:
         text = self._final_text(messages)
         last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
 
+        candidate = last_user
+        try:
+            payload = json.loads(last_user)
+            topic = _find_topic(payload)
+            if topic is not None:
+                candidate = topic
+        except (json.JSONDecodeError, TypeError):
+            candidate = last_user
+
         tool_calls: tuple[ToolCall, ...] = ()
         finish_reason = "stop"
         tool_pending = not any(m.role == "tool" for m in messages)
@@ -94,7 +110,37 @@ class EchoProvider:
             if numbers is not None:
                 tool_calls = (ToolCall(id="call_echo_1", name="add", arguments={"numbers": numbers}),)
                 finish_reason = "tool_calls"
-        elif response_schema is not None:
+        if tools and tool_pending and candidate.startswith(DELEGATE_AGENT_MARKER):
+            try:
+                arguments = json.loads(candidate[len(DELEGATE_AGENT_MARKER) :])
+            except json.JSONDecodeError:
+                arguments = None
+            if isinstance(arguments, dict) and any(tool.name == "delegate_task" for tool in tools):
+                tool_calls = (ToolCall(id="call_echo_delegate_agent", name="delegate_task", arguments=arguments),)
+                finish_reason = "tool_calls"
+        if tools and tool_pending and candidate.startswith(DELEGATE_MARKER):
+            try:
+                arguments = json.loads(candidate[len(DELEGATE_MARKER) :])
+            except json.JSONDecodeError:
+                arguments = None
+            if isinstance(arguments, dict) and any(tool.name == "delegate_tasks" for tool in tools):
+                tool_calls = (ToolCall(id="call_echo_delegate", name="delegate_tasks", arguments=arguments),)
+                finish_reason = "tool_calls"
+        if tools and tool_pending and candidate.startswith(MCP_MARKER):
+            try:
+                request = json.loads(candidate[len(MCP_MARKER) :])
+            except json.JSONDecodeError:
+                request = None
+            if isinstance(request, dict):
+                server = str(request.get("server", ""))
+                tool = str(request.get("tool", ""))
+                tool_name = f"mcp__{server}__{tool}"
+                if any(item.name == tool_name for item in tools):
+                    raw_arguments = request.get("arguments")
+                    mcp_arguments: dict[str, Any] = raw_arguments if isinstance(raw_arguments, dict) else {}
+                    tool_calls = (ToolCall(id="call_echo_mcp", name=tool_name, arguments=mcp_arguments),)
+                    finish_reason = "tool_calls"
+        if not tool_calls and response_schema is not None:
             # Structured mode returns a JSON object that satisfies any reasonable schema shape.
             text = json.dumps({"result": text}, sort_keys=True)
 

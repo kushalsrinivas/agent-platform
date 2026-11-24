@@ -104,7 +104,7 @@ Contract: [`proto/worker/v1/worker.proto`](../proto/worker/v1/worker.proto). Pac
 | `Connect(stream WorkerMessage) returns (stream OrchestratorMessage)` | bidi | One session per worker. Registration, heartbeat, task acceptance, cancellation, drain. |
 | `ReportTaskResult` | unary | Fenced result for one attempt. Idempotent. |
 | `PutCheckpoint` | unary | Fenced upload of one checkpoint at a safe boundary. Idempotent by `(attempt_id, sequence)` and checksum. |
-| `GetTaskContext` | unary | Pinned task/node/agent/tool specs, execution input, upstream outputs and the latest resume checkpoint for an accepted attempt. Fenced by `(attempt_id, lease_id)`. |
+| `GetTaskContext` | unary | Pinned task/node/agent/tool specs, execution input, resolved `node_input`, upstream outputs and the latest resume checkpoint for an accepted attempt. Fenced by `(attempt_id, lease_id)`. |
 | `CreateArtifactUpload` | unary | Reserved for large outputs/logs; checkpoints currently use `PutCheckpoint`. |
 | `CreateArtifactDownload` | unary | Reserved for large output downloads; checkpoints are returned by `GetTaskContext`. |
 | `GetTaskCredentials` | unary | Short-lived, task-scoped credentials at attempt start. Never cached on disk. |
@@ -176,12 +176,31 @@ registry. The runtime emits one structured JSON event per line (`task_started`, 
 `agent_completed`, `task_failed`); the worker forwards them to its stdout. Output is validated against the pinned
 node schema by the worker before reporting.
 
-Phase 08 adds durable checkpoints. The runtime writes an atomic gzip JSON file after each recoverable tool call and
-at node completion into `AGENT_RUNTIME_CHECKPOINT_DIR`. The worker uploads each file with `PutCheckpoint`; the
-orchestrator validates the gzip/JSON/checksum envelope, records lineage and stores small states inline or offloads
-large states to its artifact volume. On retry, `GetTaskContext` returns the newest readable checkpoint for the
-task, and the runtime restores the message history or returns the recorded completed output without another model
-call. Live token streaming still requires a streaming runtime RPC and is deferred.
+Phase 08 adds durable checkpoints. The runtime writes an atomic gzip JSON file after each model response and
+recoverable tool call and at node completion into `AGENT_RUNTIME_CHECKPOINT_DIR`. The worker uploads each file with
+`PutCheckpoint`; the orchestrator validates the gzip/JSON/checksum envelope, records lineage and stores small
+states inline or offloads large states to its artifact volume. On retry, `GetTaskContext` returns the newest
+readable checkpoint for the task, and the runtime restores the message history or returns the recorded completed
+output without another model call. Live token streaming still requires a streaming runtime RPC and is deferred.
+
+## 5a. Go graph engine and child executions
+
+The orchestrator resolves non-worker nodes directly: `start`, `end`, `condition`, `transform`, `parallel`, `join`,
+`delay` and `approval`. Worker nodes (`agent`, `llm`, `tool`) continue through the Phase 07 runtime ABI.
+`DelegateTask`, `GetDelegation`, `ListDelegationAgents`, `PublishAgentEvent` and `WaitAgentEvent` are unary worker
+control RPCs; they are fenced by `(task_id, attempt_id, lease_id)` and do not require the worker session. Delegation
+creates a child execution; the supervisor only holds a delegation id. `agent_events` are durable, root-scoped
+topic messages consumed with `FOR UPDATE SKIP LOCKED`. Edge
+conditions, transform mappings, node input mappings and loop exit conditions are CEL, compiled at publication.
+
+`subworkflow` and `loop` nodes create child executions linked by `parent_execution_id`, `parent_task_id` and
+`iteration`. The parent task stays pending and polls the child through the same dispatcher transaction; the child
+is a normal execution with its own tasks, attempts and checkpoints. Parent cancellation marks active children
+`cancel_requested` and cancels their pending tasks. A child workflow reference is pinned to a published version.
+
+`node_input` is the resolved object sent to the runtime: execution input, direct active upstream outputs, params,
+loop iteration and previous output, plus any edge data mappings. The worker validates it against the node
+`input_schema` before reporting. Large outputs remain references rather than being copied through every message.
 
 ## 6. NATS JetStream
 
@@ -382,8 +401,8 @@ transitions on a single task/execution row, which PostgreSQL provides.
   `EVENTS` read. Phase 1 may run a single NATS account in development only.
 - Object storage: presigned URLs are scoped to one object key, one method, 15-minute expiry, and issued only after
   verifying the attempt's lease. Keys are unguessable and tenant-prefixed. No long-lived S3 credentials on workers.
-- Payload limits: JSON messages ≤256 KiB, dispatch ≤64 KiB, inline results ≤64 KiB, checkpoints ≤32 MiB, a single
-  output artifact or log ≤64 MiB. `PutCheckpoint` and the runtime UDS use a 36 MiB gRPC message limit so a 32 MiB
-  checkpoint plus envelope overhead fits in one unary message. States above 256 KiB are offloaded by the
-  orchestrator to its artifact volume; workers never hold object-store credentials. The worker rejects oversized
-  artifacts and fails the attempt with `ARTIFACT_TOO_LARGE`.
+- Payload limits: JSON messages ≤256 KiB, dispatch ≤64 KiB, inline results ≤64 KiB, checkpoints ≤32 MiB, node
+  input/context ≤4 MiB, a single output artifact or log ≤64 MiB. `PutCheckpoint` and the runtime UDS use a 36 MiB
+  gRPC message limit so a 32 MiB checkpoint plus envelope overhead fits in one unary message. States above 256 KiB
+  are offloaded by the orchestrator to its artifact volume; workers never hold object-store credentials. The worker
+  rejects oversized artifacts and fails the attempt with `ARTIFACT_TOO_LARGE`.

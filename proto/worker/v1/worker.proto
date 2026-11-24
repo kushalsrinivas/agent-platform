@@ -34,6 +34,15 @@ service WorkerControl {
 
   // Fenced upload of one checkpoint produced at a safe execution boundary. Idempotent by (attempt_id, sequence).
   rpc PutCheckpoint(PutCheckpointRequest) returns (PutCheckpointResponse);
+
+  // Supervisor delegation. The worker is only a transport; all limits and assignments live in the orchestrator.
+  rpc DelegateTask(DelegateTaskRequest) returns (DelegateTaskResponse);
+  rpc GetDelegation(GetDelegationRequest) returns (GetDelegationResponse);
+  rpc ListDelegationAgents(ListDelegationAgentsRequest) returns (ListDelegationAgentsResponse);
+
+  // Durable agent-to-agent messages within one execution hierarchy.
+  rpc PublishAgentEvent(PublishAgentEventRequest) returns (PublishAgentEventResponse);
+  rpc WaitAgentEvent(WaitAgentEventRequest) returns (WaitAgentEventResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +357,8 @@ message GetTaskContextResponse {
   int32 resume_checkpoint_sequence = 19;
   // Logical idempotency key for a tool node; external side effects must deduplicate on it across retries.
   string idempotency_key = 20;
+  // Resolved, typed node input after upstream selection, edge data mappings and loop context.
+  google.protobuf.Struct node_input = 21;
 }
 
 message CheckpointRef {
@@ -391,4 +402,89 @@ message PutCheckpointResponse {
   // True when an identical (attempt_id, sequence) checkpoint already existed.
   bool duplicate = 2;
   int64 size_bytes = 3;
+}
+
+message DelegationAgent {
+  string agent_id = 1;
+  int32 version = 2;
+  string name = 3;
+}
+
+message DelegateTaskRequest {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  string agent_id = 4;
+  int32 agent_version = 5;
+  google.protobuf.Struct task = 6;
+  google.protobuf.Struct context = 7;
+  repeated string context_refs = 8;
+  google.protobuf.Struct output_schema = 9;
+  int32 timeout_seconds = 10;
+  int32 max_retries = 11;
+  // Stable across retries of the same supervisor tool call; prevents duplicate children.
+  string idempotency_key = 12;
+}
+
+message DelegateTaskResponse {
+  string delegation_id = 1;
+  string child_execution_id = 2;
+  string status = 3;
+  string message = 4;
+}
+
+message GetDelegationRequest {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  string delegation_id = 4;
+}
+
+message GetDelegationResponse {
+  string delegation_id = 1;
+  string child_execution_id = 2;
+  string status = 3;
+  google.protobuf.Struct output = 4;
+  string error_code = 5;
+  string error_message = 6;
+  int64 tokens_in = 7;
+  int64 tokens_out = 8;
+}
+
+message ListDelegationAgentsRequest {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+}
+
+message ListDelegationAgentsResponse {
+  repeated DelegationAgent agents = 1;
+  int32 max_parallel = 2;
+  int32 remaining_children = 3;
+}
+
+message PublishAgentEventRequest {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  string topic = 4;
+  google.protobuf.Struct payload = 5;
+}
+
+message PublishAgentEventResponse {
+  string event_id = 1;
+}
+
+message WaitAgentEventRequest {
+  string task_id = 1;
+  string attempt_id = 2;
+  string lease_id = 3;
+  string topic = 4;
+  int32 timeout_seconds = 5;
+}
+
+message WaitAgentEventResponse {
+  string event_id = 1;
+  google.protobuf.Struct payload = 2;
+  bool found = 3;
 }

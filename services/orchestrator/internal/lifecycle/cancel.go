@@ -186,6 +186,9 @@ func (s *Service) cancelExecutionTx(ctx context.Context, tx pgx.Tx, e *execution
 	if err := s.cancelPendingTasks(ctx, tx, e); err != nil {
 		return nil, err
 	}
+	if err := s.cancelChildExecutions(ctx, tx, e, cancelReason, requestedBy, reason, 0); err != nil {
+		return nil, err
+	}
 
 	counts, err := s.counts(ctx, tx, e.ID)
 	if err != nil {
@@ -223,6 +226,95 @@ func (s *Service) cancelExecutionTx(ctx context.Context, tx pgx.Tx, e *execution
 		}
 	}
 	return notifications, nil
+}
+
+// cancelChildExecutions propagates cancellation to child executions (subworkflow and loop bodies). The child's
+// active attempts are fenced by their leases; pending child work is cancelled immediately.
+func (s *Service) cancelChildExecutions(ctx context.Context, tx pgx.Tx, parent *execution,
+	cancelReason, requestedBy, reason string, depth int) error {
+	if depth > 8 {
+		return nil
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT id FROM execution.executions
+		WHERE parent_execution_id = $1 AND state IN ('pending', 'running', 'cancel_requested')
+		ORDER BY created_at`, parent.ID)
+	if err != nil {
+		return err
+	}
+	var childIDs []string
+	for rows.Next() {
+		var childID string
+		if err := rows.Scan(&childID); err != nil {
+			rows.Close()
+			return err
+		}
+		childIDs = append(childIDs, childID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, childID := range childIDs {
+		child, err := s.lockExecution(ctx, tx, childID)
+		if err != nil {
+			return err
+		}
+		if terminalState(child.State) || child.State == "failing" {
+			continue
+		}
+		from := child.State
+		if child.State != "cancel_requested" {
+			child.State = "cancel_requested"
+			child.StateVersion++
+			child.CancelEpoch++
+			child.CancelReason = &cancelReason
+			now := time.Now().UTC()
+			child.CancelRequestedAt = &now
+			child.CancelRequestedBy = &requestedBy
+			if _, err := tx.Exec(ctx, `
+				UPDATE execution.executions
+				SET state = 'cancel_requested', state_version = $2, cancel_epoch = $3,
+				    cancel_reason = $4, cancel_requested_at = now(), cancel_requested_by = $5,
+				    ended_at = NULL
+				WHERE id = $1`, child.ID, child.StateVersion, child.CancelEpoch, cancelReason, requestedBy); err != nil {
+				return err
+			}
+			counts, err := s.counts(ctx, tx, child.ID)
+			if err != nil {
+				return err
+			}
+			reasonPtr := reason
+			if err := s.appendEvent(ctx, tx, child, eventSpec{
+				MessageType: contracts.EventExecutionStateChanged,
+				EntityType:  "execution",
+				EntityID:    child.ID,
+				From:        &from,
+				To:          &child.State,
+				ActorType:   actorForCancel(cancelReason),
+				ActorID:     requestedBy,
+				Subject:     executionSubject(child, "state_changed"),
+				Payload: func(seq int64) any {
+					return contracts.ExecutionStateChangedPayload{
+						Seq: seq, From: from, To: "cancel_requested",
+						StateVersion: child.StateVersion, Reason: &reasonPtr, Counts: counts,
+					}
+				},
+			}); err != nil {
+				return err
+			}
+		}
+		if err := s.cancelPendingTasks(ctx, tx, child); err != nil {
+			return err
+		}
+		if err := s.cancelChildExecutions(ctx, tx, child, cancelReason, requestedBy, reason, depth+1); err != nil {
+			return err
+		}
+		if err := s.evaluateCompletion(ctx, tx, child); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func actorForCancel(cancelReason string) string {
