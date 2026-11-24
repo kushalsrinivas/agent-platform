@@ -24,21 +24,23 @@ import (
 )
 
 type config struct {
-	apiURL      string
-	dbURL       string
-	count       int
-	concurrency int
-	pool        string
-	provider    string
-	model       string
-	baseURL     string
-	credential  string
-	maxAttempts int
-	timeout     time.Duration
-	reportPath  string
-	cleanup     bool
-	allowOpen   bool
-	runID       string
+	apiURL        string
+	dbURL         string
+	count         int
+	concurrency   int
+	pool          string
+	provider      string
+	model         string
+	baseURL       string
+	credential    string
+	credentialEnv string
+	instructions  string
+	maxAttempts   int
+	timeout       time.Duration
+	reportPath    string
+	cleanup       bool
+	allowOpen     bool
+	runID         string
 }
 
 type apiClient struct {
@@ -66,6 +68,8 @@ func parseFlags() config {
 	flag.StringVar(&cfg.model, "model", "echo-1", "model name")
 	flag.StringVar(&cfg.baseURL, "base-url", "", "provider base URL for openai_compatible")
 	flag.StringVar(&cfg.credential, "credential", "", "provider API key, stored as a project secret")
+	flag.StringVar(&cfg.credentialEnv, "credential-env", "", "environment variable containing the provider API key")
+	flag.StringVar(&cfg.instructions, "instructions", "Return the input.", "agent system instructions")
 	flag.IntVar(&cfg.maxAttempts, "max-attempts", 2, "task retry budget")
 	flag.DurationVar(&cfg.timeout, "timeout", 15*time.Minute, "maximum time to wait for completion")
 	flag.StringVar(&cfg.reportPath, "report", "", "write the JSON report to this path")
@@ -75,6 +79,13 @@ func parseFlags() config {
 	flag.Parse()
 	if cfg.runID == "" {
 		cfg.runID = strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
+	}
+	if cfg.credential == "" && cfg.credentialEnv != "" {
+		cfg.credential = os.Getenv(cfg.credentialEnv)
+		if cfg.credential == "" {
+			fmt.Fprintf(os.Stderr, "loadgen: %s is empty\n", cfg.credentialEnv)
+			os.Exit(2)
+		}
 	}
 	return cfg
 }
@@ -125,11 +136,11 @@ func run(ctx context.Context, cfg config) error {
 	peak := &peakSampler{pool: pool, orgID: fx.orgID}
 	peak.start(ctx)
 	submission := submit(ctx, api, fx, cfg)
-	completion := waitForCompletion(ctx, pool, fx.orgID, startedAt, submission.Accepted, cfg.timeout)
+	completion := waitForCompletion(ctx, pool, fx.orgID, submission.Accepted, cfg.timeout)
 	peak.stop()
 	finishedAt := time.Now().UTC()
 
-	metrics, err := loadMetrics(ctx, pool, fx.orgID, startedAt)
+	metrics, err := loadMetrics(ctx, pool, fx.orgID)
 	if err != nil {
 		return fmt.Errorf("collect metrics: %w", err)
 	}
@@ -244,7 +255,7 @@ func (c *apiClient) setup(ctx context.Context, cfg config) (fixture, error) {
 				"provider": cfg.provider, "name": cfg.model, "credential_ref": credentialRef,
 				"parameters": parameters,
 			},
-			"instructions": "Return the input.",
+			"instructions": cfg.instructions,
 			"runtime": map[string]any{
 				"abi_version": 1, "image_digest": "sha256:" + strings.Repeat("a", 64),
 			},
@@ -428,11 +439,11 @@ type completion struct {
 	TimedOut  bool
 }
 
-func waitForCompletion(ctx context.Context, pool *pgxpool.Pool, orgID string, since time.Time, expected int, timeout time.Duration) completion {
+func waitForCompletion(ctx context.Context, pool *pgxpool.Pool, orgID string, expected int, timeout time.Duration) completion {
 	deadline := time.Now().Add(timeout)
 	var last completion
 	for {
-		last = queryCompletion(ctx, pool, orgID, since)
+		last = queryCompletion(ctx, pool, orgID)
 		if last.Succeeded+last.Failed+last.Cancelled >= expected || time.Now().After(deadline) {
 			last.Open = expected - (last.Succeeded + last.Failed + last.Cancelled)
 			last.TimedOut = last.Open > 0
@@ -442,13 +453,13 @@ func waitForCompletion(ctx context.Context, pool *pgxpool.Pool, orgID string, si
 	}
 }
 
-func queryCompletion(ctx context.Context, pool *pgxpool.Pool, orgID string, since time.Time) completion {
+func queryCompletion(ctx context.Context, pool *pgxpool.Pool, orgID string) completion {
 	var state completion
 	_ = pool.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE state = 'succeeded'),
 		       count(*) FILTER (WHERE state = 'failed'),
 		       count(*) FILTER (WHERE state = 'cancelled')
-		FROM execution.executions WHERE org_id = $1 AND created_at >= $2`, orgID, since).
+		FROM execution.executions WHERE org_id = $1`, orgID).
 		Scan(&state.Succeeded, &state.Failed, &state.Cancelled)
 	return state
 }
@@ -525,7 +536,7 @@ type metrics struct {
 	AttemptLatencyP95 float64 `json:"attempt_latency_p95_seconds"`
 }
 
-func loadMetrics(ctx context.Context, pool *pgxpool.Pool, orgID string, since time.Time) (metrics, error) {
+func loadMetrics(ctx context.Context, pool *pgxpool.Pool, orgID string) (metrics, error) {
 	var m metrics
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*),
@@ -539,7 +550,7 @@ func loadMetrics(ctx context.Context, pool *pgxpool.Pool, orgID string, since ti
 		                FILTER (WHERE ended_at IS NOT NULL AND state = 'succeeded'), 0),
 		       COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY extract(epoch FROM ended_at - created_at))
 		                FILTER (WHERE ended_at IS NOT NULL AND state = 'succeeded'), 0)
-		FROM execution.executions WHERE org_id = $1 AND created_at >= $2`, orgID, since).
+		FROM execution.executions WHERE org_id = $1`, orgID).
 		Scan(&m.Executions, &m.Succeeded, &m.Failed, &m.Cancelled, &m.Open,
 			&m.EndToEndP50, &m.EndToEndP95, &m.EndToEndP99); err != nil {
 		return m, err
@@ -554,7 +565,7 @@ func loadMetrics(ctx context.Context, pool *pgxpool.Pool, orgID string, since ti
 		                FILTER (WHERE started_at IS NOT NULL), 0),
 		       COALESCE(avg(attempt_count), 0),
 		       COALESCE(sum(GREATEST(attempt_count - 1, 0)), 0)
-		FROM execution.execution_tasks WHERE org_id = $1 AND created_at >= $2`, orgID, since).
+		FROM execution.execution_tasks WHERE org_id = $1`, orgID).
 		Scan(&m.Tasks, &m.QueueWaitP50, &m.QueueWaitP95, &m.QueueWaitP99,
 			&m.TaskAttemptsAvg, &m.RetriedAttempts); err != nil {
 		return m, err
@@ -564,7 +575,7 @@ func loadMetrics(ctx context.Context, pool *pgxpool.Pool, orgID string, since ti
 		       count(*) FILTER (WHERE attempt_number > 1),
 		       COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY extract(epoch FROM finished_at - started_at))
 		                FILTER (WHERE finished_at IS NOT NULL AND started_at IS NOT NULL), 0)
-		FROM execution.task_attempts WHERE org_id = $1 AND dispatched_at >= $2`, orgID, since).
+		FROM execution.task_attempts WHERE org_id = $1`, orgID).
 		Scan(&m.Attempts, &m.RetriedAttempts, &m.AttemptLatencyP95); err != nil {
 		return m, err
 	}

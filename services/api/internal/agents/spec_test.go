@@ -47,6 +47,14 @@ func TestAgentSpecValid(t *testing.T) {
 	}
 }
 
+func TestAgentSpecAllowsNumericTokenParameters(t *testing.T) {
+	spec := validSpec()
+	spec.Model.Parameters = &map[string]any{"max_tokens": float64(3000), "temperature": 0.2}
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("numeric token parameters must be allowed: %v", err)
+	}
+}
+
 func TestAgentSpecRejections(t *testing.T) {
 	cases := map[string]func(*AgentSpec){
 		"tag image":       func(s *AgentSpec) { s.Runtime.ImageDigest = "latest" },

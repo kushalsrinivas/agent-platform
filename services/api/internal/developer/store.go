@@ -51,6 +51,11 @@ func BuiltinTools() []Tool {
 			Description: "Search the web through the platform tool runtime.",
 			Schema: map[string]any{"type": "object", "properties": map[string]any{
 				"query": map[string]any{"type": "string"}}}},
+		{ToolID: "tool_news_fetch", Name: "tool_news_fetch", Version: 1, Source: "builtin",
+			Description: "Fetch RSS or Atom news feeds and return recent items.",
+			Schema: map[string]any{"type": "object", "required": []string{"urls"},
+				"properties": map[string]any{"urls": map[string]any{"type": "array",
+					"items": map[string]any{"type": "string"}}}}},
 	}
 }
 

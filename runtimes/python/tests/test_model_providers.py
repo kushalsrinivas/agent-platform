@@ -244,13 +244,28 @@ async def test_anthropic_provider_rejects_structured_output() -> None:
 
 
 async def test_gemini_provider_maps_contents_tools_and_usage() -> None:
+    requests: list[dict[str, Any]] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["x-goog-api-key"] == "test-key"
+        assert request.url.params.get("alt") is None
         body = json.loads(request.content)
+        requests.append(body)
         assert body["systemInstruction"]["parts"][0]["text"] == "You are a test agent."
         assert body["contents"][0]["role"] == "user"
         assert body["tools"][0]["functionDeclarations"][0]["name"] == "add"
         assert body["generationConfig"]["responseMimeType"] == "application/json"
+        if len(requests) == 2:
+            call_part = next(part for part in body["contents"][1]["parts"] if "functionCall" in part)
+            assert call_part["thoughtSignature"] == "sig-123"
+            return httpx.Response(
+                200,
+                json={
+                    "candidates": [{"content": {"parts": [{"text": "final"}]}}],
+                    "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 2},
+                    "modelVersion": "gemini-2",
+                },
+            )
         return httpx.Response(
             200,
             json={
@@ -259,33 +274,51 @@ async def test_gemini_provider_maps_contents_tools_and_usage() -> None:
                         "content": {
                             "parts": [
                                 {"text": "ok"},
-                                {"functionCall": {"name": "add", "args": {"numbers": [5]}}},
+                                {
+                                    "functionCall": {"name": "add", "args": {"numbers": [5]}},
+                                    "thoughtSignature": "sig-123",
+                                },
                             ]
                         }
                     }
                 ],
-                "usageMetadata": {"promptTokenCount": 9, "candidatesTokenCount": 4},
+                "usageMetadata": {"promptTokenCount": 9, "candidatesTokenCount": 4, "thoughtsTokenCount": 3},
                 "modelVersion": "gemini-2",
             },
         )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     provider = GeminiProvider(client)
+    messages = [
+        Message(role="system", content="You are a test agent."),
+        Message(role="user", content="add"),
+    ]
+    tools = [ToolSpec(name="add", description="sum", parameters={"type": "object"})]
     completion = await provider.complete(
-        [
-            Message(role="system", content="You are a test agent."),
-            Message(role="user", content="add"),
-        ],
+        messages,
         _config(),
-        tools=[ToolSpec(name="add", description="sum", parameters={"type": "object"})],
+        tools=tools,
         response_schema={"type": "object"},
     )
 
     assert completion.text == "ok"
     assert completion.tool_calls[0].name == "add"
     assert completion.tool_calls[0].arguments == {"numbers": [5]}
+    assert completion.tool_calls[0].signature == "sig-123"
     assert completion.input_tokens == 9
-    assert completion.output_tokens == 4
+    assert completion.output_tokens == 7
+
+    follow_up = await provider.complete(
+        [
+            *messages,
+            Message(role="assistant", content="ok", tool_calls=completion.tool_calls),
+            Message(role="tool", content='{"sum": 5}', tool_call_id=completion.tool_calls[0].id, name="add"),
+        ],
+        _config(),
+        tools=tools,
+        response_schema={"type": "object"},
+    )
+    assert follow_up.text == "final"
     await client.aclose()
 
 

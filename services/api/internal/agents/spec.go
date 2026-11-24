@@ -317,19 +317,21 @@ func validateMCPURL(raw string) error {
 
 func containsSecret(values map[string]any) bool {
 	for key, value := range values {
-		if secretKeyPattern.MatchString(key) {
-			return true
-		}
 		switch typed := value.(type) {
 		case string:
-			if secretValuePattern.MatchString(typed) {
+			// A credential-shaped key is only a secret when it carries a value; numeric parameters such as
+			// max_tokens are configuration, not credentials.
+			if secretKeyPattern.MatchString(key) || secretValuePattern.MatchString(typed) {
 				return true
 			}
 		case map[string]any:
-			if containsSecret(typed) {
+			if secretKeyPattern.MatchString(key) || containsSecret(typed) {
 				return true
 			}
 		case []any:
+			if secretKeyPattern.MatchString(key) {
+				return true
+			}
 			for _, item := range typed {
 				if nested, ok := item.(map[string]any); ok && containsSecret(nested) {
 					return true

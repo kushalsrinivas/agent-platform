@@ -1,0 +1,56 @@
+{
+  "run_id": "dfd099f264",
+  "started_at": "2026-11-24T19:16:03.773732Z",
+  "finished_at": "2026-11-24T19:16:14.476513Z",
+  "duration_seconds": 10.702781,
+  "config": {
+    "api_url": "http://localhost:18080",
+    "count": 1,
+    "concurrency": 1,
+    "pool": "default",
+    "provider": "gemini",
+    "model": "gemini-3.8-flash",
+    "max_attempts": 2,
+    "timeout": "5m0s"
+  },
+  "submission": {
+    "Attempted": 1,
+    "Accepted": 1,
+    "Rejected": 0,
+    "Errors": 0,
+    "Elapsed": 70012333
+  },
+  "submit_p50_seconds": 0.069997166,
+  "submit_p95_seconds": 0.069997166,
+  "submit_p99_seconds": 0.069997166,
+  "completion": {
+    "Succeeded": 1,
+    "Failed": 0,
+    "Cancelled": 0,
+    "Open": 0,
+    "TimedOut": false
+  },
+  "peak_pending_executions": 1,
+  "peak_pending_tasks": 1,
+  "metrics": {
+    "executions": 1,
+    "succeeded": 1,
+    "failed": 0,
+    "cancelled": 0,
+    "open": 0,
+    "end_to_end_p50_seconds": 10.414314,
+    "end_to_end_p95_seconds": 10.414314,
+    "end_to_end_p99_seconds": 10.414314,
+    "tasks": 1,
+    "queue_wait_p50_seconds": 0.777834,
+    "queue_wait_p95_seconds": 0.777834,
+    "queue_wait_p99_seconds": 0.777834,
+    "attempts": 1,
+    "retried_attempts": 0,
+    "task_attempts_avg": 1,
+    "attempt_latency_p95_seconds": 9.612769
+  },
+  "submission_rate_per_second": 0.09343365990577589,
+  "completion_rate_per_second": 0.09343365990577589,
+  "task_rate_per_second": 0.09343365990577589
+}

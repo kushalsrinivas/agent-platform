@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated, Any, TypedDict
 
@@ -70,6 +71,7 @@ def _to_langchain(messages: list[Message]) -> list[BaseMessage]:
             case "user":
                 converted.append(HumanMessage(content=message.content))
             case "assistant":
+                signatures = {call.id: call.signature for call in message.tool_calls if call.signature}
                 converted.append(
                     AIMessage(
                         content=message.content,
@@ -77,6 +79,7 @@ def _to_langchain(messages: list[Message]) -> list[BaseMessage]:
                             {"name": call.name, "args": call.arguments, "id": call.id, "type": "tool_call"}
                             for call in message.tool_calls
                         ],
+                        additional_kwargs={"thought_signatures": signatures} if signatures else {},
                     )
                 )
             case "tool":
@@ -88,6 +91,17 @@ def _to_langchain(messages: list[Message]) -> list[BaseMessage]:
     return converted
 
 
+def _tool_call(call: Mapping[str, Any], signatures: dict[str, Any]) -> ToolCall:
+    call_id = str(call.get("id", ""))
+    signature = signatures.get(call_id)
+    return ToolCall(
+        id=call_id,
+        name=str(call.get("name", "")),
+        arguments=dict(call.get("args", {})),
+        signature=str(signature) if signature else None,
+    )
+
+
 def _from_langchain(messages: list[BaseMessage]) -> list[Message]:
     converted: list[Message] = []
     for message in messages:
@@ -96,18 +110,13 @@ def _from_langchain(messages: list[BaseMessage]) -> list[Message]:
         elif isinstance(message, HumanMessage):
             converted.append(Message(role="user", content=str(message.content)))
         elif isinstance(message, AIMessage):
+            raw_signatures = message.additional_kwargs.get("thought_signatures", {})
+            signatures = raw_signatures if isinstance(raw_signatures, dict) else {}
             converted.append(
                 Message(
                     role="assistant",
                     content=str(message.content),
-                    tool_calls=tuple(
-                        ToolCall(
-                            id=str(call.get("id", "")),
-                            name=str(call.get("name", "")),
-                            arguments=dict(call.get("args", {})),
-                        )
-                        for call in (message.tool_calls or [])
-                    ),
+                    tool_calls=tuple(_tool_call(call, signatures) for call in (message.tool_calls or [])),
                 )
             )
         elif isinstance(message, ToolMessage):
@@ -360,13 +369,17 @@ class LangGraphRuntime(AgentRuntime):
 
             self._executor.register(
                 tool.name,
-                ToolInvocation(handler=run_platform, policy=policy),
+                ToolInvocation(
+                    handler=run_platform,
+                    policy=policy,
+                    network_required=bool(getattr(tool, "network_required", False)),
+                ),
             )
             specs.append(
                 ToolSpec(
                     name=tool.name,
-                    description=f"Platform tool {tool.name} v{tool.version}",
-                    parameters={"type": "object"},
+                    description=getattr(tool, "description", f"Platform tool {tool.name} v{tool.version}"),
+                    parameters=getattr(tool, "parameters", {"type": "object"}),
                 )
             )
         if self._mcp is not None:
@@ -738,12 +751,14 @@ class LangGraphRuntime(AgentRuntime):
                 self._spec.model.provider, completion.model, steps, completion.input_tokens, completion.output_tokens
             )
 
+        signatures = {call.id: call.signature for call in completion.tool_calls if call.signature}
         assistant = AIMessage(
             content=completion.text,
             tool_calls=[
                 {"name": call.name, "args": call.arguments, "id": call.id, "type": "tool_call"}
                 for call in completion.tool_calls
             ],
+            additional_kwargs={"thought_signatures": signatures} if signatures else {},
         )
         if completion.tool_calls:
             self._write_checkpoint(

@@ -3,7 +3,7 @@ from tool_runtime import default_registry
 
 async def test_builtin_tools() -> None:
     registry = default_registry()
-    assert registry.versions() == {"echo": "1", "add": "1", "tool_web_search": "1"}
+    assert registry.versions() == {"echo": "1", "add": "1", "tool_web_search": "1", "tool_news_fetch": "1"}
 
     echo = await registry.execute("echo", {"value": 42})
     assert echo.ok

@@ -54,7 +54,11 @@ def _contents(messages: list[Message]) -> tuple[list[dict[str, Any]], list[dict[
             parts: list[dict[str, Any]] = []
             if message.content:
                 parts.append({"text": message.content})
-            parts.extend({"functionCall": {"name": call.name, "args": call.arguments}} for call in message.tool_calls)
+            for call in message.tool_calls:
+                part: dict[str, Any] = {"functionCall": {"name": call.name, "args": call.arguments}}
+                if call.signature:
+                    part["thoughtSignature"] = call.signature
+                parts.append(part)
             contents.append({"role": "model", "parts": parts})
             continue
         contents.append({"role": "user" if message.role == "user" else "model", "parts": [{"text": message.content}]})
@@ -83,7 +87,8 @@ class GeminiProvider:
     def _endpoint(self, config: ProviderConfig, *, stream: bool = False) -> str:
         base = (config.base_url or DEFAULT_BASE_URL).rstrip("/")
         action = "streamGenerateContent" if stream else "generateContent"
-        return f"{base}/models/{config.model}:{action}?alt=sse"
+        suffix = "?alt=sse" if stream else ""
+        return f"{base}/models/{config.model}:{action}{suffix}"
 
     def _headers(self, config: ProviderConfig) -> dict[str, str]:
         if config.api_key is None:
@@ -160,6 +165,7 @@ class GeminiProvider:
                             id=f"call_{len(tool_calls) + 1}",
                             name=str(call.get("name", "")),
                             arguments=dict(call.get("args", {})),
+                            signature=str(part["thoughtSignature"]) if part.get("thoughtSignature") else None,
                         )
                     )
             usage = data.get("usageMetadata", {})
@@ -168,6 +174,8 @@ class GeminiProvider:
             raise ProviderError("invalid_response", "model provider response was not understood") from exc
 
         input_tokens, output_tokens = normalise_usage(usage)
+        # Gemini reports thinking tokens separately; they are billable output tokens.
+        output_tokens += int(usage.get("thoughtsTokenCount", 0) or 0)
         return Completion(
             text="".join(text_parts),
             model=str(data.get("modelVersion", config.model)),

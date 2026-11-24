@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-from agent_runtime.langgraph_runtime import LangGraphRuntime
+from agent_runtime.langgraph_runtime import LangGraphRuntime, _from_langchain, _to_langchain
 from agent_runtime.spec import AgentVersionSpec, NodeContext
 from checkpointing.codec import decode
-from model_providers import ProviderError
+from model_providers import Message, ProviderError, ToolCall
 from model_providers.registry import PROVIDERS
 
 
@@ -207,3 +207,17 @@ async def test_unknown_tool_binding_fails_initialization() -> None:
     spec = spec.model_copy(update={"tools": (spec.tools[0].model_copy(update={"tool_id": "nope"}),)})
     with pytest.raises(ProviderError, match="not available"):
         await runtime.initialize(spec, _context())
+
+
+def test_tool_call_signatures_round_trip_through_langchain() -> None:
+    message = Message(
+        role="assistant",
+        content="",
+        tool_calls=(ToolCall(id="call_1", name="add", arguments={"numbers": [1]}, signature="sig-123"),),
+    )
+
+    converted = _to_langchain([message])
+    assert converted[0].additional_kwargs["thought_signatures"] == {"call_1": "sig-123"}
+
+    restored = _from_langchain(converted)
+    assert restored[0].tool_calls[0].signature == "sig-123"

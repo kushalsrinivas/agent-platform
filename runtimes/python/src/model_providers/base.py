@@ -20,6 +20,8 @@ class ToolCall(BaseModel):
     id: str
     name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
+    # Gemini 3 requires the thought signature from a functionCall to be echoed on the next turn.
+    signature: str | None = None
 
 
 class Message(BaseModel):
